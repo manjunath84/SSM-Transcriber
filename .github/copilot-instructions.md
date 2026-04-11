@@ -26,12 +26,13 @@ from transciber.config import settings
 
 ### Error handling in CLI
 ```python
-# Use typer.Exit(code=1) for user-facing errors, not bare raise
-# Log with: from transciber.utils.logging import logger
+# Use typer.Exit(code=1) for user-facing errors, not bare raise.
+# For output, use the module-level `console = Console()` from src/transciber/cli.py
+# (logger module will be added when needed — Phase 1+).
 ```
 
 ## What NOT to do
-- Do not use `print()` — use `rich.console.Console` or `logger`
+- Do not use `print()` — use `rich.console.Console`
 - Do not call cloud APIs without showing estimated cost first
 - Do not hardcode provider strings ("deepgram", "assemblyai") outside the registry
 - Do not add `asyncio.run()` inside library code — only in `cli.py`

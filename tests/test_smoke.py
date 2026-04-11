@@ -42,3 +42,32 @@ def test_cli_config_command() -> None:
     result = runner.invoke(app, ["config"])
     assert result.exit_code == 0
     assert "TRANSCIBER_WHISPER_MODEL_SIZE" in result.stdout
+
+
+def test_cli_transcribe_stub_exits_nonzero() -> None:
+    """Phase 0 stub must NOT exit 0 — that would let shell scripts treat it as success."""
+    runner = CliRunner()
+    result = runner.invoke(app, ["transcribe", "./fake.mp4"])
+    assert result.exit_code == 1
+    assert "not yet implemented" in result.stdout.lower()
+
+
+def test_cli_auth_stub_exits_nonzero() -> None:
+    runner = CliRunner()
+    result = runner.invoke(app, ["auth", "google-drive"])
+    assert result.exit_code == 1
+
+
+def test_cache_dir_expands_tilde(monkeypatch: object) -> None:
+    """TRANSCIBER_CACHE_DIR with ~ must be expanded to an absolute path."""
+    import os
+
+    from transciber.config import TranscriberSettings
+
+    os.environ["TRANSCIBER_CACHE_DIR"] = "~/.cache/transciber-test"
+    try:
+        s = TranscriberSettings()
+        assert not str(s.cache_dir).startswith("~")
+        assert str(s.cache_dir).startswith("/")
+    finally:
+        del os.environ["TRANSCIBER_CACHE_DIR"]

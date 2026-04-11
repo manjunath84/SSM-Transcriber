@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,7 +34,7 @@ class TranscriberSettings(BaseSettings):
 
     # ── Paths ────────────────────────────────────────────────────────────────
     output_dir: Path = Path("./output")
-    cache_dir: Path = Path("~/.cache/transciber").expanduser()
+    cache_dir: Path = Path("~/.cache/transciber")
     cache_enabled: bool = True
 
     # ── LLM (Phase 6a+) ──────────────────────────────────────────────────────
@@ -41,6 +42,12 @@ class TranscriberSettings(BaseSettings):
 
     # ── Logging ──────────────────────────────────────────────────────────────
     log_level: str = "INFO"
+
+    @field_validator("output_dir", "cache_dir", mode="after")
+    @classmethod
+    def _expand_user(cls, value: Path) -> Path:
+        """Expand `~` in path settings sourced from env or .env files."""
+        return Path(value).expanduser()
 
 
 settings = TranscriberSettings()

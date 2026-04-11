@@ -37,11 +37,12 @@ htmlcov/
 # Transciber runtime
 /output/
 /tmp/
-*.wav
-*.mp3
-*.mp4
-*.mkv
-*.webm
+# Only ignore media at repo root — allow tests/fixtures/*.wav etc.
+/*.wav
+/*.mp3
+/*.mp4
+/*.mkv
+/*.webm
 
 # Google OAuth token (contains credentials — never commit)
 google_token.json

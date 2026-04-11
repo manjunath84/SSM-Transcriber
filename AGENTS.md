@@ -1,7 +1,7 @@
 # Transciber — Agent Instructions
 
 ## Project
-Multi-agent audio/video transcription pipeline. Python 3.11+, managed with `uv`.
+Multi-agent audio/video transcription pipeline. Python 3.12, managed with `uv`.
 
 ## Stack
 - Transcription: `faster-whisper` (local, free) + Deepgram / AssemblyAI / OpenAI (cloud, opt-in)

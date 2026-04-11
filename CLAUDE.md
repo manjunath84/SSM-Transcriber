@@ -30,9 +30,11 @@ Not yet implemented: audio extraction, transcription, sources, formatters.
 - All I/O operations are `async`; only `asyncio.run()` at the CLI boundary
 - Config via `pydantic-settings` in `src/transciber/config.py` — never `os.environ` directly
 - No hardcoded provider names outside registry + settings validator
-- Cache key = SHA256(file content + quality setting) — avoids re-transcribing same file
-- VAD silence stripping always on — reduces billable duration if cloud provider used
-- Cloud calls always show estimated cost and prompt confirmation before proceeding
+
+## Conventions that will land in later phases (don't assume they exist yet)
+- **Phase 1**: transcript cache keyed by SHA256(file + quality); VAD silence stripping
+- **Phase 5**: cloud calls show estimated cost and prompt confirmation before proceeding
+- **Phase 6a**: LLM post-processing via `litellm` (cheapest-first fallback)
 
 ## Cost model (never break this)
 - Default run = $0 (local faster-whisper)

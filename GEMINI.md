@@ -30,7 +30,7 @@ CLI stub exists. Audio extraction and transcription not yet implemented (Phase 1
 
 ## Cost rules (never violate)
 1. Default: local faster-whisper only, $0
-2. Cloud providers: only when `TRANSCRIPTION_PROVIDER` env var is set
+2. Cloud providers: only when `TRANSCIBER_TRANSCRIPTION_PROVIDER` env var is set to a non-local value
 3. Always show estimated cost + confirm before any cloud API call
 4. LLM: only invoked with `--summarize` or `--clean` flag
 

@@ -30,7 +30,7 @@ def transcribe(
         Path | None,
         typer.Option("-o", "--output", help="Output file path"),
     ] = None,
-    format: Annotated[
+    fmt: Annotated[
         str,
         typer.Option("-f", "--format", help="Output format: txt | srt | md | json"),
     ] = "txt",
@@ -59,38 +59,40 @@ def transcribe(
         typer.Option("-y", "--yes", help="Skip cost confirmation prompts"),
     ] = False,
 ) -> None:
-    """Transcribe audio or video from any supported source."""
+    """Transcribe audio or video from any supported source.
+
+    Phase 0 stub — implementation lands in Phase 1. The command exits non-zero
+    so shell scripts don't silently treat "not implemented" as success.
+    """
     console.print("[yellow]Phase 1 not yet implemented.[/yellow]")
     console.print(f"  source    = {source}")
     console.print(f"  output    = {output or 'auto'}")
-    console.print(f"  format    = {format}")
+    console.print(f"  format    = {fmt}")
     console.print(f"  quality   = {quality}")
     console.print(f"  language  = {language or 'auto'}")
     console.print(f"  budget    = {budget}")
     console.print(f"  summarize = {summarize}")
     console.print(f"  cache     = {'disabled' if no_cache else 'enabled'}")
     console.print(f"  yes       = {yes}")
-    raise typer.Exit(code=0)
+    raise typer.Exit(code=1)
 
 
 # ── transciber providers ─────────────────────────────────────────────────────
 
 @app.command()
 def providers() -> None:
-    """List available transcription providers and their status."""
-    table = Table(title="Transcription Providers", show_header=True, header_style="bold cyan")
-    table.add_column("Provider", style="bold")
-    table.add_column("Type")
-    table.add_column("Cost/min")
-    table.add_column("Status")
+    """List transcription providers registered via the provider registry.
 
-    pending = "[yellow]Phase 5 — not yet implemented[/yellow]"
-    table.add_row("faster_whisper", "local", "$0.000", "[green]available (no key needed)[/green]")
-    table.add_row("deepgram",       "cloud", "$0.006", pending)
-    table.add_row("assemblyai",     "cloud", "$0.009", pending)
-    table.add_row("openai_whisper", "cloud", "$0.020", pending)
-
-    console.print(table)
+    Phase 0 stub — the registry lands in Phase 5. Until then, only the
+    built-in local provider is "available", and there is no registry to
+    enumerate. This intentionally does NOT hardcode names or prices here
+    to avoid teaching contributors to duplicate metadata outside the
+    registry.
+    """
+    console.print(
+        "[green]faster_whisper[/green]  local  $0.000/min  [dim](Phase 1)[/dim]\n"
+        "[yellow]No provider registry yet — cloud providers land in Phase 5.[/yellow]"
+    )
 
 
 # ── transciber auth ──────────────────────────────────────────────────────────
@@ -101,7 +103,7 @@ def auth(
 ) -> None:
     """Authenticate with an external service (e.g. Google Drive OAuth)."""
     console.print(f"[yellow]Auth for '{service}' not yet implemented (Phase 4).[/yellow]")
-    raise typer.Exit(code=0)
+    raise typer.Exit(code=1)
 
 
 # ── transciber config ────────────────────────────────────────────────────────
