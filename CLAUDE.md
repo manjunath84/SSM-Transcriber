@@ -1,4 +1,4 @@
-# Transcriber — Claude Code Context
+# SSM-Transcriber — Claude Code Context
 
 > **Full roadmap:** [`docs/PLAN.md`](docs/PLAN.md) — phased implementation
 > plan, cost optimization strategy, per-phase verification. Read it when
@@ -12,8 +12,8 @@ and Google Drive. Local-first (zero cost by default), cloud providers are opt-in
 ## Running the project
 ```bash
 uv sync                          # install dependencies
-uv run transcriber --help         # show CLI commands
-uv run transcriber transcribe ./video.mp4
+uv run ssm-transcriber --help         # show CLI commands
+uv run ssm-transcriber transcribe ./video.mp4
 uv run pytest                    # run tests
 uv run ruff check src/           # lint
 uv run mypy src/                 # type check

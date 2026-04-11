@@ -1,4 +1,4 @@
-# Transcriber — Gemini CLI Context
+# SSM-Transcriber — Gemini CLI Context
 
 > **Roadmap:** See [`docs/PLAN.md`](docs/PLAN.md) for the full phased
 > implementation plan.
@@ -18,9 +18,9 @@ providers (Deepgram, AssemblyAI) are opt-in via env vars.
 ## Running the project
 ```bash
 uv sync
-uv run transcriber transcribe ./video.mp4
-uv run transcriber transcribe "https://youtu.be/..."
-uv run transcriber --help
+uv run ssm-transcriber transcribe ./video.mp4
+uv run ssm-transcriber transcribe "https://youtu.be/..."
+uv run ssm-transcriber --help
 ```
 
 ## Current phase: 0 — Skeleton
