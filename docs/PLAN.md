@@ -39,23 +39,26 @@ The full architecture (LangGraph multi-agent, cloud providers, Google Drive, Not
 
 ### Key cost-saving techniques applied throughout
 
-1. **Local-first, always**: `faster-whisper` is the default and requires no API keys. Cloud providers are only used when `TRANSCRIPTION_PROVIDER` is explicitly set.
+1. **Local-first, always**: `faster-whisper` is the default and requires no API keys. Paid providers are only considered when both the budget allows them (`--budget low|best`) and their key is configured — any paid call still requires cost confirmation unless `--yes` is passed (see [F4](#f4-spend-permission--separate-configured-from-allowed)).
 
 2. **`--quality` flag controls model size** (Phase 1):
    - `--quality fast` → `tiny` model (fastest, cheapest compute, ~75% accuracy)
    - `--quality balanced` → `base` model (default, good speed/accuracy)
    - `--quality best` → `large-v3` (most accurate, slower on CPU)
 
-3. **VAD silence stripping before cloud** (Phase 1, audio extractor):
-   - Use `faster-whisper`'s built-in VAD filter to detect speech-only segments
-   - When routing to a cloud provider, only send speech segments — skip silence
-   - Typical savings: 20-40% reduction in billable audio minutes
+3. **VAD as a sidecar artifact, not a transform of the canonical audio** (Phase 1):
+   - Use `faster-whisper`'s VAD filter to compute speech-only regions as a sidecar table (`[(start, end)]` on the **original** timeline)
+   - The canonical transcription path always runs on the full, unmodified audio so segment timestamps remain truthful for SRT/markdown output (Phase 3)
+   - The sidecar is used only for: (a) cost estimation (`speech_duration`), (b) building a reduced upload when a cloud provider is invoked (Phase 5)
+   - See [Phase 1 Foundations](#phase-1-foundations-contracts-that-later-phases-depend-on) for the full contract
 
-4. **Transcript cache** (Phase 1):
-   - Cache key = SHA256 of audio file content + model/provider settings
-   - Store in `~/.cache/transcriber/` (JSON files)
-   - On cache hit: return cached result instantly, zero cost
+4. **Transcript cache** (Phase 1, versioned key):
+   - Cache key is a **versioned composite** — see [Phase 1 Foundations](#phase-1-foundations-contracts-that-later-phases-depend-on) for the canonical schema
+   - At minimum: canonical audio content hash + provider id + model id/revision + language override + VAD mode + pipeline schema version
+   - Store in `~/.cache/transcriber/` (JSON files) keyed by the composite hash
+   - On cache hit: return cached result without model load or transcription (extraction still runs to compute the content hash — see the [Phase 1 flow](#phase-1--mvp-transcribe-a-local-file-working-end-to-end))
    - CLI flag `--no-cache` to bypass
+   - Any change to the schema bumps `pipeline_schema_version` and invalidates old entries (safe by construction)
 
 5. **LLM cheapest-first routing** (Phase 6):
    - LiteLLM fallback chain: `groq/llama-3.1-8b-instant` (free tier) → `gemini/gemini-1.5-flash` → `claude-haiku-4-5` → configured model
@@ -205,35 +208,267 @@ git push
 
 ---
 
+### Phase 1 Foundations (contracts that later phases depend on)
+
+**Why this section exists:** Several Phase 1 decisions are load-bearing for
+Phases 2–6. Getting them wrong is cheap to fix now and expensive to fix after
+YouTube, cloud providers, formatters, and LangGraph pile on top. This section
+is the **single source of truth** for these contracts — the AI context files
+(`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`) must agree with it.
+
+#### F1. Sync vs. async (decision: sync through Phase 4)
+
+The Phase 0 skeleton is synchronous, and every library in the core stack
+(`ffmpeg-python`, `yt-dlp`, `faster-whisper`, `google-api-python-client`) is
+blocking-native. We will **keep the core pipeline synchronous through Phase 4**.
+Revisit async at Phase 5 only if a real concurrency need emerges (e.g.
+overlapping cloud uploads, streaming providers).
+
+- Do not introduce `async def` on pipeline, source, provider, or formatter
+  methods until there is a concrete benefit to measure
+- CLI stays sync end-to-end; no `asyncio.run()` at the entry point
+- LangGraph (Phase 6b) may use async internally — that is isolated behind the
+  graph boundary and does not leak into sources/providers
+
+#### F2. `PreparedMedia` — the source→pipeline contract
+
+Phase 1 must define the contract that Phase 2 (YouTube), Phase 4 (Google Drive),
+and Phase 5 (cloud providers) will all consume. Defining it now as a plain
+dataclass costs nothing; retrofitting it later is a full sweep of every source
+and provider.
+
+```python
+# src/transcriber/sources/base.py
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+SourceKind = Literal["local", "youtube", "google_drive"]
+
+@dataclass(frozen=True)
+class PreparedMedia:
+    """Everything downstream stages need to transcribe a piece of media.
+
+    The `workspace` field owns cleanup — the caller that created the
+    PreparedMedia owns the workspace and is responsible for cleanup on
+    both success and failure (see F5).
+    """
+    kind: SourceKind
+    original_uri: str              # the URI the user passed in
+    local_path: Path               # resolved local file — always present
+    title: str | None              # human-readable media title, if known
+    duration_seconds: float | None # media duration, if known pre-transcription
+    workspace: "RunWorkspace"      # temp-dir lifecycle (see F5)
+    extra: dict[str, str]          # source-specific metadata (yt-dlp tags, etc.)
+```
+
+In Phase 1, only `LocalSource` exists and returns a `PreparedMedia` whose
+`local_path` equals the user's input path. Phase 2 adds `YouTubeSource` and
+`resolve_source()`. The pipeline never sees raw URIs — it sees `PreparedMedia`.
+
+**Source resolution (Phase 2):** match URLs by **hostname**, not scheme. The
+resolver should be a list of `(matcher, source_class)` pairs tried in order:
+
+```python
+# WRONG — what the earlier draft implied
+if uri.startswith(("http://", "https://")): return YouTubeSource()
+
+# RIGHT — Phase 2 must do this
+from urllib.parse import urlparse
+YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+def is_youtube(uri: str) -> bool:
+    try:
+        return urlparse(uri).hostname in YOUTUBE_HOSTS
+    except ValueError:
+        return False
+```
+
+#### F3. Cache key — versioned composite schema
+
+Replaces the old "SHA256(file + quality)" shorthand in one place so every AI
+tool sees the same thing.
+
+```python
+# src/transcriber/core/cache.py
+PIPELINE_SCHEMA_VERSION = 1  # bump on ANY change below
+
+@dataclass(frozen=True)
+class CacheKey:
+    audio_sha256: str          # SHA256 of the CANONICAL audio file bytes
+                               # (always the extracted 16kHz mono WAV, never the raw
+                               #  container — normalises across formats and sources)
+    provider_id: str           # "faster_whisper" | "deepgram" | ...
+    model_id: str              # "base" | "large-v3" | "nova-2" | ...
+    model_revision: str        # faster-whisper release or HF revision hash
+    language: str              # user override or "auto"
+    vad_mode: str              # "off" | "silero-v4-default" | ...
+    pipeline_schema_version: int = PIPELINE_SCHEMA_VERSION
+
+    def digest(self) -> str:
+        # stable JSON dump → SHA256 → hex
+        ...
+```
+
+**Rules:**
+- Never cache on "file path + quality flag" alone — that masks real differences
+- `model_revision` is required; `faster-whisper` model files have stable SHAs,
+  record whichever the loader exposes (fall back to model package version)
+- Changing the dataclass → bump `PIPELINE_SCHEMA_VERSION` → old entries invalidate
+- Cache file layout: `~/.cache/transcriber/v{schema}/{digest}.json` so old
+  schema versions can be garbage-collected with `rm -rf`
+
+#### F4. Spend permission — separate "configured" from "allowed"
+
+"Key exists" must never mean "key will be used." The permission model is a
+two-step gate:
+
+| Step | What it checks | Source |
+|------|----------------|--------|
+| 1. Configured | Is there a key/endpoint for this provider? | env vars, `.env` |
+| 2. Allowed | Does the current budget/flag permit paid use? | `--budget`, `--summarize`, `--allow-paid-llm` |
+
+Rules:
+- `--budget free` (default) → only providers with `cost_per_minute == 0.0` are
+  allowed, even if paid API keys are configured. Attempting a paid provider
+  exits non-zero with a clear message.
+- `--budget low` / `--budget best` → paid providers become *candidates*; the
+  user still sees an estimated cost and must confirm (or pass `--yes`).
+- LLM post-processing (Phase 6a): `--summarize` / `--clean` default to the free
+  tier (Groq). Falling back to any paid LLM requires **both** a paid key *and*
+  `--allow-paid-llm` *and* a cost confirmation. No silent fallback.
+- Every confirmation prompt shows: provider, estimated minutes/tokens,
+  estimated cost, and the flag that would skip the prompt (`--yes`). Cost
+  estimates come from the `speech_duration` sidecar (see VAD, above), not the
+  full media duration.
+
+#### F5. Temp files and interruption — `RunWorkspace`
+
+Every run gets a dedicated temp directory with well-defined ownership. This
+prevents leaked WAVs, half-written outputs, and "it crashed and now my cache
+is poisoned" bugs.
+
+```python
+# src/transcriber/core/workspace.py
+class RunWorkspace:
+    """Per-run temp dir. Use as a context manager at the CLI boundary."""
+    root: Path                          # e.g. /tmp/transcriber-xyz123/
+    def path(self, name: str) -> Path: ...
+    def __enter__(self) -> "RunWorkspace": ...
+    def __exit__(self, *exc) -> None:   # deletes root unless keep=True
+        ...
+```
+
+Rules:
+- The CLI creates exactly one `RunWorkspace` per invocation and passes it down.
+  Sources and the extractor write into `workspace.path("…")`; nobody else
+  creates their own `tempfile.mkdtemp`.
+- The cleanup is **`try/finally` on the workspace context manager**, not on
+  per-file handlers, so Ctrl-C (SIGINT) still cleans up.
+- `--keep-temp` flag preserves the workspace for debugging and prints its path.
+- Output writes are **atomic**: write to `{output}.tmp` in the **same directory
+  as the final output** (not in the workspace), then `os.replace()` into the
+  final path. This avoids cross-device rename failures when the workspace is
+  on a different filesystem (e.g. `/tmp` vs. the user's home directory). A
+  Ctrl-C mid-write never leaves a truncated `.txt`/`.srt`/`.json`.
+- Cache writes use the same atomic pattern: temp file created inside
+  `~/.cache/transcriber/`, then `os.replace()` to the final cache path.
+
+#### F6. Model download preflight (first-run UX)
+
+`faster-whisper` downloads model weights on first use (`tiny`≈75MB, `base`≈145MB,
+`large-v3`≈3GB). This is a network dependency even though it isn't billable.
+Phase 1 must:
+
+- On first run, detect missing model files and print a one-line notice:
+  `Downloading faster-whisper '{model}' (~{size}MB) to ~/.cache/huggingface/...`
+- Expose an explicit `ssm-transcriber models download [--quality fast|balanced|best]`
+  command (Phase 1) so users can prefetch offline
+- Mention the download requirement in `README.md` under "Quick start"
+- Never silently fail when offline: surface the network error with a pointer
+  to `models download`
+
+#### F7. Mocks, fixtures, and test strategy
+
+A single smoke-test fixture is not enough past Phase 1. Define the test
+surface once, here, so every phase adds to the same harness.
+
+**Fixtures (committed to `tests/fixtures/`):**
+- `short_speech.wav` — ≤10s, real speech, for smoke-level transcription check
+- `short_speech_with_silence.wav` — same speech bracketed by 3s silence at
+  start and end, for VAD sidecar correctness
+- `tiny_video.mp4` — ≤5s video with known audio, for extractor tests
+- `golden/` — expected outputs (`.txt`, `.srt`, `.md`, `.json`) for each fixture
+
+**Adapter-level stubs (no network in CI):**
+- `tests/stubs/yt_dlp_stub.py` — fake downloader that returns a local fixture
+- `tests/stubs/provider_stub.py` — fake `TranscriptionProvider` that returns
+  a deterministic `TranscriptResult` and records retry attempts
+- `tests/stubs/llm_stub.py` — fake LiteLLM response for summarize/clean tests
+
+**Integration tests (opt-in, marked `@pytest.mark.integration`):**
+- Hit the real `faster-whisper` model (runs locally, no network after prefetch)
+- Real YouTube download, real Deepgram, real LLM call — all skipped unless
+  `SSM_INTEGRATION=1` is set. CI runs only the unit lane; a separate
+  manually-triggered workflow runs the integration lane.
+
+**Determinism:**
+- Pin `faster-whisper` to a minor version in `pyproject.toml` so transcript
+  assertions don't drift across upgrades
+- Golden-file tests use "contains expected words" assertions, not exact
+  string equality, for the transcript itself; exact equality is fine for
+  formatter output given a fixed `TranscriptResult`
+
+#### F8. Observability (minimum viable)
+
+- Use Python `logging` (not `print`) everywhere under `src/transcriber/`
+  except the CLI presentation layer (which uses `rich.console`)
+- Log level controlled by `TRANSCRIBER_LOG_LEVEL` (already in config stub)
+- Never log secrets: the config module exposes `redacted_dump()` for any
+  diagnostic output (replaces the current `settings.model_dump()` in the
+  `config` command)
+- Cache hits/misses, provider selection, and budget decisions are logged at
+  `INFO`; raw transcripts stay at `DEBUG`
+
+---
+
 ### Phase 1 — MVP: Transcribe a Local File (working end-to-end)
 
 **Goal:** `uv run ssm-transcriber transcribe ./video.mp4` produces `./video.txt` with the transcript.
 
-Files to create/modify:
-- `src/transcriber/core/audio_extractor.py` — ffmpeg-python: extract audio from video → 16kHz mono WAV; strip silence using faster-whisper VAD before returning
-- `src/transcriber/core/transcriber.py` — faster-whisper wrapper: load model lazily (singleton), transcribe WAV, return segments + full text
-- `src/transcriber/core/cache.py` — SHA256-based transcript cache: `get(cache_key)` / `set(cache_key, result)`; stores JSON in `~/.cache/transcriber/`
-- `src/transcriber/config.py` — pydantic-settings: reads `.env` for `WHISPER_MODEL_SIZE`, `WHISPER_DEVICE`, `OUTPUT_DIR`, `CACHE_DIR`, `CACHE_ENABLED`
-- `src/transcriber/cli.py` — wire `transcribe` command with `--quality` and `--no-cache` flags
+**Read first:** [Phase 1 Foundations](#phase-1-foundations-contracts-that-later-phases-depend-on) — F1–F8 are binding contracts. Phase 1 implements them; later phases only extend them.
 
-**Simple flow (no agents, no abstraction yet):**
+Files to create/modify:
+- `src/transcriber/sources/__init__.py` + `src/transcriber/sources/base.py` — `PreparedMedia` dataclass (F2) and `LocalSource` that returns one. No `resolve_source()` yet; the CLI wires `LocalSource` directly until Phase 2
+- `src/transcriber/core/workspace.py` — `RunWorkspace` context manager (F5)
+- `src/transcriber/core/audio_extractor.py` — `ffmpeg-python`: extract audio from video → 16kHz mono WAV **written into the run workspace**. Does NOT strip silence from the canonical path. Separately computes a VAD sidecar `speech_regions: list[tuple[float, float]]` on the original timeline (F-cost-section, item 3)
+- `src/transcriber/core/transcriber.py` — `faster-whisper` wrapper: lazy singleton model loader, transcribes the **full** WAV, returns `TranscriptResult`. Exposes `model_id` and `model_revision` for the cache key
+- `src/transcriber/core/cache.py` — versioned `CacheKey` composite (F3), atomic writes, `get` / `set`, schema-versioned directory layout
+- `src/transcriber/core/models.py` — `download_model(quality)` helper + preflight check surfaced in the CLI (F6)
+- `src/transcriber/config.py` — extend stub with `CACHE_DIR`, `CACHE_ENABLED`, `LOG_LEVEL`, `KEEP_TEMP`; add `redacted_dump()` (F8)
+- `src/transcriber/cli.py` — wire `transcribe` to `LocalSource` → `RunWorkspace` → extractor → transcriber → cache → atomic output write. Add `ssm-transcriber models download` subcommand (F6). Replace `settings.model_dump()` in the `config` command with `redacted_dump()`
+
+**Flow (sync, single `RunWorkspace`):**
 ```
 CLI input (file path)
-  → compute cache_key (SHA256 of file + quality setting)
-  → cache.get(cache_key) → return immediately if hit (cost: $0)
-  → audio_extractor.extract(path) → 16kHz mono WAV (silence stripped)
-  → transcriber.transcribe(wav_path, quality) → TranscriptResult
-  → cache.set(cache_key, result)
-  → write to output file (txt)
-  → print summary (duration transcribed, model used, cache hit/miss)
+  ├─ open RunWorkspace (temp dir, try/finally cleanup)
+  ├─ LocalSource.prepare(uri, workspace) → PreparedMedia
+  ├─ audio_extractor.extract(media) → canonical WAV (full timeline) in workspace
+  ├─ compute CacheKey (F3) from canonical WAV hash + settings + model revision
+  ├─ cache.get(key) → hit? → atomic write output → exit ($0, no model load)
+  ├─ audio_extractor.vad_sidecar(wav) → speech_regions for cost display only
+  ├─ transcriber.transcribe(wav, language) → TranscriptResult
+  ├─ cache.set(key, result)                [atomic]
+  ├─ write output file via atomic rename   [F5]
+  └─ workspace cleanup on exit (or keep if --keep-temp)
 ```
 
 **Key implementation details:**
-- `TranscriptResult` is a simple dataclass: `full_text`, `segments` (list of `{start, end, text}`), `language`, `duration`, `speech_duration` (after VAD — what you'd pay for on cloud)
+- `TranscriptResult` is a frozen dataclass: `full_text`, `segments` (list of `{start, end, text}` on the **original** timeline), `language`, `duration`, `speech_duration` (derived from the VAD sidecar), `model_id`, `model_revision`
 - Quality-to-model mapping: `fast→tiny`, `balanced→base` (default), `best→large-v3`
-- VAD filter always on for audio extraction — reduces duration billed if ever routed to cloud
-- Model loaded once and reused across calls (avoid reload penalty)
-- Rich progress spinner + show "Cache hit — skipped transcription" when applicable
+- VAD is a **sidecar**, not a transform — the canonical transcription path never sees stripped audio. `speech_duration` is used only for cost display (Phase 5) and reduced uploads (Phase 5)
+- Model loaded once per process via a module-level singleton; first call blocks on download with a clear progress line (F6)
+- CLI output via `rich` progress spinner; show `Cache hit — skipped transcription` when applicable; log cache/budget decisions at `INFO` (F8)
+- **Sync all the way through.** No `async def` anywhere in `src/transcriber/` in Phase 1 (F1)
 
 **CLI interface:**
 ```bash
@@ -243,16 +478,22 @@ uv run ssm-transcriber transcribe ./lecture.mp4 --quality fast --language en
 uv run ssm-transcriber transcribe ./lecture.mp4 --no-cache   # force re-transcription
 ```
 
-**Test fixture (required for Phase 1 verification):**
-- Create `tests/fixtures/short_speech.wav` — a ≤10 second clip with real speech (not synthetic tones)
-- Source: record yourself saying "Hello, this is a transcription test" with `sox` or `ffmpeg -f avfoundation`, or download a CC0 sample
-- Commit the fixture (small enough: ~160KB at 16kHz mono)
+**Test fixtures required for Phase 1** (per F7):
+- `tests/fixtures/short_speech.wav` — ≤10s real speech ("Hello, this is a transcription test")
+- `tests/fixtures/short_speech_with_silence.wav` — same speech bracketed by 3s silence before and after, used to assert VAD sidecar correctness and timestamp fidelity
+- `tests/fixtures/tiny_video.mp4` — ≤5s video with the same audio track, for extractor tests
+- `tests/fixtures/golden/short_speech.txt` — expected text output (word-contains assertion, not equality)
+- Commit all fixtures; total < 1MB
 
 **Unit tests for Phase 1:**
-- `tests/unit/test_cache.py` — cache hit/miss, SHA256 key stability across runs
-- `tests/unit/test_audio_extractor.py` — video → WAV conversion, silence stripping
-- `tests/unit/test_transcriber.py` — uses `short_speech.wav` fixture, asserts non-empty result
-- Phase 1 is not "done" until verification + unit tests pass locally AND in CI
+- `tests/unit/test_cache.py` — `CacheKey` digest stability across runs; different `model_revision` / `language` / `vad_mode` produce different digests; schema version bump invalidates
+- `tests/unit/test_workspace.py` — `RunWorkspace` cleanup on normal exit, exception, and simulated `SIGINT`; `--keep-temp` preserves
+- `tests/unit/test_audio_extractor.py` — video → 16kHz mono WAV; VAD sidecar on `short_speech_with_silence.wav` returns regions matching the known speech window (±200ms)
+- `tests/unit/test_transcriber.py` — uses `short_speech.wav`, asserts transcript contains expected words on the **original timeline** (segment start > 0 on the silence-bracketed fixture)
+- `tests/unit/test_atomic_write.py` — interrupted write leaves no partial output file
+- `tests/unit/test_config_redaction.py` — `redacted_dump()` does not leak API keys
+- `tests/unit/test_local_source.py` — `LocalSource.prepare` returns a `PreparedMedia` whose `local_path` equals the input
+- Phase 1 is not "done" until all unit tests pass locally AND in CI
 
 **Git actions at end of Phase 1:**
 ```bash
@@ -280,13 +521,22 @@ Files to create/modify:
 - `src/transcriber/sources/__init__.py` — `resolve_source(uri)`: returns correct source based on URI pattern (URL → YouTube, path → local)
 - `src/transcriber/cli.py` — update `transcribe` to call `resolve_source()` first, then existing pipeline
 
-**Source detection logic:**
+**Source detection logic** (hostname match — see F2):
 ```python
+from urllib.parse import urlparse
+YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+
 def resolve_source(uri: str) -> Source:
-    if uri.startswith(("http://", "https://", "youtu.be")):
+    try:
+        host = urlparse(uri).hostname
+    except ValueError:
+        host = None
+    if host in YOUTUBE_HOSTS:
         return YouTubeSource()
     return LocalSource()
 ```
+Never match on `http://` / `https://` alone — that collides with Google Drive
+(Phase 4) and any future hosted source. All sources return `PreparedMedia` per F2.
 
 **Verification:** `uv run ssm-transcriber transcribe "https://youtu.be/dQw4w9WgXcQ"` produces a transcript.
 
@@ -345,13 +595,17 @@ Files to create/modify:
 - `src/transcriber/providers/assemblyai.py` — AssemblyAI; `cost_per_minute = 0.009`
 - `src/transcriber/providers/openai_whisper.py` — OpenAI Whisper API; `cost_per_minute = 0.02`
 - `src/transcriber/providers/__init__.py` — registry + `get_provider(name)` factory + `get_cheapest_provider()` helper
-- `src/transcriber/core/budget_router.py` — routes to correct provider based on `--budget`:
-  - `free` → always `faster_whisper`, error if unavailable
-  - `low` → `faster_whisper` first; if `--quality best` and audio > 10 min, suggest Deepgram
-  - `best` → use configured `TRANSCRIPTION_PROVIDER` or best available
-- `src/transcriber/config.py` — add `TRANSCRIPTION_PROVIDER`, `DEFAULT_BUDGET` settings
-- CLI: add `--budget free|low|best` flag (default: `free`)
-- Before any cloud call: print estimated cost (`speech_duration_min × cost_per_minute`) and confirm unless `--yes` flag
+- `src/transcriber/core/budget_router.py` — enforces the two-gate spend model (F4):
+  - **Gate 1 (configured):** does the provider have a usable key/endpoint? (env var check)
+  - **Gate 2 (allowed):** does the current budget permit paid use?
+  - `free` → only `cost_per_minute == 0.0` providers are allowed, regardless of which keys are configured. Error with a clear message if a paid provider is explicitly requested
+  - `low` → `faster_whisper` first; if `--quality best` and audio > 10 min, *suggest* Deepgram — user must confirm
+  - `best` → paid providers become candidates; still requires cost confirmation
+  - "Key exists" is never sufficient on its own. The router logs the chosen provider and the reason at `INFO`
+- `src/transcriber/config.py` — add `TRANSCRIPTION_PROVIDER` (preferred, not mandatory), `DEFAULT_BUDGET` settings
+- CLI: add `--budget free|low|best` flag (default: `free`); `--yes` skips only the interactive confirmation prompt — both Gate 1 (configured) and Gate 2 (allowed by budget/flags) are still enforced
+- Cost estimate uses `speech_duration` from the VAD sidecar (not total media duration) so users see the billable figure
+- Before any cloud call: print estimated cost and require confirmation unless `--yes`
 
 **Cost display example (before cloud call):**
 ```
@@ -390,8 +644,10 @@ Files to create/modify:
 - `src/transcriber/llm/prompts.py` — system prompts for `summarize` and `clean` tasks
 - `src/transcriber/cli.py` — wire `--summarize` and `--clean` flags (both off by default = $0 LLM cost)
 
-**LLM cost controls:**
-- `--summarize` / `--clean` are opt-in only — default run has zero LLM cost
+**LLM cost controls (per F4 — no silent paid fallback):**
+- `--summarize` / `--clean` default to the free tier (Groq). They are **not** a paid-LLM opt-in on their own
+- Falling back from Groq to any paid LLM requires **all three**: (a) paid key present, (b) `--allow-paid-llm` flag, (c) fresh cost confirmation at the prompt
+- Without `--allow-paid-llm`, a Groq failure surfaces an error instead of silently escalating to Gemini/Claude/OpenAI
 - Chunked summarization: never send more tokens than needed; 4K chunk default
 - Prompt caching on Anthropic: system prompt cached, only transcript diff billed
 - Print estimated LLM token count before processing if > 10K tokens
@@ -409,8 +665,8 @@ Files to create/modify:
 - `src/transcriber/agents/__init__.py`
 - `src/transcriber/agents/state.py` — `TranscriberState` Pydantic model (input URI, stage, media metadata, audio path, transcription result, final output, messages)
 - `src/transcriber/agents/graph.py` — LangGraph graph wrapping existing pipeline stages as nodes (fetch → extract → transcribe → post-process → format)
-- `src/transcriber/agents/nodes.py` — one async function per pipeline stage; each returns `dict` of state updates
-- `src/transcriber/cli.py` — `transcribe` command calls `graph.ainvoke(initial_state)` instead of the direct pipeline
+- `src/transcriber/agents/nodes.py` — one function per pipeline stage, returning `dict` of state updates. Nodes may be sync or async — that is isolated inside the graph (F1). The existing sync implementations from Phases 1–5 are wrapped, not rewritten
+- `src/transcriber/cli.py` — `transcribe` command drives the graph. If any node is async, the CLI uses `graph.invoke()` / `graph.ainvoke()` as appropriate, but the CLI entry point itself stays sync with a single `asyncio.run()` wrapper at the boundary if needed
 
 **Notes Agent interface (forward-compatible):**
 The graph emits a `transcription_complete` event as a LangGraph message at the end. Future Notes Agent (separate repo) subscribes to this — consumes the transcript without re-transcribing (zero re-processing cost).

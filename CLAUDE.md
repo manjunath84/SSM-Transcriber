@@ -32,20 +32,26 @@ Not yet implemented: audio extraction, transcription, sources, formatters.
 - **Phase 6**: `src/transcriber/agents/` — LangGraph multi-agent
 
 ## Key conventions
-- All I/O operations are `async`; only `asyncio.run()` at the CLI boundary
+- **Sync, not async, through Phase 4.** Every library in the stack is blocking-native; do not introduce `async def` on pipeline, source, provider, or formatter methods. Revisit at Phase 5 only if a real concurrency need appears. (Phase 1 Foundations F1)
 - Config via `pydantic-settings` in `src/transcriber/config.py` — never `os.environ` directly
 - No hardcoded provider names outside registry + settings validator
+- Never log secrets. Use `settings.redacted_dump()` for any diagnostic output; never `settings.model_dump()` in user-facing commands (F8)
 
-## Conventions that will land in later phases (don't assume they exist yet)
-- **Phase 1**: transcript cache keyed by SHA256(file + quality); VAD silence stripping
-- **Phase 5**: cloud calls show estimated cost and prompt confirmation before proceeding
-- **Phase 6a**: LLM post-processing via `litellm` (cheapest-first fallback)
+## Phase 1 Foundations (binding contracts — see `docs/PLAN.md`)
+These are the contracts all later phases build on. If you are implementing Phase 1, read the full section in `docs/PLAN.md` first.
+- **F2 `PreparedMedia`** — sources return this dataclass; the pipeline never sees raw URIs
+- **F3 Versioned cache key** — composite of audio hash + provider id + model id + model revision + language + VAD mode + pipeline schema version. Never cache on "file + quality" alone
+- **F4 Two-gate spend model** — "key configured" ≠ "provider allowed". `--budget free` rejects any paid provider even if its key is set. Paid LLM fallback requires `--allow-paid-llm` + cost confirmation
+- **F5 `RunWorkspace`** — one per CLI invocation, `try/finally` cleanup, atomic output writes via `os.replace()`
+- **F6 Model download preflight** — first-run `faster-whisper` downloads are surfaced, not silent. `ssm-transcriber models download` prefetches
+- **F7 Fixtures and stubs** — fixtures in `tests/fixtures/`, adapter stubs in `tests/stubs/`, integration tests gated on `SSM_INTEGRATION=1`
+- **VAD is a sidecar, not a transform** — the canonical transcript runs on full audio so timestamps are truthful. VAD regions are used only for cost display and reduced cloud uploads
 
 ## Cost model (never break this)
 - Default run = $0 (local faster-whisper)
-- `--summarize` / `--clean` flags are opt-in (LLM not invoked otherwise)
-- `--budget free` rejects any cloud call
-- Cloud cost is always estimated and confirmed before any API call
+- `--summarize` / `--clean` default to the free Groq tier; paid LLM fallback requires `--allow-paid-llm` + confirmation (no silent escalation)
+- `--budget free` rejects any paid provider regardless of which keys are configured
+- Cloud cost is always estimated (from `speech_duration`, not total duration) and confirmed before any API call
 
 ## Adding a new transcription provider (Phase 5+)
 1. Create `src/transcriber/providers/<name>.py` implementing `TranscriptionProviderBase`
