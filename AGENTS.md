@@ -65,3 +65,9 @@ src/transcriber/
 
 ## Where these rules come from
 All of the above are formalized in `docs/PLAN.md` → "Phase 1 Foundations" (F1–F8). If this file conflicts with `docs/PLAN.md`, `docs/PLAN.md` wins and this file should be updated.
+
+## Author context — teaching register and interview prep
+Primary author is a senior Java developer transitioning to AI/ML engineering. Learning artifacts live in [`docs/learn/`](docs/learn/README.md). On every PR, apply these rules:
+- **Teaching register by default.** Explain the *why*; give a Java analogue when a Python/AI concept first appears.
+- **Update living docs in the same PR.** Idioms → [`python-notes.md`](docs/learn/python-notes.md). AI/ML terms → [`glossary.md`](docs/learn/glossary.md). PR explainer → `docs/learn/prs/pr-NNN-<slug>.md`.
+- **Cite real files.** Broken pointers in learning docs block review. Full conventions: [`docs/learn/README.md`](docs/learn/README.md). Teaching register does not override `docs/PLAN.md` F1–F8.

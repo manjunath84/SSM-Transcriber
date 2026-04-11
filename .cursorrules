@@ -40,3 +40,9 @@ Full roadmap: docs/PLAN.md
 ## Current phase: 0 — Skeleton
 `src/transcriber/core/`, `sources/`, `formatters/`, `providers/`, `agents/` not yet implemented.
 Only `cli.py` (stubbed) and `config.py` exist.
+
+## Author context — teaching register and interview prep
+Primary author is a senior Java developer transitioning to AI/ML engineering. Learning artifacts live in `docs/learn/` — read that folder's README first. On every PR:
+- **Teaching register by default.** Explain *why*; give a Java analogue when a Python/AI concept first appears.
+- **Update living docs in the same PR.** Idioms → `docs/learn/python-notes.md`. AI/ML terms → `docs/learn/glossary.md`. PR explainer → `docs/learn/prs/pr-NNN-<slug>.md`.
+- **Cite real files.** Broken pointers block review. Full conventions: `docs/learn/README.md`. Teaching register does not override `docs/PLAN.md` F1–F8.

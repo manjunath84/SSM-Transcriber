@@ -48,3 +48,9 @@ CLI stub exists. Audio extraction and transcription not yet implemented (Phase 1
 ## Google Drive (Phase 4)
 Uses `google-api-python-client`. Auth: `transcriber auth google-drive` → OAuth2 → saves token.
 URI format: `drive://FILE_ID`
+
+## Author context — teaching register and interview prep
+Primary author is a senior Java developer transitioning to AI/ML engineering. Learning artifacts live in [`docs/learn/`](docs/learn/README.md). On every PR, apply these rules:
+- **Teaching register by default.** Explain the *why*; give a Java analogue when a Python/AI concept first appears.
+- **Update living docs in the same PR.** Idioms → [`python-notes.md`](docs/learn/python-notes.md). AI/ML terms → [`glossary.md`](docs/learn/glossary.md). PR explainer → `docs/learn/prs/pr-NNN-<slug>.md`.
+- **Cite real files.** Broken pointers in learning docs block review. Full conventions: [`docs/learn/README.md`](docs/learn/README.md). Teaching register does not override `docs/PLAN.md` F1–F8.

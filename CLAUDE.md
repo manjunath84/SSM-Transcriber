@@ -63,3 +63,9 @@ These are the contracts all later phases build on. If you are implementing Phase
 1. Create `src/transcriber/sources/<name>.py` implementing `MediaSourceBase`
 2. Implement `can_handle(uri: str) -> bool`
 3. Register in `src/transcriber/sources/__init__.py` — `resolve_source()` checks in order
+
+## Author context — teaching register and interview prep
+Primary author is a senior Java developer transitioning to AI/ML engineering. Learning artifacts live in [`docs/learn/`](docs/learn/README.md). On every PR, apply these rules:
+- **Teaching register by default.** Explain the *why*; give a Java analogue when a Python/AI concept first appears.
+- **Update living docs in the same PR.** Idioms → [`python-notes.md`](docs/learn/python-notes.md). AI/ML terms → [`glossary.md`](docs/learn/glossary.md). PR explainer → `docs/learn/prs/pr-NNN-<slug>.md`.
+- **Cite real files.** Broken pointers in learning docs block review. Full conventions: [`docs/learn/README.md`](docs/learn/README.md). Teaching register does not override `docs/PLAN.md` F1–F8.
