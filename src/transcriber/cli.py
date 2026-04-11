@@ -1,4 +1,4 @@
-"""Transcriber CLI — entry point for all commands."""
+"""SSM-Transcriber CLI — entry point for all commands."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 app = typer.Typer(
-    name="transcriber",
+    name="ssm-transcriber",
     help="Transcribe audio/video from local files, YouTube, or Google Drive.",
     add_completion=False,
     no_args_is_help=True,

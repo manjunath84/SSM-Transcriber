@@ -1,4 +1,4 @@
-# Transcriber — Agent Instructions
+# SSM-Transcriber — Agent Instructions
 
 > **Roadmap:** See [`docs/PLAN.md`](docs/PLAN.md) for the phased
 > implementation plan and cost strategy.
@@ -16,8 +16,8 @@ Multi-agent audio/video transcription pipeline. Python 3.12, managed with `uv`.
 ## Commands
 ```bash
 uv sync                          # install deps
-uv run transcriber --help
-uv run transcriber transcribe ./video.mp4
+uv run ssm-transcriber --help
+uv run ssm-transcriber transcribe ./video.mp4
 uv run pytest
 uv run ruff check src/
 ```

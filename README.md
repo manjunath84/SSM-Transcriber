@@ -1,4 +1,4 @@
-# Transcriber
+# SSM-Transcriber
 
 Multi-agent audio/video transcription pipeline — local-first, cloud-agnostic, cost-optimized.
 
@@ -8,8 +8,8 @@ Transcribe video and audio from **local files**, **YouTube URLs**, and **Google 
 
 ```bash
 uv sync
-uv run transcriber transcribe ./video.mp4
-uv run transcriber transcribe "https://youtu.be/..."
+uv run ssm-transcriber transcribe ./video.mp4
+uv run ssm-transcriber transcribe "https://youtu.be/..."
 ```
 
 ## Cost model

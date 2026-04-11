@@ -1,4 +1,4 @@
-# Transcriber — Implementation Plan
+# SSM-Transcriber — Implementation Plan
 
 > **Status:** Living reference document.
 > **Audience:** Any AI coding tool (Claude Code, Codex, Gemini CLI, Cursor,
@@ -81,8 +81,8 @@ The full architecture (LangGraph multi-agent, cloud providers, Google Drive, Not
 Steps:
 1. Create the repo on GitHub and wire the remote:
    ```bash
-   gh repo create manjunath84/Transcriber \
-     --description "Multi-agent audio/video transcription pipeline" \
+   gh repo create manjunath84/SSM-Transcriber \
+     --description "Multi-agent audio/video transcription pipeline (SSM-Transcriber)" \
      --public \
      --source /Users/manjunathans/projects/Transcriber \
      --remote origin
@@ -91,10 +91,10 @@ Steps:
 3. Make the initial commit and push to establish `main`:
    ```bash
    git add README.md
-   git commit -m "Initial commit: Transcriber project"
+   git commit -m "Initial commit: SSM-Transcriber project"
    git push -u origin main
    ```
-4. Verify: `gh repo view manjunath84/Transcriber` shows the repo on GitHub.
+4. Verify: `gh repo view manjunath84/SSM-Transcriber` shows the repo on GitHub.
 
 **GitHub branch strategy (per phase):**
 - `main` — always contains the last fully verified, working state
@@ -107,7 +107,7 @@ Steps:
 
 ### Phase 0 — Project Skeleton (start here)
 
-**Goal:** `uv run transcriber --help` works; project is ready for vibe coding with any AI tool.
+**Goal:** `uv run ssm-transcriber --help` works; project is ready for vibe coding with any AI tool.
 
 Files to create:
 - `pyproject.toml` — minimal deps, `transcriber` CLI entry point
@@ -143,7 +143,7 @@ gh pr create --title "Phase 0: project skeleton" --body "Adds pyproject.toml, CL
 # merge PR → main on GitHub, then locally: git checkout main && git pull
 ```
 
-**Verification:** `uv run transcriber --help` prints CLI help.
+**Verification:** `uv run ssm-transcriber --help` prints CLI help.
 
 ---
 
@@ -207,7 +207,7 @@ git push
 
 ### Phase 1 — MVP: Transcribe a Local File (working end-to-end)
 
-**Goal:** `uv run transcriber transcribe ./video.mp4` produces `./video.txt` with the transcript.
+**Goal:** `uv run ssm-transcriber transcribe ./video.mp4` produces `./video.txt` with the transcript.
 
 Files to create/modify:
 - `src/transcriber/core/audio_extractor.py` — ffmpeg-python: extract audio from video → 16kHz mono WAV; strip silence using faster-whisper VAD before returning
@@ -237,10 +237,10 @@ CLI input (file path)
 
 **CLI interface:**
 ```bash
-uv run transcriber transcribe ./interview.mp4
-uv run transcriber transcribe ./podcast.mp3 --output ./notes.txt --quality best
-uv run transcriber transcribe ./lecture.mp4 --quality fast --language en
-uv run transcriber transcribe ./lecture.mp4 --no-cache   # force re-transcription
+uv run ssm-transcriber transcribe ./interview.mp4
+uv run ssm-transcriber transcribe ./podcast.mp3 --output ./notes.txt --quality best
+uv run ssm-transcriber transcribe ./lecture.mp4 --quality fast --language en
+uv run ssm-transcriber transcribe ./lecture.mp4 --no-cache   # force re-transcription
 ```
 
 **Test fixture (required for Phase 1 verification):**
@@ -272,7 +272,7 @@ gh pr create --title "Phase 1: local file transcription MVP"
 
 ### Phase 2 — Add YouTube Support
 
-**Goal:** `uv run transcriber transcribe "https://youtu.be/..."` works.
+**Goal:** `uv run ssm-transcriber transcribe "https://youtu.be/..."` works.
 
 Files to create/modify:
 - `src/transcriber/sources/youtube.py` — yt-dlp wrapper: download audio-only to temp dir, return local WAV path + metadata (title, duration)
@@ -288,7 +288,7 @@ def resolve_source(uri: str) -> Source:
     return LocalSource()
 ```
 
-**Verification:** `uv run transcriber transcribe "https://youtu.be/dQw4w9WgXcQ"` produces a transcript.
+**Verification:** `uv run ssm-transcriber transcribe "https://youtu.be/dQw4w9WgXcQ"` produces a transcript.
 
 ---
 
@@ -306,8 +306,8 @@ Files to create/modify:
 
 **CLI additions:**
 ```bash
-uv run transcriber transcribe ./video.mp4 --format srt
-uv run transcriber transcribe "https://youtu.be/..." --format md --output notes.md
+uv run ssm-transcriber transcribe ./video.mp4 --format srt
+uv run ssm-transcriber transcribe "https://youtu.be/..." --format md --output notes.md
 ```
 
 **Verification:** All 4 output formats produce valid files.
@@ -316,7 +316,7 @@ uv run transcriber transcribe "https://youtu.be/..." --format md --output notes.
 
 ### Phase 4 — Google Drive Source
 
-**Goal:** `uv run transcriber transcribe "drive://FILE_ID"` works after auth.
+**Goal:** `uv run ssm-transcriber transcribe "drive://FILE_ID"` works after auth.
 
 Files to create/modify:
 - `src/transcriber/sources/google_drive.py` — OAuth2 flow + `google-api-python-client` download
@@ -326,8 +326,8 @@ Files to create/modify:
 
 **Auth flow:**
 ```bash
-uv run transcriber auth google-drive   # opens browser, saves token
-uv run transcriber transcribe "drive://1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs"
+uv run ssm-transcriber auth google-drive   # opens browser, saves token
+uv run ssm-transcriber transcribe "drive://1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs"
 ```
 
 **Verification:** Transcribe a video file stored in Google Drive.
@@ -370,7 +370,7 @@ Add to `pyproject.toml`: `deepgram-sdk`, `assemblyai`, `openai`, `tenacity`
   - Never retry on 4xx (other than 429) — those are user errors
 - Failed retries surface a clear CLI error with the last exception message
 
-**Verification:** `--budget free uv run transcriber transcribe ./audio.mp3` uses local only; cloud providers prompt for cost confirmation; simulated 429 triggers retry then success.
+**Verification:** `--budget free uv run ssm-transcriber transcribe ./audio.mp3` uses local only; cloud providers prompt for cost confirmation; simulated 429 triggers retry then success.
 
 ---
 
@@ -427,7 +427,7 @@ The graph emits a `transcription_complete` event as a LangGraph message at the e
 
 | Phase | File | Purpose |
 |-------|------|---------|
-| GH | GitHub repo `manjunath84/Transcriber` | Remote origin, PR-based phase tracking |
+| GH | GitHub repo `manjunath84/SSM-Transcriber` | Remote origin, PR-based phase tracking |
 | 0 | `pyproject.toml` | All dependencies, CLI entry point |
 | 0 | `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.github/copilot-instructions.md` | AI tool context |
 | 0 | `src/transcriber/cli.py` | Typer CLI skeleton |
@@ -446,7 +446,7 @@ The graph emits a `transcription_complete` event as a LangGraph message at the e
 ## AI Coding Context File Strategy
 
 All 5 files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.github/copilot-instructions.md`) contain the same core information adapted for each tool's format:
-- Project purpose and run commands (`uv sync`, `uv run transcriber --help`)
+- Project purpose and run commands (`uv sync`, `uv run ssm-transcriber --help`)
 - Current phase and what's implemented vs stubbed
 - Architecture conventions (async, no hardcoded provider names, etc.)
 - Where to add new sources / providers / formatters
@@ -457,15 +457,15 @@ These files get updated at the end of each phase to reflect what's now implement
 
 ## Verification (End-to-End Test per Phase)
 
-- **GitHub setup:** `gh repo view manjunath84/Transcriber` shows the repo; `git remote -v` shows `origin`
-- **Phase 0:** `uv run transcriber --help` shows commands
+- **GitHub setup:** `gh repo view manjunath84/SSM-Transcriber` shows the repo; `git remote -v` shows `origin`
+- **Phase 0:** `uv run ssm-transcriber --help` shows commands
 - **Phase 0.5:** CI green on PR #1; `uv.lock` tracked; Python 3.12 venv; all internal env vars prefixed `TRANSCRIBER_`; PR merged to `main`
-- **Phase 1:** `uv run transcriber transcribe tests/fixtures/short_speech.wav` → correct transcript; unit tests pass; CI green
-- **Phase 2:** `uv run transcriber transcribe "https://youtu.be/..."` → transcript file
-- **Phase 3:** `uv run transcriber transcribe short.wav --format srt` → valid SRT file
-- **Phase 4:** `uv run transcriber auth google-drive && uv run transcriber transcribe "drive://ID"` → transcript
-- **Phase 5:** `TRANSCRIBER_TRANSCRIPTION_PROVIDER=deepgram uv run transcriber transcribe short.wav` → Deepgram transcript with cost prompt
-- **Phase 6a:** `uv run transcriber transcribe short.wav --summarize` → transcript + summary via Groq free tier
+- **Phase 1:** `uv run ssm-transcriber transcribe tests/fixtures/short_speech.wav` → correct transcript; unit tests pass; CI green
+- **Phase 2:** `uv run ssm-transcriber transcribe "https://youtu.be/..."` → transcript file
+- **Phase 3:** `uv run ssm-transcriber transcribe short.wav --format srt` → valid SRT file
+- **Phase 4:** `uv run ssm-transcriber auth google-drive && uv run ssm-transcriber transcribe "drive://ID"` → transcript
+- **Phase 5:** `TRANSCRIBER_TRANSCRIPTION_PROVIDER=deepgram uv run ssm-transcriber transcribe short.wav` → Deepgram transcript with cost prompt
+- **Phase 6a:** `uv run ssm-transcriber transcribe short.wav --summarize` → transcript + summary via Groq free tier
 - **Phase 6b:** Same as 6a but now running through LangGraph; graph visualization shows all nodes
 
 ## Cross-phase practices (apply at the end of every phase)

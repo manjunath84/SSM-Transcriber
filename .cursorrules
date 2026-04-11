@@ -1,4 +1,4 @@
-# Transcriber — Cursor Rules
+# SSM-Transcriber — Cursor Rules
 
 Full roadmap: docs/PLAN.md
 
@@ -6,7 +6,7 @@ Full roadmap: docs/PLAN.md
 - Python 3.11+ only. Use `X | Y` union syntax, not `Optional[X]`.
 - Async-first: all provider and I/O methods must be `async def`.
 - Package manager: `uv`. Never suggest `pip install` directly.
-- Entry point: `uv run transcriber`
+- Entry point: `uv run ssm-transcriber`
 
 ## Code style
 - Line length: 100 chars (ruff enforced)

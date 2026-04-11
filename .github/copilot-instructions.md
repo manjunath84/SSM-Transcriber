@@ -1,4 +1,4 @@
-# GitHub Copilot Instructions — Transcriber
+# GitHub Copilot Instructions — SSM-Transcriber
 
 > **Roadmap:** See [`docs/PLAN.md`](../docs/PLAN.md) for the phased
 > implementation plan and cost strategy.
