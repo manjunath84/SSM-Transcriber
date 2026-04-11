@@ -1,4 +1,4 @@
-# Transciber — Gemini CLI Context
+# Transcriber — Gemini CLI Context
 
 ## What this project does
 Transcribes audio and video from local files, YouTube URLs, and Google Drive.
@@ -15,25 +15,25 @@ providers (Deepgram, AssemblyAI) are opt-in via env vars.
 ## Running the project
 ```bash
 uv sync
-uv run transciber transcribe ./video.mp4
-uv run transciber transcribe "https://youtu.be/..."
-uv run transciber --help
+uv run transcriber transcribe ./video.mp4
+uv run transcriber transcribe "https://youtu.be/..."
+uv run transcriber --help
 ```
 
 ## Current phase: 0 — Skeleton
 CLI stub exists. Audio extraction and transcription not yet implemented (Phase 1).
 
 ## Key entry points
-- CLI: `src/transciber/cli.py` → `app` (typer)
-- Config: `src/transciber/config.py` → `settings` singleton (pydantic-settings)
-- Core pipeline (Phase 1+): `src/transciber/core/`
+- CLI: `src/transcriber/cli.py` → `app` (typer)
+- Config: `src/transcriber/config.py` → `settings` singleton (pydantic-settings)
+- Core pipeline (Phase 1+): `src/transcriber/core/`
 
 ## Cost rules (never violate)
 1. Default: local faster-whisper only, $0
-2. Cloud providers: only when `TRANSCIBER_TRANSCRIPTION_PROVIDER` env var is set to a non-local value
+2. Cloud providers: only when `TRANSCRIBER_TRANSCRIPTION_PROVIDER` env var is set to a non-local value
 3. Always show estimated cost + confirm before any cloud API call
 4. LLM: only invoked with `--summarize` or `--clean` flag
 
 ## Google Drive (Phase 4)
-Uses `google-api-python-client`. Auth: `transciber auth google-drive` → OAuth2 → saves token.
+Uses `google-api-python-client`. Auth: `transcriber auth google-drive` → OAuth2 → saves token.
 URI format: `drive://FILE_ID`

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "transciber"
+name = "transcriber"
 version = "0.1.0"
 description = "Multi-agent audio/video transcription pipeline — local-first, cloud-agnostic, cost-optimized"
 readme = "README.md"
@@ -26,10 +26,10 @@ dev = [
 ]
 
 [project.scripts]
-transciber = "transciber.cli:app"
+transcriber = "transcriber.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/transciber"]
+packages = ["src/transcriber"]
 
 [tool.ruff]
 src = ["src"]

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from transciber import __version__
-from transciber.cli import app
-from transciber.config import settings
+from transcriber import __version__
+from transcriber.cli import app
+from transcriber.config import settings
 
 
 def test_version_is_set() -> None:
@@ -41,7 +41,7 @@ def test_cli_config_command() -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["config"])
     assert result.exit_code == 0
-    assert "TRANSCIBER_WHISPER_MODEL_SIZE" in result.stdout
+    assert "TRANSCRIBER_WHISPER_MODEL_SIZE" in result.stdout
 
 
 def test_cli_transcribe_stub_exits_nonzero() -> None:
@@ -59,15 +59,15 @@ def test_cli_auth_stub_exits_nonzero() -> None:
 
 
 def test_cache_dir_expands_tilde(monkeypatch: object) -> None:
-    """TRANSCIBER_CACHE_DIR with ~ must be expanded to an absolute path."""
+    """TRANSCRIBER_CACHE_DIR with ~ must be expanded to an absolute path."""
     import os
 
-    from transciber.config import TranscriberSettings
+    from transcriber.config import TranscriberSettings
 
-    os.environ["TRANSCIBER_CACHE_DIR"] = "~/.cache/transciber-test"
+    os.environ["TRANSCRIBER_CACHE_DIR"] = "~/.cache/transcriber-test"
     try:
         s = TranscriberSettings()
         assert not str(s.cache_dir).startswith("~")
         assert str(s.cache_dir).startswith("/")
     finally:
-        del os.environ["TRANSCIBER_CACHE_DIR"]
+        del os.environ["TRANSCRIBER_CACHE_DIR"]

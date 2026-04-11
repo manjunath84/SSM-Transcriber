@@ -1,6 +1,6 @@
-"""Transciber configuration — pydantic-settings singleton.
+"""Transcriber configuration — pydantic-settings singleton.
 
-All internal settings are prefixed ``TRANSCIBER_``. Third-party API keys
+All internal settings are prefixed ``TRANSCRIBER_``. Third-party API keys
 (DEEPGRAM_API_KEY, OPENAI_API_KEY, etc.) are read directly by vendor SDKs
 and are not managed here.
 
@@ -19,7 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class TranscriberSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="TRANSCIBER_",
+        env_prefix="TRANSCRIBER_",
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
@@ -34,7 +34,7 @@ class TranscriberSettings(BaseSettings):
 
     # ── Paths ────────────────────────────────────────────────────────────────
     output_dir: Path = Path("./output")
-    cache_dir: Path = Path("~/.cache/transciber")
+    cache_dir: Path = Path("~/.cache/transcriber")
     cache_enabled: bool = True
 
     # ── LLM (Phase 6a+) ──────────────────────────────────────────────────────

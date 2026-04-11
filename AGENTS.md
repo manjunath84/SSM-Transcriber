@@ -1,4 +1,4 @@
-# Transciber — Agent Instructions
+# Transcriber — Agent Instructions
 
 ## Project
 Multi-agent audio/video transcription pipeline. Python 3.12, managed with `uv`.
@@ -13,8 +13,8 @@ Multi-agent audio/video transcription pipeline. Python 3.12, managed with `uv`.
 ## Commands
 ```bash
 uv sync                          # install deps
-uv run transciber --help
-uv run transciber transcribe ./video.mp4
+uv run transcriber --help
+uv run transcriber transcribe ./video.mp4
 uv run pytest
 uv run ruff check src/
 ```
@@ -34,7 +34,7 @@ URI input
 
 ## File layout
 ```
-src/transciber/
+src/transcriber/
   cli.py               # typer entry point
   config.py            # pydantic-settings singleton
   core/                # audio_extractor, transcriber, cache   [Phase 1]
@@ -45,7 +45,7 @@ src/transciber/
 ```
 
 ## Rules
-- Never read `os.environ` directly — use `from transciber.config import settings`
+- Never read `os.environ` directly — use `from transcriber.config import settings`
 - All provider methods are async; nodes return `dict` of state updates
 - Cache every transcription result by SHA256(content + quality)
 - Before any cloud API call: compute and display estimated cost, require confirmation

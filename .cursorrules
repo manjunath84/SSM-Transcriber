@@ -1,10 +1,10 @@
-# Transciber — Cursor Rules
+# Transcriber — Cursor Rules
 
 ## Language & Runtime
 - Python 3.11+ only. Use `X | Y` union syntax, not `Optional[X]`.
 - Async-first: all provider and I/O methods must be `async def`.
 - Package manager: `uv`. Never suggest `pip install` directly.
-- Entry point: `uv run transciber`
+- Entry point: `uv run transcriber`
 
 ## Code style
 - Line length: 100 chars (ruff enforced)
@@ -13,7 +13,7 @@
 - Pydantic v2: use `model_config = ConfigDict(...)`, not inner `class Config`
 
 ## Architecture rules
-- Config access: always `from transciber.config import settings`, never `os.environ`
+- Config access: always `from transcriber.config import settings`, never `os.environ`
 - Provider names never hardcoded in pipeline logic — only in registry + settings validator
 - LangGraph nodes return `dict` of field updates, never mutate state in-place
 - Cache every transcription: `SHA256(file_bytes + quality)` as key
@@ -30,5 +30,5 @@
 - Fixture audio: `tests/fixtures/short.wav` (≤10 sec, 16kHz mono)
 
 ## Current phase: 0 — Skeleton
-`src/transciber/core/`, `sources/`, `formatters/`, `providers/`, `agents/` not yet implemented.
+`src/transcriber/core/`, `sources/`, `formatters/`, `providers/`, `agents/` not yet implemented.
 Only `cli.py` (stubbed) and `config.py` exist.

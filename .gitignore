@@ -34,7 +34,7 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# Transciber runtime
+# Transcriber runtime
 /output/
 /tmp/
 # Only ignore media at repo root — allow tests/fixtures/*.wav etc.

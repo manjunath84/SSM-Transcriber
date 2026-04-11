@@ -1,4 +1,4 @@
-"""Transciber CLI — entry point for all commands."""
+"""Transcriber CLI — entry point for all commands."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 app = typer.Typer(
-    name="transciber",
+    name="transcriber",
     help="Transcribe audio/video from local files, YouTube, or Google Drive.",
     add_completion=False,
     no_args_is_help=True,
@@ -18,7 +18,7 @@ app = typer.Typer(
 console = Console()
 
 
-# ── transciber transcribe ────────────────────────────────────────────────────
+# ── transcriber transcribe ────────────────────────────────────────────────────
 
 @app.command()
 def transcribe(
@@ -77,7 +77,7 @@ def transcribe(
     raise typer.Exit(code=1)
 
 
-# ── transciber providers ─────────────────────────────────────────────────────
+# ── transcriber providers ─────────────────────────────────────────────────────
 
 @app.command()
 def providers() -> None:
@@ -95,7 +95,7 @@ def providers() -> None:
     )
 
 
-# ── transciber auth ──────────────────────────────────────────────────────────
+# ── transcriber auth ──────────────────────────────────────────────────────────
 
 @app.command()
 def auth(
@@ -106,19 +106,19 @@ def auth(
     raise typer.Exit(code=1)
 
 
-# ── transciber config ────────────────────────────────────────────────────────
+# ── transcriber config ────────────────────────────────────────────────────────
 
 @app.command()
 def config() -> None:
-    """Show current configuration (reads from .env and TRANSCIBER_* env vars)."""
-    from transciber.config import settings
+    """Show current configuration (reads from .env and TRANSCRIBER_* env vars)."""
+    from transcriber.config import settings
 
-    table = Table(title="Transciber Settings", show_header=True, header_style="bold cyan")
+    table = Table(title="Transcriber Settings", show_header=True, header_style="bold cyan")
     table.add_column("Setting", style="bold")
     table.add_column("Value")
 
     for key, value in settings.model_dump().items():
-        table.add_row(f"TRANSCIBER_{key.upper()}", str(value))
+        table.add_row(f"TRANSCRIBER_{key.upper()}", str(value))
 
     console.print(table)
 
