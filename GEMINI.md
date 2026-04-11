@@ -1,5 +1,8 @@
 # Transcriber — Gemini CLI Context
 
+> **Roadmap:** See [`docs/PLAN.md`](docs/PLAN.md) for the full phased
+> implementation plan.
+
 ## What this project does
 Transcribes audio and video from local files, YouTube URLs, and Google Drive.
 Uses `faster-whisper` locally by default (free, no API keys). Cloud transcription

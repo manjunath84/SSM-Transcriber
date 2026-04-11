@@ -1,5 +1,8 @@
 # Transcriber — Agent Instructions
 
+> **Roadmap:** See [`docs/PLAN.md`](docs/PLAN.md) for the phased
+> implementation plan and cost strategy.
+
 ## Project
 Multi-agent audio/video transcription pipeline. Python 3.12, managed with `uv`.
 

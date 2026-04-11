@@ -1,5 +1,7 @@
 # Transcriber — Cursor Rules
 
+Full roadmap: docs/PLAN.md
+
 ## Language & Runtime
 - Python 3.11+ only. Use `X | Y` union syntax, not `Optional[X]`.
 - Async-first: all provider and I/O methods must be `async def`.

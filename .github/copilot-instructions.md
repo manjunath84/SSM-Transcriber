@@ -1,5 +1,8 @@
 # GitHub Copilot Instructions — Transcriber
 
+> **Roadmap:** See [`docs/PLAN.md`](../docs/PLAN.md) for the phased
+> implementation plan and cost strategy.
+
 ## Project overview
 Python transcription pipeline. Transcribes audio/video from local files, YouTube, or Google Drive.
 Provider-agnostic: transcription engine, LLM, and media source are all swappable via env vars.

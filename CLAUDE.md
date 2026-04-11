@@ -1,5 +1,10 @@
 # Transcriber — Claude Code Context
 
+> **Full roadmap:** [`docs/PLAN.md`](docs/PLAN.md) — phased implementation
+> plan, cost optimization strategy, per-phase verification. Read it when
+> you need context on *why* the project is structured this way or *what*
+> comes next.
+
 ## What this project does
 Multi-agent audio/video transcription pipeline. Transcribes from local files, YouTube URLs,
 and Google Drive. Local-first (zero cost by default), cloud providers are opt-in.
