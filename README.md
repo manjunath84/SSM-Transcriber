@@ -1,4 +1,4 @@
-# Transciber
+# Transcriber
 
 Multi-agent audio/video transcription pipeline — local-first, cloud-agnostic, cost-optimized.
 
@@ -8,8 +8,8 @@ Transcribe video and audio from **local files**, **YouTube URLs**, and **Google 
 
 ```bash
 uv sync
-uv run transciber transcribe ./video.mp4
-uv run transciber transcribe "https://youtu.be/..."
+uv run transcriber transcribe ./video.mp4
+uv run transcriber transcribe "https://youtu.be/..."
 ```
 
 ## Cost model

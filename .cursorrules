@@ -1,0 +1,36 @@
+# Transcriber — Cursor Rules
+
+Full roadmap: docs/PLAN.md
+
+## Language & Runtime
+- Python 3.11+ only. Use `X | Y` union syntax, not `Optional[X]`.
+- Async-first: all provider and I/O methods must be `async def`.
+- Package manager: `uv`. Never suggest `pip install` directly.
+- Entry point: `uv run transcriber`
+
+## Code style
+- Line length: 100 chars (ruff enforced)
+- Imports: stdlib → third-party → local, blank line between groups
+- Type hints required on all function signatures
+- Pydantic v2: use `model_config = ConfigDict(...)`, not inner `class Config`
+
+## Architecture rules
+- Config access: always `from transcriber.config import settings`, never `os.environ`
+- Provider names never hardcoded in pipeline logic — only in registry + settings validator
+- LangGraph nodes return `dict` of field updates, never mutate state in-place
+- Cache every transcription: `SHA256(file_bytes + quality)` as key
+- Cloud API calls: always compute estimated cost, print it, confirm before proceeding
+
+## Cost rules (critical — never break)
+- Default pipeline = $0 (local faster-whisper)
+- LLM calls only when `--summarize` or `--clean` explicitly passed
+- `--budget free` must reject any call that would incur cost
+
+## Testing
+- Mock at provider/source boundaries, not inside pipeline logic
+- Use `pytest-asyncio` for all async tests
+- Fixture audio: `tests/fixtures/short.wav` (≤10 sec, 16kHz mono)
+
+## Current phase: 0 — Skeleton
+`src/transcriber/core/`, `sources/`, `formatters/`, `providers/`, `agents/` not yet implemented.
+Only `cli.py` (stubbed) and `config.py` exist.

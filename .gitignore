@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# uv
+.venv/
+# Note: uv.lock IS committed (this is an app, not a library — reproducibility matters)
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Transcriber runtime
+/output/
+/tmp/
+# Only ignore media at repo root — allow tests/fixtures/*.wav etc.
+/*.wav
+/*.mp3
+/*.mp4
+/*.mkv
+/*.webm
+
+# Google OAuth token (contains credentials — never commit)
+google_token.json
+
+# Cache
+.cache/
+
+# Claude Code project-local settings
+.claude/
