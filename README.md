@@ -12,6 +12,11 @@ uv run ssm-transcriber transcribe ./video.mp4
 uv run ssm-transcriber transcribe "https://youtu.be/..."
 ```
 
+> **First-run note:** `faster-whisper` downloads model weights on first use
+> (`tiny` ≈ 75 MB, `base` ≈ 145 MB, `large-v3` ≈ 3 GB). Prefetch with
+> `uv run ssm-transcriber models download --quality balanced` to avoid waiting
+> on the first transcribe call or surprising an offline run.
+
 ## Cost model
 
 | Mode | Cost |
@@ -23,13 +28,17 @@ uv run ssm-transcriber transcribe "https://youtu.be/..."
 ## Roadmap
 
 - [x] GitHub repo + project setup
-- [ ] Phase 0: Project skeleton + CLI stub
-- [ ] Phase 1: Local file transcription (faster-whisper)
+- [x] Phase 0: Project skeleton + CLI stub (CI with ruff / mypy / pytest, lockfile committed, Python 3.12 pinned)
+- [ ] Phase 1: Local file transcription (faster-whisper) — foundations (F1–F8) are defined in [`docs/PLAN.md`](docs/PLAN.md)
 - [ ] Phase 2: YouTube source (yt-dlp)
 - [ ] Phase 3: Output formats (txt, srt, md, json)
 - [ ] Phase 4: Google Drive source
-- [ ] Phase 5: Cloud transcription providers (Deepgram, AssemblyAI)
+- [ ] Phase 5: Cloud transcription providers (Deepgram, AssemblyAI) + two-gate spend model
 - [ ] Phase 6: LLM summarization + multi-agent foundation (LangGraph)
+
+All phases build on the **Phase 1 Foundations** (`PreparedMedia`, versioned cache keys,
+two-gate spend model, `RunWorkspace`, sync-by-default, fixture/stub strategy) defined in
+[`docs/PLAN.md`](docs/PLAN.md). CI runs `ruff` + `mypy` + `pytest` on every PR.
 
 ## Stack
 

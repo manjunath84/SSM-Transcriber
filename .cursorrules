@@ -3,8 +3,8 @@
 Full roadmap: docs/PLAN.md
 
 ## Language & Runtime
-- Python 3.11+ only. Use `X | Y` union syntax, not `Optional[X]`.
-- Async-first: all provider and I/O methods must be `async def`.
+- Python 3.12 (pinned via `.python-version`). Use `X | Y` union syntax, not `Optional[X]`.
+- **Sync through Phase 4.** No `async def` on pipeline, source, provider, or formatter methods — every library in the stack (`ffmpeg-python`, `yt-dlp`, `faster-whisper`, google SDKs) is blocking-native. Revisit at Phase 5. See `docs/PLAN.md` → Phase 1 Foundations F1.
 - Package manager: `uv`. Never suggest `pip install` directly.
 - Entry point: `uv run ssm-transcriber`
 
@@ -14,22 +14,28 @@ Full roadmap: docs/PLAN.md
 - Type hints required on all function signatures
 - Pydantic v2: use `model_config = ConfigDict(...)`, not inner `class Config`
 
-## Architecture rules
+## Architecture rules (Phase 1 Foundations — see docs/PLAN.md)
 - Config access: always `from transcriber.config import settings`, never `os.environ`
+- Never log secrets — use `settings.redacted_dump()` for diagnostics (F8)
 - Provider names never hardcoded in pipeline logic — only in registry + settings validator
-- LangGraph nodes return `dict` of field updates, never mutate state in-place
-- Cache every transcription: `SHA256(file_bytes + quality)` as key
-- Cloud API calls: always compute estimated cost, print it, confirm before proceeding
+- Sources return `PreparedMedia` (F2); the pipeline never sees raw URIs
+- `RunWorkspace` per CLI invocation, `try/finally` cleanup, atomic output writes (F5)
+- Cache keys are **versioned composites**: audio hash + provider id + model id + model revision + language + VAD mode + schema version. Never `SHA256(file + quality)` (F3)
+- VAD is a sidecar — canonical transcription runs on full audio; VAD regions are used only for cost display and cloud upload reduction
+- LangGraph nodes (Phase 6b) return `dict` of field updates, never mutate state in-place
+- Cloud API calls: compute estimated cost from `speech_duration`, print it, confirm before proceeding
 
 ## Cost rules (critical — never break)
 - Default pipeline = $0 (local faster-whisper)
-- LLM calls only when `--summarize` or `--clean` explicitly passed
-- `--budget free` must reject any call that would incur cost
+- Two-gate spend model: "key configured" ≠ "provider allowed". `--budget free` rejects any paid provider even if its key is set (F4)
+- LLM: `--summarize` / `--clean` default to free Groq. Paid LLM fallback requires `--allow-paid-llm` + cost confirmation — no silent escalation
 
-## Testing
+## Testing (Phase 1 Foundations F7)
 - Mock at provider/source boundaries, not inside pipeline logic
-- Use `pytest-asyncio` for all async tests
-- Fixture audio: `tests/fixtures/short.wav` (≤10 sec, 16kHz mono)
+- Tests are sync (`pytest`, not `pytest-asyncio`) — matches the sync core decision
+- Fixtures in `tests/fixtures/`: `short_speech.wav`, `short_speech_with_silence.wav`, `tiny_video.mp4`, `golden/`
+- Adapter stubs in `tests/stubs/` for `yt-dlp`, providers, LLMs — no network in CI
+- Integration tests gated on `SSM_INTEGRATION=1`, run in a separate workflow
 
 ## Current phase: 0 — Skeleton
 `src/transcriber/core/`, `sources/`, `formatters/`, `providers/`, `agents/` not yet implemented.
