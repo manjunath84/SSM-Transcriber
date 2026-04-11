@@ -11,7 +11,7 @@ build/
 
 # uv
 .venv/
-uv.lock
+# Note: uv.lock IS committed (this is an app, not a library — reproducibility matters)
 
 # Environment
 .env
@@ -48,3 +48,6 @@ google_token.json
 
 # Cache
 .cache/
+
+# Claude Code project-local settings
+.claude/

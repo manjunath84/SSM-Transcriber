@@ -22,24 +22,54 @@ console = Console()
 
 @app.command()
 def transcribe(
-    source: Annotated[str, typer.Argument(help="File path, YouTube URL, or drive://FILE_ID")],
-    output: Annotated[Path | None, typer.Option("-o", "--output", help="Output file path")] = None,
-    format: Annotated[str, typer.Option("-f", "--format", help="Output format: txt | srt | md | json")] = "txt",
-    quality: Annotated[str, typer.Option("-q", "--quality", help="Model quality: fast | balanced | best")] = "balanced",
-    language: Annotated[str | None, typer.Option("-l", "--language", help="Language code, e.g. 'en'. Default: auto-detect")] = None,
-    no_cache: Annotated[bool, typer.Option("--no-cache", help="Skip cache and force re-transcription")] = False,
-    budget: Annotated[str, typer.Option("--budget", help="Cost ceiling: free | low | best")] = "free",
-    summarize: Annotated[bool, typer.Option("--summarize", help="Generate LLM summary after transcription")] = False,
-    yes: Annotated[bool, typer.Option("-y", "--yes", help="Skip cost confirmation prompts")] = False,
+    source: Annotated[
+        str,
+        typer.Argument(help="File path, YouTube URL, or drive://FILE_ID"),
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option("-o", "--output", help="Output file path"),
+    ] = None,
+    format: Annotated[
+        str,
+        typer.Option("-f", "--format", help="Output format: txt | srt | md | json"),
+    ] = "txt",
+    quality: Annotated[
+        str,
+        typer.Option("-q", "--quality", help="Model quality: fast | balanced | best"),
+    ] = "balanced",
+    language: Annotated[
+        str | None,
+        typer.Option("-l", "--language", help="Language code, e.g. 'en'. Default: auto-detect"),
+    ] = None,
+    no_cache: Annotated[
+        bool,
+        typer.Option("--no-cache", help="Skip cache and force re-transcription"),
+    ] = False,
+    budget: Annotated[
+        str,
+        typer.Option("--budget", help="Cost ceiling: free | low | best"),
+    ] = "free",
+    summarize: Annotated[
+        bool,
+        typer.Option("--summarize", help="Generate LLM summary after transcription"),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("-y", "--yes", help="Skip cost confirmation prompts"),
+    ] = False,
 ) -> None:
     """Transcribe audio or video from any supported source."""
     console.print("[yellow]Phase 1 not yet implemented.[/yellow]")
-    console.print(f"  source   = {source}")
-    console.print(f"  format   = {format}")
-    console.print(f"  quality  = {quality}")
-    console.print(f"  language = {language or 'auto'}")
-    console.print(f"  budget   = {budget}")
-    console.print(f"  cache    = {'disabled' if no_cache else 'enabled'}")
+    console.print(f"  source    = {source}")
+    console.print(f"  output    = {output or 'auto'}")
+    console.print(f"  format    = {format}")
+    console.print(f"  quality   = {quality}")
+    console.print(f"  language  = {language or 'auto'}")
+    console.print(f"  budget    = {budget}")
+    console.print(f"  summarize = {summarize}")
+    console.print(f"  cache     = {'disabled' if no_cache else 'enabled'}")
+    console.print(f"  yes       = {yes}")
     raise typer.Exit(code=0)
 
 
@@ -54,10 +84,11 @@ def providers() -> None:
     table.add_column("Cost/min")
     table.add_column("Status")
 
+    pending = "[yellow]Phase 5 — not yet implemented[/yellow]"
     table.add_row("faster_whisper", "local", "$0.000", "[green]available (no key needed)[/green]")
-    table.add_row("deepgram",       "cloud", "$0.006", "[yellow]Phase 5 — not yet implemented[/yellow]")
-    table.add_row("assemblyai",     "cloud", "$0.009", "[yellow]Phase 5 — not yet implemented[/yellow]")
-    table.add_row("openai_whisper", "cloud", "$0.020", "[yellow]Phase 5 — not yet implemented[/yellow]")
+    table.add_row("deepgram",       "cloud", "$0.006", pending)
+    table.add_row("assemblyai",     "cloud", "$0.009", pending)
+    table.add_row("openai_whisper", "cloud", "$0.020", pending)
 
     console.print(table)
 
@@ -77,10 +108,17 @@ def auth(
 
 @app.command()
 def config() -> None:
-    """Show current configuration (reads from .env and environment)."""
-    console.print("[yellow]Config command not yet implemented (Phase 1).[/yellow]")
-    console.print("Create a [bold].env[/bold] file from [bold].env.example[/bold] to configure.")
-    raise typer.Exit(code=0)
+    """Show current configuration (reads from .env and TRANSCIBER_* env vars)."""
+    from transciber.config import settings
+
+    table = Table(title="Transciber Settings", show_header=True, header_style="bold cyan")
+    table.add_column("Setting", style="bold")
+    table.add_column("Value")
+
+    for key, value in settings.model_dump().items():
+        table.add_row(f"TRANSCIBER_{key.upper()}", str(value))
+
+    console.print(table)
 
 
 # ── entry point ──────────────────────────────────────────────────────────────

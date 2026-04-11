@@ -7,7 +7,7 @@ name = "transciber"
 version = "0.1.0"
 description = "Multi-agent audio/video transcription pipeline — local-first, cloud-agnostic, cost-optimized"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "faster-whisper>=1.0.0",
     "yt-dlp>=2024.1.0",
