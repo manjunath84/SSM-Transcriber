@@ -349,28 +349,33 @@ receipts.
 
 **Walk the interviewer through the SSM-Transcriber workflow:**
 
-1. **Five context files, one per tool.** Claude Code reads `CLAUDE.md`,
+1. **Five root adapters, one operator guide.** Claude Code reads `CLAUDE.md`,
    Cursor reads `.cursorrules`, Copilot reads
    `.github/copilot-instructions.md`, Codex reads `AGENTS.md`, Gemini CLI
-   reads `GEMINI.md`. All five enforce the same rules — sync through
-   Phase 4, pydantic-settings for config, versioned cache keys, two-gate
-   spend model — so switching tools doesn't produce inconsistent code.
+   reads `GEMINI.md`. Those root files keep the small set of startup guardrails
+   inline, then route the tool to `docs/ai/README.md` for workflow routing and
+   to `docs/PLAN.md` for detailed contracts.
 2. **Plan review before code review.** Before Phase 1, the plan was sent
    to an AI reviewer. It found eight architectural issues — the most
    expensive classes of bug — before any code existed. "I catch
    architecture mistakes in plan documents, not in code reviews."
-3. **"Don't do" lists as guardrails.** The context files include explicit
+3. **"Don't do" lists as guardrails.** The adapter files include explicit
    prohibitions: no `async def`, no `os.environ`, no `print()`, no
    `SHA256(file + quality)` cache keys. These are more effective than
    positive instructions because they contradict the AI's training
    priors.
-4. **Verification after every AI-generated change.**
+4. **Workflow-heavy tasks use runbooks, not memory.** Review, ship, and
+   PR-prep steps are captured in runbooks and slash commands, so the AI
+   has to produce a checklist or evidence table instead of improvising a
+   vague "looks good."
+5. **Verification after every AI-generated change.**
    `uv run pytest && uv run ruff check src/ && uv run mypy src/` — the
    AI's confidence is uninformative, only the test suite is reliable.
 
-**The one-liner:** "I maintain five AI context files in lockstep so every
-tool I use gives the same answer. The context files are rules, not prose —
-'what not to do' lists, code examples, and architecture contracts."
+**The one-liner:** "I keep short tool-specific adapters for first-turn
+safety, one operator guide for workflow routing, and explicit runbooks for
+review/ship/PR prep so every AI tool behaves consistently without copying the
+whole rulebook into every prompt."
 
 **Pointers:** [`vibe-coding-notes.md`](vibe-coding-notes.md),
 [`glossary.md#ai-context-file`](glossary.md#ai-context-file),
@@ -571,9 +576,9 @@ down.
 - **"The repo doubles as a learning artifact — `docs/learn/` has a
   running narrative, a Java-to-Python idiom reference, and a glossary
   of AI/ML concepts as they land in the code."**
-- **"I maintain five AI context files in lockstep so every tool gives
-  the same answer. The files are rules, not prose — 'what not to do'
-  lists, code examples, and architecture contracts."**
+- **"I keep short root adapters for each AI tool, one operator guide for
+  workflow routing, and runbooks for the multi-step tasks. That keeps the
+  tools aligned without copying the whole rulebook into every prompt."**
 - **"The most effective AI technique I've found is code examples in
   context files. One 3-line snippet prevents more mistakes than a page
   of English."**

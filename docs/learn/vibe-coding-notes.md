@@ -19,6 +19,7 @@
 - [What is vibe coding](#what-is-vibe-coding)
 - [AI context files](#ai-context-files)
 - [Multi-tool context strategy](#multi-tool-context-strategy)
+- [Workflow commands should earn their keep](#workflow-commands-should-earn-their-keep)
 - [Context window is currency](#context-window-is-currency)
 - ["Don't do" lists beat "do" lists](#dont-do-lists-beat-do-lists)
 - [Code examples as anchors](#code-examples-as-anchors)
@@ -65,16 +66,17 @@ AI assistance. The context file strategy is in
 automatically when you open a session. Each tool has its own convention:
 Claude Code reads `CLAUDE.md`, Cursor reads `.cursorrules`, Copilot reads
 `.github/copilot-instructions.md`, Codex reads `AGENTS.md`, Gemini CLI
-reads `GEMINI.md`. The content is project rules, architecture contracts,
-code patterns, and "what not to do" guardrails.
+reads `GEMINI.md`. In this repo those root files are compact **adapters**:
+they keep the startup guardrails the tool must see immediately, then point to
+`docs/ai/README.md` for workflow routing.
 
 **Why they exist.** Without a context file, every AI session starts from
 scratch — the tool doesn't know your stack, your conventions, or your
 constraints. It will generate `pip install` commands in a `uv` project,
 `async def` in a sync codebase, `os.environ` reads in a pydantic-settings
-project, and `print()` statements in a `logging`-based codebase. The
-context file is the cheapest way to prevent these classes of error: write
-the rule once, every session inherits it.
+project, and `print()` statements in a `logging`-based codebase. The root
+adapter is the cheapest way to prevent these classes of error on the first
+turn; the operator guide and runbooks handle the workflow-heavy detail.
 
 **Java analogue:** think of it as a `.editorconfig` + `checkstyle.xml` +
 `CONTRIBUTING.md` rolled into one, except it's read by your AI pair
@@ -91,8 +93,9 @@ always use `from transcriber.config import settings`."
    `os.environ`" is actionable.
 3. **Include the current phase.** AI tools will try to implement features
    from later phases if you don't tell them what exists now.
-4. **Link to the authoritative source.** `See docs/PLAN.md` prevents the
-   context file from becoming a stale copy of the plan.
+4. **Link to the authoritative sources.** Root files should point to
+   `docs/PLAN.md`, `docs/learn/README.md`, and `docs/ai/README.md` instead
+   of trying to inline the entire workflow system.
 
 **Where it shows up:**
 [`CLAUDE.md`](../../CLAUDE.md),
@@ -105,25 +108,25 @@ always use `from transcriber.config import settings`."
 
 ## Multi-tool context strategy
 
-**The decision.** Maintain five separate AI context files — one per tool —
-instead of one shared file.
+**The decision.** Maintain five separate root adapters — one per tool — plus
+one shared operator guide in `docs/ai/`.
 
 **Why not one file?** Each tool reads only its own conventional filename.
 There is no standard that all tools share. A single `AI-INSTRUCTIONS.md`
 would be ignored by every tool unless you manually paste it into every
-session. Five files that each tool auto-reads beats one file that no tool
-auto-reads.
+session. The adapters solve first-turn safety; the operator guide and runbooks
+solve duplication and workflow drift.
 
-**The cost.** Every rule change must be propagated to five files. This is a
-real tax on every PR. The project accepts this tax because "my AI tools all
-give the same answer" is worth more than "I only have to edit one file."
+**The cost.** You still maintain five tool files, but they are smaller and more
+stable. The source-of-truth rules live elsewhere, so a new workflow or review
+rule does not have to be copied into every auto-loaded file.
 
 **How to manage the cost:**
-- Keep the files focused on *rules and contracts*, not prose explanations.
-- Use `docs/PLAN.md` as the single source of truth; context files *point*
-  to it rather than duplicating it.
-- When you update one file, `grep` the rule text across all five to verify
-  consistency.
+- Keep the root files focused on startup guardrails, not long prose.
+- Keep technical policy in `docs/PLAN.md` and living-doc rules in
+  `docs/learn/README.md`.
+- Use `docs/ai/README.md` and `docs/ai/runbooks/` for workflow routing.
+- When you update workflow rules, check adapters and runbooks together.
 
 **Anti-pattern avoided:** some projects put their entire README into the
 context file. This wastes most of the context window on information the
@@ -131,9 +134,30 @@ AI doesn't need (badges, installation instructions for humans, license
 text). Context files should contain only what the AI needs to write
 *correct code*.
 
-**Where it shows up:** all five context files in the repo root. The
-consistency check is in the PR #4 test plan:
-`grep -l "Author context — teaching register" CLAUDE.md AGENTS.md GEMINI.md .cursorrules .github/copilot-instructions.md`.
+**Where it shows up:** the five root adapters, `docs/ai/README.md`, and the
+runbooks under `docs/ai/runbooks/`.
+
+---
+
+## Workflow commands should earn their keep
+
+**The pattern.** A workflow command is worth adding only when it saves real
+thought or packages a repo-specific checklist. Commands that merely restate
+"read the docs and do the task" are maintenance overhead disguised as
+structure.
+
+**What this looks like here:** this repo keeps only four Claude Code slash
+commands:
+
+- `/review` — findings list + evidence table
+- `/ship` — ship-readiness checklist with git-safety guardrails
+- `/new-pr` — PR narrative workflow without speculative living-doc writes
+- `/phase-check` — explicit F1–F8 audit
+
+Generic launchers like `/build` and `/test` were intentionally left out because
+they do not buy enough repo-specific value.
+
+**Where it shows up:** `.claude/commands/` and `docs/ai/runbooks/`.
 
 ---
 
@@ -150,17 +174,16 @@ your actual code.
   source code out of the AI's working memory during a coding session.
 - Rules are compressed: "Never `os.environ` — use `settings`" instead of
   a paragraph explaining why environment variables are bad.
-- The teaching register block (6 numbered points about PR explainers and
-  living docs) takes ~200 tokens per file. This is the most expensive
-  non-code content in the context files. Whether it's worth the cost
-  depends on how often the AI writes PR descriptions vs. source code.
+- The root adapters keep only a short pointer to the learning docs instead of
+  a long teaching-register block. Workflow detail lives in `docs/ai/` and
+  `docs/learn/`, not in every auto-loaded file.
 
 **Lesson learned:** when adding content to a context file, ask: "Will this
 prevent a code-generation mistake?" If the answer is "no, it's for humans"
 then it belongs in `docs/learn/`, not in the context file.
 
-**Where it shows up:** the deliberate brevity of all five context files.
-Compare [`CLAUDE.md`](../../CLAUDE.md) (~75 lines of rules) to
+**Where it shows up:** the deliberate brevity of the root adapters.
+Compare [`CLAUDE.md`](../../CLAUDE.md) (~40 lines of rules) to
 [`docs/learn/interview-prep.md`](interview-prep.md) (~480 lines of narrative).
 The former is for AI; the latter is for humans. Mixing them would degrade
 both.
@@ -222,7 +245,7 @@ from transcriber.config import settings
 # Never read os.environ directly.
 ```
 
-This is the single most effective block in any of the five context files.
+This is the single most effective block in any of the root adapter files.
 It tells the AI the exact import path, the attribute naming style, and the
 anti-pattern, all in three lines.
 
@@ -272,10 +295,10 @@ you haven't built. None of it is load-bearing, and it rots immediately.
 
 **This project's rule:** "only add an entry when a real code change makes
 that entry necessary" (from [`README.md`](README.md)). Every entry in
-[`python-notes.md`](python-notes.md) cites a real file.
-Every entry in [`glossary.md`](glossary.md) cites a real plan section.
-The test is: "if I grep the repo for this concept, do I find it in a
-non-docs file?"
+[`python-notes.md`](python-notes.md) should cite a real file, and every
+entry in [`glossary.md`](glossary.md) should cite a real repo location or
+source doc that actually exists. The test is: "if I grep the repo for this
+concept, do I find a real anchor for it?"
 
 **Where it shows up:** the "Living doc rule" in [`README.md`](README.md).
 
@@ -299,7 +322,8 @@ actually make sense in context? The analogy-writing step catches concepts
 that were imported reflexively ("`asyncio` because modern Python") rather
 than for a real reason.
 
-**Where it shows up:** the "Author context" block in all five context files;
+**Where it shows up:** the teaching-register pointers in the root adapters and
+the contribution rules in [`README.md`](README.md);
 [`python-notes.md`](python-notes.md) (every entry has a Java analogue);
 [`glossary.md`](glossary.md) (selected entries have Java analogues).
 

@@ -1,48 +1,14 @@
 # SSM-Transcriber — Cursor Rules
 
-Full roadmap: docs/PLAN.md
-
-## Language & Runtime
-- Python 3.12 (pinned via `.python-version`). Use `X | Y` union syntax, not `Optional[X]`.
-- **Sync through Phase 4.** No `async def` on pipeline, source, provider, or formatter methods — every library in the stack (`ffmpeg-python`, `yt-dlp`, `faster-whisper`, google SDKs) is blocking-native. Revisit at Phase 5. See `docs/PLAN.md` → Phase 1 Foundations F1.
-- Package manager: `uv`. Never suggest `pip install` directly.
-- Entry point: `uv run ssm-transcriber`
-
-## Code style
-- Line length: 100 chars (ruff enforced)
-- Imports: stdlib → third-party → local, blank line between groups
-- Type hints required on all function signatures
-- Pydantic v2: use `model_config = ConfigDict(...)`, not inner `class Config`
-
-## Architecture rules (Phase 1 Foundations — see docs/PLAN.md)
-- Config access: always `from transcriber.config import settings`, never `os.environ`
-- Never log secrets — use `settings.redacted_dump()` for diagnostics (F8)
-- Provider names never hardcoded in pipeline logic — only in registry + settings validator
-- Sources return `PreparedMedia` (F2); the pipeline never sees raw URIs
-- `RunWorkspace` per CLI invocation, `try/finally` cleanup, atomic output writes (F5)
-- Cache keys are **versioned composites**: audio hash + provider id + model id + model revision + language + VAD mode + schema version. Never `SHA256(file + quality)` (F3)
-- VAD is a sidecar — canonical transcription runs on full audio; VAD regions are used only for cost display and cloud upload reduction
-- LangGraph nodes (Phase 6b) return `dict` of field updates, never mutate state in-place
-- Cloud API calls: compute estimated cost from `speech_duration`, print it, confirm before proceeding
-
-## Cost rules (critical — never break)
-- Default pipeline = $0 (local faster-whisper)
-- Two-gate spend model: "key configured" ≠ "provider allowed". `--budget free` rejects any paid provider even if its key is set (F4)
-- LLM: `--summarize` / `--clean` default to free Groq. Paid LLM fallback requires `--allow-paid-llm` + cost confirmation — no silent escalation
-
-## Testing (Phase 1 Foundations F7)
-- Mock at provider/source boundaries, not inside pipeline logic
-- Tests are sync (`pytest`, not `pytest-asyncio`) — matches the sync core decision
-- Fixtures in `tests/fixtures/`: `short_speech.wav`, `short_speech_with_silence.wav`, `tiny_video.mp4`, `golden/`
-- Adapter stubs in `tests/stubs/` for `yt-dlp`, providers, LLMs — no network in CI
-- Integration tests gated on `SSM_INTEGRATION=1`, run in a separate workflow
-
-## Current phase: 0 — Skeleton
-`src/transcriber/core/`, `sources/`, `formatters/`, `providers/`, `agents/` not yet implemented.
-Only `cli.py` (stubbed) and `config.py` exist.
-
-## Author context — teaching register and interview prep
-Primary author is a senior Java developer transitioning to AI/ML engineering. Learning artifacts live in `docs/learn/` — read that folder's README first. On every PR:
-- **Teaching register by default.** Explain *why*; give a Java analogue when a Python/AI concept first appears.
-- **Update living docs in the same PR.** Idioms → `docs/learn/python-notes.md`. AI/ML terms → `docs/learn/glossary.md`. PR explainer → `docs/learn/prs/pr-NNN-<slug>.md`.
-- **Cite real files.** Broken pointers block review. Full conventions: `docs/learn/README.md`. Teaching register does not override `docs/PLAN.md` F1–F8.
+- Read `docs/ai/README.md` for task routing, `docs/PLAN.md` for contracts, and
+  `docs/learn/README.md` for living-doc workflow.
+- Python 3.12 + `uv`; entry point is `uv run ssm-transcriber`.
+- Current phase: 0 skeleton (`cli.py` and `config.py` only).
+- Keep the core sync through Phase 4; no `async def` in pipeline/source/provider/formatter code.
+- Always use `from transcriber.config import settings`; never `os.environ`.
+- Cache keys are versioned composites, never `SHA256(file + quality)`.
+- Default spend path is `$0`; all cloud usage follows the two-gate spend model.
+- `RunWorkspace` owns temp artifacts; output writes must be atomic in the destination dir.
+- VAD is a sidecar only.
+- No `print()` in library code; no full settings/secret dumps.
+- Living docs update only when the concept exists and can cite a real repo location.

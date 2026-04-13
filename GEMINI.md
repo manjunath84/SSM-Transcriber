@@ -1,56 +1,32 @@
 # SSM-Transcriber — Gemini CLI Context
 
-> **Roadmap:** See [`docs/PLAN.md`](docs/PLAN.md) for the full phased
-> implementation plan.
+Read:
+- [`docs/ai/README.md`](docs/ai/README.md)
+- [`docs/PLAN.md`](docs/PLAN.md)
+- [`docs/learn/README.md`](docs/learn/README.md) when touching PR/docs workflow
 
-## What this project does
-Transcribes audio and video from local files, YouTube URLs, and Google Drive.
-Uses `faster-whisper` locally by default (free, no API keys). Cloud transcription
-providers (Deepgram, AssemblyAI) are opt-in via env vars.
+## Project
 
-## Why these technology choices
-- `uv` instead of pip/poetry: 10-100x faster, 2025 Python standard
-- `faster-whisper` instead of openai-whisper: 3-5x faster, same accuracy, runs offline
-- `litellm` for LLM calls: swap providers without code changes
-- `langgraph` for multi-agent (Phase 6+): explicit state machine, easy to add Notes Agent
-- Local-first philosophy: default run costs $0, cloud is always opt-in
+Audio/video transcription from local files first; YouTube, Google Drive, cloud
+providers, and LangGraph arrive in later phases.
 
-## Running the project
+## Run commands
+
 ```bash
 uv sync
-uv run ssm-transcriber transcribe ./video.mp4
-uv run ssm-transcriber transcribe "https://youtu.be/..."
 uv run ssm-transcriber --help
+uv run pytest
 ```
 
-## Current phase: 0 — Skeleton
-CLI stub exists. Audio extraction and transcription not yet implemented (Phase 1).
+## Current phase
 
-## Key entry points
-- CLI: `src/transcriber/cli.py` → `app` (typer)
-- Config: `src/transcriber/config.py` → `settings` singleton (pydantic-settings)
-- Core pipeline (Phase 1+): `src/transcriber/core/`
+Phase 0 skeleton. Only the CLI stub and config singleton are implemented.
 
-## Cost rules (never violate — see `docs/PLAN.md` § Phase 1 Foundations F4)
-1. Default: local faster-whisper only, $0
-2. **Two-gate spend model:** "API key configured" does not mean "provider will be used." `--budget free` (the default) rejects any paid provider even if its key is set. A paid provider is only used when both the key is configured *and* the budget allows it.
-3. Always show estimated cost (from VAD `speech_duration`, not total media duration) + require confirmation before any cloud API call. `--yes` skips the prompt but still honors the budget.
-4. LLM: `--summarize` / `--clean` default to the free Groq tier. Falling back to any paid LLM (Gemini, Claude, OpenAI) requires `--allow-paid-llm` + cost confirmation — no silent escalation.
-5. Cache keys are **versioned composites** (F3), not raw file hashes — changing the model, language, or VAD mode must produce a different key.
+## Inline guardrails
 
-## Core conventions (binding)
-- **Sync through Phase 4.** No `async def` on pipeline, source, provider, or formatter methods. Revisit at Phase 5 only if real concurrency appears. (F1)
-- Sources return `PreparedMedia` (F2); the pipeline never sees raw URIs.
-- Every CLI invocation uses one `RunWorkspace` with `try/finally` cleanup and atomic output writes via `os.replace()`. (F5)
-- VAD is a **sidecar**, not a transform of the canonical audio — segment timestamps always match the original media timeline.
-- Never log secrets; use `settings.redacted_dump()` for any diagnostic output.
-
-## Google Drive (Phase 4)
-Uses `google-api-python-client`. Auth: `transcriber auth google-drive` → OAuth2 → saves token.
-URI format: `drive://FILE_ID`
-
-## Author context — teaching register and interview prep
-Primary author is a senior Java developer transitioning to AI/ML engineering. Learning artifacts live in [`docs/learn/`](docs/learn/README.md). On every PR, apply these rules:
-- **Teaching register by default.** Explain the *why*; give a Java analogue when a Python/AI concept first appears.
-- **Update living docs in the same PR.** Idioms → [`python-notes.md`](docs/learn/python-notes.md). AI/ML terms → [`glossary.md`](docs/learn/glossary.md). PR explainer → `docs/learn/prs/pr-NNN-<slug>.md`.
-- **Cite real files.** Broken pointers in learning docs block review. Full conventions: [`docs/learn/README.md`](docs/learn/README.md). Teaching register does not override `docs/PLAN.md` F1–F8.
+- Keep the core sync through Phase 4
+- No direct `os.environ`
+- Default spend path is `$0`; two-gate spend model applies to all cloud calls
+- Cache keys are versioned composites, not raw file hashes
+- VAD is a sidecar only
+- No speculative living-doc entries

@@ -1,9 +1,11 @@
 # PR Explainers
 
-> Human-readable per-PR changelog. One file per merged PR, named
+> Human-readable per-PR changelog. One file per PR, named
 > `pr-NNN-<slug>.md`, using the template in
-> [`../README.md`](../README.md#pr-explainer-template). Written **before**
-> the PR is opened so the PR body can link to it.
+> [`../README.md`](../README.md#pr-explainer-template). Drafted **before**
+> the PR is opened so the PR body can link to it. If the number is not known
+> yet, draft the content first and write the numbered file once the number
+> exists; update `Merged:` after merge.
 
 ## Index (chronological, oldest first)
 
@@ -13,12 +15,14 @@
 | #2 | Phase 0 — rename to SSM-Transcriber | 0 | [`pr-002-phase-0-rename.md`](pr-002-phase-0-rename.md) |
 | #3 | Phase 1 Foundations (F1–F8) | 1 (plan) | [`pr-003-phase-1-foundations.md`](pr-003-phase-1-foundations.md) |
 | #4 | `docs/learn/` + teaching register | — | [`pr-004-docs-learn-teaching-register.md`](pr-004-docs-learn-teaching-register.md) |
+| #5 | AI operator guide + workflow commands | infra | [`pr-005-ai-operator-guide-workflow-commands.md`](pr-005-ai-operator-guide-workflow-commands.md) |
 
 ## Conventions
 
 - **Stubs vs. fresh entries.** PRs #1 and #2 predate this folder, so their
   explainers are short retrospective stubs. Every PR from #3 onward is
-  written to template *before* the PR is opened.
+  drafted to template *before* the PR is opened and has its `Merged:` line
+  updated after merge.
 - **"Explainer" is not "summary".** A summary tells you what changed. An
   explainer tells you what problem existed, why this approach, and what a
   Java dev new to Python should take away from it.
