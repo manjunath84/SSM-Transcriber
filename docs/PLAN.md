@@ -740,7 +740,7 @@ Rules for maintaining this stack:
 
 1. **README roadmap checkbox** — tick off the completed phase in `README.md` before opening the PR
 2. **CI must be green** — no phase merges until ruff, mypy, and pytest all pass on the PR
-3. **AI workflow docs updated** — keep `docs/PLAN.md`,
-   `docs/learn/README.md`, `docs/ai/README.md`, the runbooks, and the root
-   tool adapters aligned with the new current phase and any new conventions
+3. **AI workflow docs updated** — update any affected source docs, adapters,
+   runbooks, or command files when the current phase or workflow conventions
+   change; if a layer needed no update, note that explicitly in the PR
 4. **Phase branch deleted after merge** — keep the branch list clean

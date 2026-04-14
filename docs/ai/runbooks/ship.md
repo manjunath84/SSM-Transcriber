@@ -28,8 +28,7 @@ Return:
 
 ## Git safety
 
+- Do not auto-squash
 - For any history rewrite (squash, rebase, `reset --soft`, force-push), explain
   the exact commands you would run and ask the user for explicit approval first
-- Do not auto-squash
 - Do not assume `gh` is configured or that a PR number already exists
-

@@ -1,6 +1,8 @@
 # Phase Check Runbook
 
 Audit the current branch against Phase 1 Foundations (F1–F8).
+Use this mainly on code-bearing branches; for doc-only branches, prefer the
+full review runbook.
 
 ## Read first
 
@@ -28,4 +30,3 @@ Use `PASS`, `FAIL`, or `N/A`.
 | F6 | First-run model download visibility |
 | F7 | Fixtures, stubs, and integration-test gating |
 | F8 | `print()`, `os.environ`, full settings dumps, and logging hygiene |
-
