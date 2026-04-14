@@ -213,8 +213,8 @@ git push
 **Why this section exists:** Several Phase 1 decisions are load-bearing for
 Phases 2–6. Getting them wrong is cheap to fix now and expensive to fix after
 YouTube, cloud providers, formatters, and LangGraph pile on top. This section
-is the **single source of truth** for these contracts — the AI context files
-(`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`) must agree with it.
+is the **single source of truth** for these contracts — the root tool files,
+`docs/ai/README.md`, and any workflow runbooks must agree with it.
 
 #### F1. Sync vs. async (decision: sync through Phase 4)
 
@@ -699,15 +699,27 @@ The graph emits a `transcription_complete` event as a LangGraph message at the e
 
 ---
 
-## AI Coding Context File Strategy
+## AI Coding Context and Workflow Strategy
 
-All 5 files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.github/copilot-instructions.md`) contain the same core information adapted for each tool's format:
-- Project purpose and run commands (`uv sync`, `uv run ssm-transcriber --help`)
-- Current phase and what's implemented vs stubbed
-- Architecture conventions (async, no hardcoded provider names, etc.)
-- Where to add new sources / providers / formatters
+The repo now uses three AI-facing layers:
 
-These files get updated at the end of each phase to reflect what's now implemented.
+1. **Source docs** — `docs/PLAN.md` owns technical contracts and
+   `docs/learn/README.md` owns living-doc / teaching-register rules.
+2. **Root tool adapters** — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+   `.cursorrules`, and `.github/copilot-instructions.md` keep the few inline
+   guardrails an AI needs before it can safely start.
+3. **Workflow docs** — `docs/ai/README.md` routes tools to the right source
+   docs, and `docs/ai/runbooks/` holds checklist-heavy workflows. Claude Code
+   may load those runbooks through `.claude/commands/`.
+
+Rules for maintaining this stack:
+
+- Do not create a second technical source of truth outside `docs/PLAN.md`
+- Keep root adapters compact but self-sufficient; a tool should not need a
+  first-turn file read just to avoid obvious mistakes
+- Keep workflow-heavy prompts in runbooks, not in always-loaded tool files
+- When rules change, update the source docs first and then align adapters and
+  runbooks
 
 ---
 
@@ -728,5 +740,7 @@ These files get updated at the end of each phase to reflect what's now implement
 
 1. **README roadmap checkbox** — tick off the completed phase in `README.md` before opening the PR
 2. **CI must be green** — no phase merges until ruff, mypy, and pytest all pass on the PR
-3. **AI context files updated** — each phase updates `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.github/copilot-instructions.md` to reflect the new "current phase" and any new conventions
+3. **AI workflow docs updated** — update any affected source docs, adapters,
+   runbooks, or command files when the current phase or workflow conventions
+   change; if a layer needed no update, note that explicitly in the PR
 4. **Phase branch deleted after merge** — keep the branch list clean

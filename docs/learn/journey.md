@@ -1,12 +1,50 @@
 # Journey
 
 > Running narrative of what was built in SSM-Transcriber and *why*, written in
-> teaching register. **Newest first.** Each merged PR gets one entry. This is
+> teaching register. **Newest first.** Each PR gets one entry; update the
+> `Merged:` line after merge. This is
 > the companion to the commit history — `git log` tells you *what*, this file
 > tells you *why it mattered and what you should take away from it*.
 >
 > If you're reading this for the first time, scroll to the bottom and read
 > forward. If you're catching up, read top-down.
+
+---
+
+## PR #5 — AI operator guide + workflow commands
+
+**Merged:** TBD  |  **Branch:** `infra/agent-skills-commands`
+**Explainer:** [`prs/pr-005-ai-operator-guide-workflow-commands.md`](prs/pr-005-ai-operator-guide-workflow-commands.md)
+
+PR #5 is the repo admitting that "five context files in lockstep" was the
+right starting move and the wrong long-term maintenance model. It worked for
+Phase 0 and PR #3 because the rule set was still small. But as the repo added
+teaching-register rules, F1–F8 contracts, and tool-specific extensions, every
+workflow tweak wanted to touch half the root.
+
+The fix here is not "one giant AI doc." That would only move the drift problem
+to a different file and make every tool rediscover more prose than it needs on
+the first turn. Instead this PR adds an operator-guide layer in `docs/ai/` and
+a small set of runbooks for workflow-heavy tasks. `docs/PLAN.md` still owns
+technical contracts; `docs/learn/README.md` still owns living-doc rules.
+
+The second design choice is that workflow commands have to earn their keep.
+`/build` and `/test` look neat, but they do not save enough repo-specific
+thought to justify another maintained file. The commands that remain
+(`review`, `ship`, `new-pr`, `phase-check`) all exist because they package a
+real checklist, evidence table, or narrative workflow.
+
+The takeaway: centralize source docs, not every sentence. Keep root tool files
+short but still self-sufficient, and move multi-step reasoning into runbooks
+that tools can load on demand.
+
+AI workflow concepts introduced:
+[`AI context file`](glossary.md#ai-context-file),
+[`runbook`](glossary.md#runbook),
+[`slash command`](glossary.md#slash-command).
+Vibe-coding lessons:
+[`Multi-tool context strategy`](vibe-coding-notes.md#multi-tool-context-strategy),
+[`Workflow commands should earn their keep`](vibe-coding-notes.md#workflow-commands-should-earn-their-keep).
 
 ---
 
@@ -154,13 +192,12 @@ The first real PR. It set up a runnable (if stubbed) Python project with:
 - `pytest` for the test harness — more flexible than JUnit because test
   functions are just plain `def test_...` functions in any file matching
   `test_*.py`. No `@Test` annotation required; no class hierarchy required.
-- Five AI context files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`,
-  `.github/copilot-instructions.md`) so any AI tool the author uses —
-  Claude Code, Codex, Gemini CLI, Cursor, Copilot — reads the same rules and
-  writes code that matches the project's conventions. This is a
-  **deliberately redundant** design: each tool reads its own file, so
-  updating them all in lockstep is a small tax on every PR in exchange for
-  "my AI tools all give the same answer."
+- Five AI root adapters (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+  `.cursorrules`, `.github/copilot-instructions.md`) so any AI tool the author
+  uses — Claude Code, Codex, Gemini CLI, Cursor, Copilot — starts with the
+  same startup guardrails. In PR #5 this grows into a fuller system with
+  `docs/ai/README.md` and runbooks, but the underlying reason is the same:
+  every tool should start from the same rules.
 
 The PR ended in a stubbed `uv run ssm-transcriber --help` that prints the
 command tree but refuses to actually transcribe anything. That's Phase 0's

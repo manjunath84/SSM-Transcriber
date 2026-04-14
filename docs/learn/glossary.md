@@ -33,9 +33,10 @@ A file at the repo root that an AI coding tool reads automatically when it
 opens a session. Each tool has its own convention: Claude Code reads
 `CLAUDE.md`, Cursor reads `.cursorrules`, Copilot reads
 `.github/copilot-instructions.md`, Codex reads `AGENTS.md`, Gemini CLI
-reads `GEMINI.md`. The file contains project rules, architecture contracts,
-code patterns, and "what not to do" guardrails — everything the AI needs
-to generate code that matches the project's conventions on the first try.
+reads `GEMINI.md`. In this repo the root files are compact adapters: they keep
+startup guardrails inline, then route the tool to `docs/ai/README.md` for
+workflow routing and to `docs/PLAN.md` / `docs/learn/README.md` for the
+authoritative rules.
 
 **Java analogue:** `.editorconfig` + `checkstyle.xml` + `CONTRIBUTING.md`
 rolled into one, except read by your AI pair programmer instead of a
@@ -47,6 +48,7 @@ static analysis tool.
 [`GEMINI.md`](../../GEMINI.md),
 [`.cursorrules`](../../.cursorrules),
 [`.github/copilot-instructions.md`](../../.github/copilot-instructions.md).
+Operator guide in [`../ai/README.md`](../ai/README.md).
 Design rationale in [`vibe-coding-notes.md#ai-context-files`](vibe-coding-notes.md#ai-context-files).
 
 ---
@@ -208,6 +210,18 @@ planned for `src/transcriber/providers/` in Phase 5.
 
 ---
 
+## Runbook
+
+A short, task-specific workflow document that tells an AI tool how to perform a
+multi-step repo operation without turning that workflow into a permanently
+auto-loaded prompt. In this repo, runbooks exist for review, shipping, PR prep,
+and phase-audit work — the places where a checklist and output format save
+real effort.
+
+**Where it shows up:** `docs/ai/runbooks/`.
+
+---
+
 ## `RunWorkspace`
 
 The name of this project's per-invocation temp-directory manager (F5). One
@@ -223,6 +237,17 @@ a 45-minute transcription still leaves the filesystem clean.
 
 **Where it shows up:** `docs/PLAN.md` Phase 1 Foundations F5;
 planned for `src/transcriber/core/workspace.py` in Phase 1.
+
+---
+
+## Slash command
+
+A tool-specific command that loads a saved prompt or workflow by name instead
+of making the user restate it in every session. In this repo, Claude Code slash
+commands are intentionally limited to workflow-heavy tasks that produce a real
+artifact or checklist, such as review and ship preparation.
+
+**Where it shows up:** `.claude/commands/`.
 
 ---
 

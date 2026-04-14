@@ -22,11 +22,10 @@
    verification loops around AI-generated code. See
    [`vibe-coding-notes.md`](vibe-coding-notes.md) for patterns and lessons.
 4. **Future contributors and reviewers** who want the story, not just the code.
-5. **AI coding tools** (Claude Code, Codex, Gemini CLI, Cursor, Copilot) —
-   every context file (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`,
-   `.github/copilot-instructions.md`) points here and instructs the tool to
-   write PR descriptions, commit messages, and plan docs in a teaching
-   register by default.
+5. **AI coding tools** when a change touches PR narratives, living docs, or
+   teaching-register content. Operational routing now lives in
+   [`docs/ai/README.md`](../ai/README.md); this folder still owns the
+   teaching/living-doc rules those tools must follow.
 
 If there's ever a conflict between this folder and `docs/PLAN.md`,
 `docs/PLAN.md` wins. Technical contracts take precedence over narrative.
@@ -35,12 +34,12 @@ If there's ever a conflict between this folder and `docs/PLAN.md`,
 
 | File | Type | Update cadence | What it's for |
 |------|------|----------------|---------------|
-| [`journey.md`](journey.md) | Living, reverse-chronological | One entry per merged PR | Running narrative of what was built and *why*, in teaching register. Newest first. |
+| [`journey.md`](journey.md) | Living, reverse-chronological | One entry per PR; update merge date after merge | Running narrative of what was built and *why*, in teaching register. Newest first. |
 | [`python-notes.md`](python-notes.md) | Living, topic-organized | Append when a new idiom appears | Java → Python idioms as the code introduces them. Each entry cites the file where the idiom first shows up. |
 | [`glossary.md`](glossary.md) | Living, alphabetical | Append when a new concept appears | AI/ML, agentic-engineering, and vibe-coding terms as they land in the code or plan. Plain-language definitions, never more than a paragraph. |
 | [`vibe-coding-notes.md`](vibe-coding-notes.md) | Living, topic-organized | Append when a new vibe-coding pattern is learned | Patterns, anti-patterns, and decisions about AI-assisted development. How to set up a repo so AI tools generate correct code on the first try. |
 | [`interview-prep.md`](interview-prep.md) | Living, curated | Update when a PR ships a decision worth talking about | Curated index mapping project decisions to interview question types: STAR stories, system design walkthroughs, Python / AI-ML / vibe-coding flashcards, and project elevator pitches (30s / 2min / 5min). |
-| [`prs/`](prs/) | One file per merged PR | Written *before* the PR is opened | Per-PR human-readable explainer. Uses the template below. |
+| [`prs/`](prs/) | One file per PR | Drafted before the PR is opened; finalized after merge | Per-PR human-readable explainer. Uses the template below. |
 
 **Living doc rule:** only add an entry when a real code change makes that
 entry necessary. No speculative content, no preemptive glossary dumps. The
@@ -50,7 +49,7 @@ actually happened in the repo.
 ## How to read this if you're new
 
 1. Start at [`journey.md`](journey.md) — the most recent entry is the most
-   recent merged PR. Read top-down until you've caught up.
+   recent PR entry. Read top-down until you've caught up.
 2. When `journey.md` cites a Python idiom (e.g. `@dataclass(frozen=True)`)
    that you don't recognize, follow the link to [`python-notes.md`](python-notes.md).
 3. When it cites an AI/ML term (e.g. VAD, LangGraph), follow the link to
@@ -64,14 +63,16 @@ actually happened in the repo.
 
 ## PR explainer template
 
-Every merged PR gets a companion file at `docs/learn/prs/pr-NNN-<slug>.md`
-using this template. **Write it before opening the PR** so the PR body can
-link to it.
+Every PR gets a companion file at `docs/learn/prs/pr-NNN-<slug>.md` using this
+template. **Draft the content before opening the PR** so the PR body can link
+to it. If the PR number is not known yet, draft the content first and write the
+numbered file as soon as the number exists. Update the `Merged:` line after
+merge.
 
 ```markdown
 # PR #NNN — <Title>
 
-**Merged:** <YYYY-MM-DD>  |  **Branch:** `<branch>`  |  **Codex review:** <yes/no>
+**Merged:** <YYYY-MM-DD or TBD>  |  **Branch:** `<branch>`  |  **Codex review:** <yes/no>
 
 ## The problem in one paragraph
 What was broken, missing, or unclear before this PR — written so a Java
@@ -131,3 +132,6 @@ Leave this section out entirely if the PR is mechanical or low-signal — not ev
 6. **When in doubt, omit.** Low-signal entries dilute the rest. The test is:
    "If I'm a Java dev reading this in six months, does this line save me a
    Google search? Or answer a question in an interview?" If neither, drop it.
+7. **Never add placeholders to living docs.** No TODO bullets, no "coming in
+   Phase X" notes, and no speculative pointers. If the concept is not real
+   yet, leave it out until it is.
