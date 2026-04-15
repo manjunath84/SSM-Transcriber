@@ -11,8 +11,10 @@
 > the new "current phase" in the AI context files (`CLAUDE.md`, `AGENTS.md`,
 > `GEMINI.md`, `.cursorrules`, `.github/copilot-instructions.md`).
 >
-> **Not the source of truth for code conventions** — those live in the AI
-> context files at the repo root. This document is the *roadmap*.
+> **Source-of-truth split:** `docs/PLAN.md` owns the technical contracts and
+> roadmap. `docs/learn/README.md` owns teaching-register and living-doc rules.
+> The root AI adapter files keep compact startup guardrails, but they are not
+> the primary source of truth.
 
 ---
 
@@ -87,7 +89,7 @@ Steps:
    gh repo create manjunath84/SSM-Transcriber \
      --description "Multi-agent audio/video transcription pipeline (SSM-Transcriber)" \
      --public \
-     --source /Users/manjunathans/projects/Transcriber \
+     --source . \
      --remote origin
    ```
 2. Create a minimal `README.md` with project name + one-liner description.
@@ -113,7 +115,7 @@ Steps:
 **Goal:** `uv run ssm-transcriber --help` works; project is ready for vibe coding with any AI tool.
 
 Files to create:
-- `pyproject.toml` — minimal deps, `transcriber` CLI entry point
+- `pyproject.toml` — minimal deps, `ssm-transcriber` CLI entry point
 - `.env.example` — env vars template
 - `.gitignore` — Python + uv standard ignores
 - `CLAUDE.md` — Claude Code context (arch decisions, run commands, conventions)
@@ -184,11 +186,12 @@ gh pr create --title "Phase 0: project skeleton" --body "Adds pyproject.toml, CL
      - `uv run pytest`
    - This protects `main` from regressions as you vibe code with multiple AI tools
 
-6. **Project name decision (DEFERRED — user call):**
-   - Current: `Transcriber` (missing 'r', should be `Transcriber`)
-   - This is a branding decision, not a technical one
-   - If renamed later: affects GitHub repo, package name, CLI entry point, import paths, 6 context files — cheap now, expensive after Phase 1
-   - **Not blocking this PR** — flag for user confirmation before merge
+6. **Project/package naming split (DECIDED):**
+   - Project/repo/CLI name: `SSM-Transcriber` / `ssm-transcriber`
+   - Python package/import namespace: `transcriber`
+   - This split is deliberate: the CLI is branded for users, while Python
+     imports stay short and readable
+   - Any future rename would be a branding decision, not a Phase 0.5 blocker
 
 **Git actions for Phase 0.5:**
 ```bash
@@ -570,7 +573,7 @@ uv run ssm-transcriber transcribe "https://youtu.be/..." --format md --output no
 
 Files to create/modify:
 - `src/transcriber/sources/google_drive.py` — OAuth2 flow + `google-api-python-client` download
-- `src/transcriber/cli.py` — add `transcriber auth google-drive` command for OAuth setup
+- `src/transcriber/cli.py` — add `ssm-transcriber auth google-drive` command for OAuth setup
 - `src/transcriber/sources/__init__.py` — add `drive://` pattern to `resolve_source()`
 - Add to `pyproject.toml`: `google-api-python-client`, `google-auth-oauthlib`
 
@@ -652,7 +655,7 @@ Files to create/modify:
 - Prompt caching on Anthropic: system prompt cached, only transcript diff billed
 - Print estimated LLM token count before processing if > 10K tokens
 
-**Verification:** `transcriber transcribe ./video.mp4 --summarize` produces transcript + summary using free Groq tier by default.
+**Verification:** `uv run ssm-transcriber transcribe ./video.mp4 --summarize` produces transcript + summary using free Groq tier by default.
 
 ---
 
@@ -675,7 +678,7 @@ The graph emits a `transcription_complete` event as a LangGraph message at the e
 - `src/transcriber/contracts.py` — `TranscriptionResult` Pydantic model as the shared contract
 - Future: extract to a tiny `transcriber-contracts` package both agents depend on
 
-**Verification:** `transcriber transcribe ./video.mp4` still works end-to-end, now via LangGraph; graph visualization (`graph.get_graph().draw_ascii()`) shows all 5 nodes.
+**Verification:** `uv run ssm-transcriber transcribe ./video.mp4` still works end-to-end, now via LangGraph; graph visualization (`graph.get_graph().draw_ascii()`) shows all 5 nodes.
 
 ---
 
