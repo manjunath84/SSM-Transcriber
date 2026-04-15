@@ -331,9 +331,9 @@ two-step gate:
 | 2. Allowed | Does the current budget/flag permit paid use? | `--budget`, `--summarize`, `--allow-paid-llm` |
 
 Rules:
-- `--budget free` (default) → only providers with `cost_per_minute == 0.0` are
-  allowed, even if paid API keys are configured. Attempting a paid provider
-  exits non-zero with a clear message.
+- `--budget free` (default) → only providers whose estimate is explicitly
+  zero-cost are allowed, even if paid API keys are configured. Attempting a
+  paid provider exits non-zero with a clear message.
 - `--budget low` / `--budget best` → paid providers become *candidates*; the
   user still sees an estimated cost and must confirm (or pass `--yes`).
 - LLM post-processing (Phase 6a): `--summarize` / `--clean` default to the free
@@ -589,25 +589,33 @@ uv run ssm-transcriber transcribe "drive://1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs"
 
 ### Phase 5 — Cloud Transcription Providers (provider abstraction)
 
-**Goal:** Swap transcription engine via env var; `--budget` flag enforces cost ceiling.
+**Goal:** Add hosted transcription providers without breaking the local-first `$0` default or the two-gate spend model.
 
 Files to create/modify:
-- `src/transcriber/providers/base.py` — `TranscriptionProvider` ABC; add `cost_per_minute: float` property (0.0 for local)
-- `src/transcriber/providers/faster_whisper.py` — wrap existing core/transcriber.py; `cost_per_minute = 0.0`
-- `src/transcriber/providers/deepgram.py` — Deepgram Nova-2; `cost_per_minute = 0.006` (cheapest accurate cloud option)
-- `src/transcriber/providers/assemblyai.py` — AssemblyAI; `cost_per_minute = 0.009`
-- `src/transcriber/providers/openai_whisper.py` — OpenAI Whisper API; `cost_per_minute = 0.02`
-- `src/transcriber/providers/__init__.py` — registry + `get_provider(name)` factory + `get_cheapest_provider()` helper
+- `src/transcriber/providers/base.py` — `TranscriptionProvider` ABC with a shared `transcribe()` contract plus a provider-specific cost-estimation hook. The hook may return a precise estimate or an "estimate unavailable / variable" result when the backend cannot promise stable pricing up front.
+- `src/transcriber/providers/faster_whisper.py` — wrap existing core/transcriber.py; local provider with a zero-cost estimate
+- `src/transcriber/providers/deepgram.py` — Deepgram Nova-2; fixed hosted pricing estimate (`$0.006/min`)
+- `src/transcriber/providers/assemblyai.py` — AssemblyAI; fixed hosted pricing estimate (`$0.009/min`)
+- `src/transcriber/providers/openai_whisper.py` — OpenAI Whisper API; fixed hosted pricing estimate (`$0.02/min`)
+- `src/transcriber/providers/__init__.py` — registry + `get_provider(name)` factory. Keep automatic routing conservative; explicit provider selection remains the default control point.
 - `src/transcriber/core/budget_router.py` — enforces the two-gate spend model (F4):
-  - **Gate 1 (configured):** does the provider have a usable key/endpoint? (env var check)
+  - **Gate 1 (configured):** does the provider have a usable key/endpoint?
   - **Gate 2 (allowed):** does the current budget permit paid use?
-  - `free` → only `cost_per_minute == 0.0` providers are allowed, regardless of which keys are configured. Error with a clear message if a paid provider is explicitly requested
+  - `free` → only providers whose estimate is explicitly zero-cost are allowed, regardless of configured keys
   - `low` → `faster_whisper` first; if `--quality best` and audio > 10 min, *suggest* Deepgram — user must confirm
-  - `best` → paid providers become candidates; still requires cost confirmation
+  - `best` → Deepgram / AssemblyAI / OpenAI Whisper become candidates; still requires cost confirmation
+  - If a provider cannot produce a stable estimate, surface that explicitly and require an extra confirmation instead of guessing
   - "Key exists" is never sufficient on its own. The router logs the chosen provider and the reason at `INFO`
 - `src/transcriber/config.py` — add `TRANSCRIPTION_PROVIDER` (preferred, not mandatory), `DEFAULT_BUDGET` settings
 - CLI: add `--budget free|low|best` flag (default: `free`); `--yes` skips only the interactive confirmation prompt — both Gate 1 (configured) and Gate 2 (allowed by budget/flags) are still enforced
 - Cost estimate uses `speech_duration` from the VAD sidecar (not total media duration) so users see the billable figure
+
+**Hugging Face note (not part of the initial Phase 5 provider set):**
+- Hugging Face is a later experimental hosted-provider candidate via `huggingface_hub.InferenceClient.automatic_speech_recognition(...)`
+- Token would come from `HF_TOKEN` (third-party credential, not a `TRANSCRIBER_` setting)
+- Initial model target would be `openai/whisper-large-v3`
+- It must be **explicit-only** at first — not an automatic `low` / `best` routing candidate
+- Do not rely on Hugging Face internal auto-routing until backend determinism and spend predictability are benchmarked and documented
 - Before any cloud call: print estimated cost and require confirmation unless `--yes`
 
 **Cost display example (before cloud call):**

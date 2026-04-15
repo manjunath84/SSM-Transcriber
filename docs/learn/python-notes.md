@@ -227,9 +227,12 @@ any callers — a fluency Java doesn't have.
 conceptually like an attribute. Over-using `@property` for things that are
 cheap plain attributes just adds indirection.
 
-**Where it shows up:** not yet in code — will land in Phase 5 as
-`cost_per_minute` on the `TranscriptionProvider` base class. Pointer will be
-updated when the file is merged.
+**Where it shows up:** earlier drafts of the Phase 5 provider design used a
+plain `cost_per_minute` property on `TranscriptionProvider`. The current
+roadmap may evolve that into a richer cost-estimation hook for hosted
+providers whose pricing is variable or only partially knowable up front.
+The `@property` lesson still applies if the final provider API exposes
+computed pricing metadata as an attribute-like value.
 
 ---
 

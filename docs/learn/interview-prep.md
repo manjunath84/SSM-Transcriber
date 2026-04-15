@@ -62,11 +62,11 @@ Hit these points in order, ~30 seconds each:
    minute or had no cost controls at all."
 2. **The architecture choice that matters most.** "Local-first, cloud-optional.
    `faster-whisper` runs on the local machine with no API key. Cloud
-   providers are registered in a `providers/` registry that exposes a
-   `cost_per_minute` property; the budget router enforces a two-gate check —
-   'is the key configured' and 'is paid use allowed' — before ever
-   authorizing a cloud call. This is the discipline that kept '`$0` default'
-   from being a lie."
+   providers are registered behind a provider abstraction with shared
+   transcription and cost-estimation rules; the budget router enforces a
+   two-gate check — 'is the key configured' and 'is paid use allowed' —
+   before ever authorizing a cloud call. This is the discipline that kept
+   '`$0` default' from being a lie."
 3. **The subtlest bug I caught before writing code.** "VAD — voice activity
    detection — would have been the 'obvious' optimization: strip silence
    before transcribing. But the SRT subtitle formatter in Phase 3 depended
@@ -252,9 +252,10 @@ the "right" answer is a whiteboard that looks a lot like `docs/PLAN.md`.
    revision + language override + VAD mode + `PIPELINE_SCHEMA_VERSION`.
    Cache hits return in ~1 ms with zero cost. F3.
 5. **Provider abstraction.** `TranscriptionProvider` base class with
-   `cost_per_minute` and `transcribe()`. Concrete providers: faster-whisper
-   (local, $0), Deepgram ($0.006/min), AssemblyAI ($0.009/min), OpenAI
-   Whisper ($0.02/min). Registry + factory.
+   `transcribe()` plus a shared pricing/estimation hook. Concrete providers:
+   faster-whisper (local, $0), Deepgram, AssemblyAI, and OpenAI Whisper,
+   with Hugging Face reserved as a later explicit-only hosted-provider
+   experiment. Registry + factory.
 6. **Budget router.** Two-gate spend check before any cloud call: is the
    key configured (Gate 1) AND is paid use allowed by `--budget` (Gate 2).
    Cost estimate is computed from `speech_duration` (VAD sidecar), shown

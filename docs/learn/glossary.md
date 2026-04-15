@@ -192,8 +192,10 @@ A general software pattern: define a base interface and ship multiple
 implementations that callers can swap without code changes. In this project,
 `TranscriptionProvider` (Phase 5) has `faster_whisper`, `deepgram`,
 `assemblyai`, and `openai_whisper` implementations, all exposing the same
-`transcribe()` method and a `cost_per_minute` attribute. A registry +
-factory decides which one to load based on config.
+`transcribe()` method plus a shared pricing/estimation hook. A registry +
+factory decides which one to load based on config. Hugging Face may join
+later as an explicit-only hosted provider, but not until its pricing and
+backend determinism are documented well enough to fit the repo's cost rules.
 
 **Java analogue:** the strategy pattern, or — more directly — JDBC drivers.
 You code against `Connection` / `PreparedStatement`, and `DriverManager`
@@ -203,7 +205,8 @@ plays the `DriverManager` role.
 **Why it matters here.** It's what the "$0 default, paid upgrade available"
 promise is built on. Swapping providers must be possible without touching
 the pipeline, formatters, or CLI — the provider boundary is where the
-variability lives.
+variability lives, including the fact that not every hosted backend exposes
+a neat fixed per-minute price.
 
 **Where it shows up:** `docs/PLAN.md` Phase 5;
 planned for `src/transcriber/providers/` in Phase 5.
