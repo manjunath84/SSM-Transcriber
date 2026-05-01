@@ -207,29 +207,35 @@ always have to type the parentheses.
 **Python idiom.**
 
 ```python
-class TranscriptionProvider:
+class Circle:
+    def __init__(self, radius: float) -> None:
+        self.radius = radius
+
     @property
-    def cost_per_minute(self) -> float:
-        return 0.0
+    def area(self) -> float:
+        return 3.14159 * self.radius ** 2
 
 # Usage:
-p = FasterWhisperProvider()
-p.cost_per_minute        # no parentheses — reads like an attribute
+c = Circle(2.0)
+c.area    # no parentheses — reads like an attribute
 ```
 
 Under the hood, `@property` turns the method into a descriptor, so attribute
-access (`p.cost_per_minute`) calls the method. The caller doesn't see the
-difference between a plain attribute and a property. This lets you start with
-a plain attribute and refactor to a computed value later without changing
-any callers — a fluency Java doesn't have.
+access (`c.area`) calls the method. The caller doesn't see the difference
+between a plain attribute and a property. This lets you start with a plain
+attribute and refactor to a computed value later without changing any
+callers — a fluency Java doesn't have.
 
 **When to use it.** When the value is computed or validated but looks
 conceptually like an attribute. Over-using `@property` for things that are
 cheap plain attributes just adds indirection.
 
-**Where it shows up:** not yet in code — will land in Phase 5 as
-`cost_per_minute` on the `TranscriptionProvider` base class. Pointer will be
-updated when the file is merged.
+**Where it shows up:** not in `src/` yet. The closest planned use is the
+Phase 5 cost-estimation hook on `TranscriptionProvider`, described in
+[`docs/PLAN.md`](../PLAN.md#phase-5--cloud-transcription-providers-provider-abstraction).
+The previous `cost_per_minute` scalar shape was retired in PR #6, and the
+replacement contract is still being designed; this entry will be revisited
+with a real `src/transcriber/providers/` pointer once that code lands.
 
 ---
 

@@ -1,6 +1,6 @@
 # PR #5 — AI operator guide + workflow commands
 
-**Merged:** TBD  |  **Branch:** `infra/agent-skills-commands`  |  **Codex review:** yes
+**Merged:** 2026-04-13  |  **Branch:** `infra/agent-skills-commands`  |  **Codex review:** yes
 
 **Journey entry:** [`../journey.md#pr-5--ai-operator-guide--workflow-commands`](../journey.md#pr-5--ai-operator-guide--workflow-commands)
 

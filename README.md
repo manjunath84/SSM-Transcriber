@@ -33,7 +33,7 @@ uv run ssm-transcriber transcribe "https://youtu.be/..."
 - [ ] Phase 2: YouTube source (yt-dlp)
 - [ ] Phase 3: Output formats (txt, srt, md, json)
 - [ ] Phase 4: Google Drive source
-- [ ] Phase 5: Cloud transcription providers (Deepgram, AssemblyAI) + two-gate spend model
+- [ ] Phase 5: Cloud transcription providers (Deepgram, AssemblyAI, OpenAI Whisper) + two-gate spend model; Hugging Face remains a later experimental hosted option
 - [ ] Phase 6: LLM summarization + multi-agent foundation (LangGraph)
 
 All phases build on the **Phase 1 Foundations** (`PreparedMedia`, versioned cache keys,
@@ -43,6 +43,7 @@ two-gate spend model, `RunWorkspace`, sync-by-default, fixture/stub strategy) de
 ## Stack
 
 - **Transcription**: `faster-whisper` (local) · Deepgram · AssemblyAI · OpenAI Whisper
+- **Experimental later**: Hugging Face Inference Providers as an explicit-only hosted provider candidate
 - **LLM**: `litellm` — cloud-agnostic (Groq → Gemini → Claude Haiku by cost)
 - **Agents**: `langgraph` (Phase 6+)
 - **Package manager**: `uv`

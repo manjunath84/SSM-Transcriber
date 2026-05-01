@@ -1,6 +1,7 @@
 # PR #4 — `docs/learn/` folder + teaching register for AI context files
 
-**Merged:** TBD  |  **Branch:** `learning/docs-and-context`  |  **Codex review:** yes
+**Merged:** 2026-04-11  |  **Branch:** `learning/docs-and-context`  |  **Codex review:** yes
+**Journey entry:** [`../journey.md#pr-4--teaching-register-and-docslearn`](../journey.md#pr-4--teaching-register-and-docslearn)
 
 ## The problem in one paragraph
 

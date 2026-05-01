@@ -61,5 +61,5 @@ None.
 ## Further reading
 
 - [PEP 621 — project metadata in pyproject.toml](https://peps.python.org/pep-0621/)
-- `docs/PLAN.md` Phase 0.5 — review fixes section (where the name question
-  was flagged as a deferred user decision)
+- `docs/PLAN.md` Phase 0.5 — review fixes section for the early naming and
+  packaging context

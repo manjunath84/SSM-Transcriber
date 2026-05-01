@@ -11,8 +11,10 @@
 > the new "current phase" in the AI context files (`CLAUDE.md`, `AGENTS.md`,
 > `GEMINI.md`, `.cursorrules`, `.github/copilot-instructions.md`).
 >
-> **Not the source of truth for code conventions** — those live in the AI
-> context files at the repo root. This document is the *roadmap*.
+> **Source-of-truth split:** `docs/PLAN.md` owns the technical contracts and
+> roadmap. `docs/learn/README.md` owns teaching-register and living-doc rules.
+> The root AI adapter files keep compact startup guardrails, but they are not
+> the primary source of truth.
 
 ---
 
@@ -87,7 +89,7 @@ Steps:
    gh repo create manjunath84/SSM-Transcriber \
      --description "Multi-agent audio/video transcription pipeline (SSM-Transcriber)" \
      --public \
-     --source /Users/manjunathans/projects/Transcriber \
+     --source . \
      --remote origin
    ```
 2. Create a minimal `README.md` with project name + one-liner description.
@@ -113,7 +115,7 @@ Steps:
 **Goal:** `uv run ssm-transcriber --help` works; project is ready for vibe coding with any AI tool.
 
 Files to create:
-- `pyproject.toml` — minimal deps, `transcriber` CLI entry point
+- `pyproject.toml` — minimal deps, `ssm-transcriber` CLI entry point
 - `.env.example` — env vars template
 - `.gitignore` — Python + uv standard ignores
 - `CLAUDE.md` — Claude Code context (arch decisions, run commands, conventions)
@@ -184,11 +186,12 @@ gh pr create --title "Phase 0: project skeleton" --body "Adds pyproject.toml, CL
      - `uv run pytest`
    - This protects `main` from regressions as you vibe code with multiple AI tools
 
-6. **Project name decision (DEFERRED — user call):**
-   - Current: `Transcriber` (missing 'r', should be `Transcriber`)
-   - This is a branding decision, not a technical one
-   - If renamed later: affects GitHub repo, package name, CLI entry point, import paths, 6 context files — cheap now, expensive after Phase 1
-   - **Not blocking this PR** — flag for user confirmation before merge
+6. **Project/package naming split (DECIDED):**
+   - Project/repo/CLI name: `SSM-Transcriber` / `ssm-transcriber`
+   - Python package/import namespace: `transcriber`
+   - This split is deliberate: the CLI is branded for users, while Python
+     imports stay short and readable
+   - Any future rename would be a branding decision, not a Phase 0.5 blocker
 
 **Git actions for Phase 0.5:**
 ```bash
@@ -328,9 +331,9 @@ two-step gate:
 | 2. Allowed | Does the current budget/flag permit paid use? | `--budget`, `--summarize`, `--allow-paid-llm` |
 
 Rules:
-- `--budget free` (default) → only providers with `cost_per_minute == 0.0` are
-  allowed, even if paid API keys are configured. Attempting a paid provider
-  exits non-zero with a clear message.
+- `--budget free` (default) → only providers whose estimate is explicitly
+  zero-cost are allowed, even if paid API keys are configured. Attempting a
+  paid provider exits non-zero with a clear message.
 - `--budget low` / `--budget best` → paid providers become *candidates*; the
   user still sees an estimated cost and must confirm (or pass `--yes`).
 - LLM post-processing (Phase 6a): `--summarize` / `--clean` default to the free
@@ -570,7 +573,7 @@ uv run ssm-transcriber transcribe "https://youtu.be/..." --format md --output no
 
 Files to create/modify:
 - `src/transcriber/sources/google_drive.py` — OAuth2 flow + `google-api-python-client` download
-- `src/transcriber/cli.py` — add `transcriber auth google-drive` command for OAuth setup
+- `src/transcriber/cli.py` — add `ssm-transcriber auth google-drive` command for OAuth setup
 - `src/transcriber/sources/__init__.py` — add `drive://` pattern to `resolve_source()`
 - Add to `pyproject.toml`: `google-api-python-client`, `google-auth-oauthlib`
 
@@ -586,25 +589,33 @@ uv run ssm-transcriber transcribe "drive://1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs"
 
 ### Phase 5 — Cloud Transcription Providers (provider abstraction)
 
-**Goal:** Swap transcription engine via env var; `--budget` flag enforces cost ceiling.
+**Goal:** Add hosted transcription providers without breaking the local-first `$0` default or the two-gate spend model.
 
 Files to create/modify:
-- `src/transcriber/providers/base.py` — `TranscriptionProvider` ABC; add `cost_per_minute: float` property (0.0 for local)
-- `src/transcriber/providers/faster_whisper.py` — wrap existing core/transcriber.py; `cost_per_minute = 0.0`
-- `src/transcriber/providers/deepgram.py` — Deepgram Nova-2; `cost_per_minute = 0.006` (cheapest accurate cloud option)
-- `src/transcriber/providers/assemblyai.py` — AssemblyAI; `cost_per_minute = 0.009`
-- `src/transcriber/providers/openai_whisper.py` — OpenAI Whisper API; `cost_per_minute = 0.02`
-- `src/transcriber/providers/__init__.py` — registry + `get_provider(name)` factory + `get_cheapest_provider()` helper
+- `src/transcriber/providers/base.py` — `TranscriptionProvider` ABC with a shared `transcribe()` contract plus a provider-specific cost-estimation hook. The hook may return a precise estimate or an "estimate unavailable / variable" result when the backend cannot promise stable pricing up front.
+- `src/transcriber/providers/faster_whisper.py` — wrap existing core/transcriber.py; local provider with a zero-cost estimate
+- `src/transcriber/providers/deepgram.py` — Deepgram Nova-2; fixed hosted pricing estimate (`$0.006/min`)
+- `src/transcriber/providers/assemblyai.py` — AssemblyAI; fixed hosted pricing estimate (`$0.009/min`)
+- `src/transcriber/providers/openai_whisper.py` — OpenAI Whisper API; fixed hosted pricing estimate (`$0.02/min`)
+- `src/transcriber/providers/__init__.py` — registry + `get_provider(name)` factory. Keep automatic routing conservative; explicit provider selection remains the default control point.
 - `src/transcriber/core/budget_router.py` — enforces the two-gate spend model (F4):
-  - **Gate 1 (configured):** does the provider have a usable key/endpoint? (env var check)
+  - **Gate 1 (configured):** does the provider have a usable key/endpoint?
   - **Gate 2 (allowed):** does the current budget permit paid use?
-  - `free` → only `cost_per_minute == 0.0` providers are allowed, regardless of which keys are configured. Error with a clear message if a paid provider is explicitly requested
+  - `free` → only providers whose estimate is explicitly zero-cost are allowed, regardless of configured keys
   - `low` → `faster_whisper` first; if `--quality best` and audio > 10 min, *suggest* Deepgram — user must confirm
-  - `best` → paid providers become candidates; still requires cost confirmation
+  - `best` → Deepgram / AssemblyAI / OpenAI Whisper become candidates; still requires cost confirmation
+  - If a provider cannot produce a stable estimate, surface that explicitly and require an extra confirmation instead of guessing
   - "Key exists" is never sufficient on its own. The router logs the chosen provider and the reason at `INFO`
 - `src/transcriber/config.py` — add `TRANSCRIPTION_PROVIDER` (preferred, not mandatory), `DEFAULT_BUDGET` settings
 - CLI: add `--budget free|low|best` flag (default: `free`); `--yes` skips only the interactive confirmation prompt — both Gate 1 (configured) and Gate 2 (allowed by budget/flags) are still enforced
 - Cost estimate uses `speech_duration` from the VAD sidecar (not total media duration) so users see the billable figure
+
+**Hugging Face note (not part of the initial Phase 5 provider set):**
+- Hugging Face is a later experimental hosted-provider candidate via `huggingface_hub.InferenceClient.automatic_speech_recognition(...)`
+- Token would come from `HF_TOKEN` (third-party credential, not a `TRANSCRIBER_` setting)
+- Initial model target would be `openai/whisper-large-v3`
+- It must be **explicit-only** at first — not an automatic `low` / `best` routing candidate
+- Do not rely on Hugging Face internal auto-routing until backend determinism and spend predictability are benchmarked and documented
 - Before any cloud call: print estimated cost and require confirmation unless `--yes`
 
 **Cost display example (before cloud call):**
@@ -652,7 +663,7 @@ Files to create/modify:
 - Prompt caching on Anthropic: system prompt cached, only transcript diff billed
 - Print estimated LLM token count before processing if > 10K tokens
 
-**Verification:** `transcriber transcribe ./video.mp4 --summarize` produces transcript + summary using free Groq tier by default.
+**Verification:** `uv run ssm-transcriber transcribe ./video.mp4 --summarize` produces transcript + summary using free Groq tier by default.
 
 ---
 
@@ -675,7 +686,7 @@ The graph emits a `transcription_complete` event as a LangGraph message at the e
 - `src/transcriber/contracts.py` — `TranscriptionResult` Pydantic model as the shared contract
 - Future: extract to a tiny `transcriber-contracts` package both agents depend on
 
-**Verification:** `transcriber transcribe ./video.mp4` still works end-to-end, now via LangGraph; graph visualization (`graph.get_graph().draw_ascii()`) shows all 5 nodes.
+**Verification:** `uv run ssm-transcriber transcribe ./video.mp4` still works end-to-end, now via LangGraph; graph visualization (`graph.get_graph().draw_ascii()`) shows all 5 nodes.
 
 ---
 
