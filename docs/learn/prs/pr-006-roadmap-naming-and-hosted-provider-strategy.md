@@ -1,6 +1,6 @@
 # PR #6 — Roadmap naming cleanup and hosted-provider strategy
 
-**Merged:** TBD  |  **Branch:** `codex/docs-stale-naming-cleanup`  |  **Codex review:** yes
+**Merged:** 2026-05-01  |  **Branch:** `codex/docs-stale-naming-cleanup`  |  **Codex review:** yes
 **Journey entry:** [`../journey.md#pr-6--roadmap-naming-cleanup-and-hosted-provider-strategy`](../journey.md#pr-6--roadmap-naming-cleanup-and-hosted-provider-strategy)
 
 ## The problem in one paragraph
