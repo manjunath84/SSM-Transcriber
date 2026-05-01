@@ -13,7 +13,7 @@
 
 ## PR #6 — Roadmap naming cleanup and hosted-provider strategy
 
-**Merged:** TBD  |  **Branch:** `codex/docs-stale-naming-cleanup`
+**Merged:** 2026-05-01  |  **Branch:** `codex/docs-stale-naming-cleanup`
 **Explainer:** [`prs/pr-006-roadmap-naming-and-hosted-provider-strategy.md`](prs/pr-006-roadmap-naming-and-hosted-provider-strategy.md)
 
 PR #6 is a reminder that doc drift can be an architecture bug, not just a
