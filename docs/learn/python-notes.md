@@ -207,18 +207,21 @@ always have to type the parentheses.
 **Python idiom.**
 
 ```python
-class TranscriptionProvider:
+class CostEstimate:
+    def __init__(self, usd: float | None) -> None:
+        self.usd = usd
+
     @property
-    def cost_per_minute(self) -> float:
-        return 0.0
+    def is_zero_cost(self) -> bool:
+        return self.usd == 0.0
 
 # Usage:
-p = FasterWhisperProvider()
-p.cost_per_minute        # no parentheses — reads like an attribute
+estimate = CostEstimate(0.0)
+estimate.is_zero_cost    # no parentheses — reads like an attribute
 ```
 
 Under the hood, `@property` turns the method into a descriptor, so attribute
-access (`p.cost_per_minute`) calls the method. The caller doesn't see the
+access (`estimate.is_zero_cost`) calls the method. The caller doesn't see the
 difference between a plain attribute and a property. This lets you start with
 a plain attribute and refactor to a computed value later without changing
 any callers — a fluency Java doesn't have.
@@ -227,12 +230,11 @@ any callers — a fluency Java doesn't have.
 conceptually like an attribute. Over-using `@property` for things that are
 cheap plain attributes just adds indirection.
 
-**Where it shows up:** earlier drafts of the Phase 5 provider design used a
-plain `cost_per_minute` property on `TranscriptionProvider`. The current
-roadmap may evolve that into a richer cost-estimation hook for hosted
-providers whose pricing is variable or only partially knowable up front.
-The `@property` lesson still applies if the final provider API exposes
-computed pricing metadata as an attribute-like value.
+**Where it shows up:** the Phase 5 roadmap is moving away from a plain
+`cost_per_minute` scalar on `TranscriptionProvider` toward a richer
+provider-specific estimation hook. If that hook returns an estimate object,
+`@property` is a natural fit for derived metadata such as "is this estimate
+explicitly zero-cost?" without forcing callers to learn a method-heavy API.
 
 ---
 

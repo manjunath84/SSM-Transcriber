@@ -11,9 +11,49 @@
 
 ---
 
+## PR #6 — Roadmap naming cleanup and hosted-provider strategy
+
+**Merged:** TBD  |  **Branch:** `codex/docs-stale-naming-cleanup`
+**Explainer:** [`prs/pr-006-roadmap-naming-and-hosted-provider-strategy.md`](prs/pr-006-roadmap-naming-and-hosted-provider-strategy.md)
+
+PR #6 is a reminder that doc drift can be an architecture bug, not just a
+copy-editing bug. By the time this branch opened, the repo had already
+decided that the user-facing CLI stays `ssm-transcriber` while Python imports
+stay `transcriber`, that `docs/PLAN.md` owns contracts while `docs/learn/`
+owns teaching rules, and that Phase 5 was starting to outgrow a simple
+`cost_per_minute` scalar. But several docs still described the older state.
+
+The risk was subtle but real: this repo is intentionally built for multiple
+AI tools, and those tools read the docs as if they were implementation
+constraints. If one file says the naming split is still undecided, another
+says the provider API is definitely `cost_per_minute`, and a third starts
+talking about Hugging Face without spelling out that it is explicit-only and
+not a default routing candidate, the next implementation PR can follow the
+wrong map while still looking "consistent" locally.
+
+So this PR does three cleanup jobs in one pass. It removes stale naming and
+CLI references, rewrites the provider story around a shared transcription
+contract plus a richer estimation hook, and frames Hugging Face as a later
+experimental hosted-provider option that must not bypass the repo's `$0`
+default or two-gate spend model. It also updates the learning artifacts so
+the explainer index, journey, and Python notes all tell the same story.
+
+The takeaway: when your docs are load-bearing inputs to humans *and* coding
+agents, keeping them in sync is part of the design work. Treat a stale doc
+the same way you'd treat a stale interface comment that future code will
+compile against.
+
+Architecture concepts clarified:
+[`provider abstraction`](glossary.md#provider-abstraction),
+[`two-gate spend model`](glossary.md#two-gate-spend-model).
+Python note updated:
+[`@property`](python-notes.md#property).
+
+---
+
 ## PR #5 — AI operator guide + workflow commands
 
-**Merged:** TBD  |  **Branch:** `infra/agent-skills-commands`
+**Merged:** 2026-04-13  |  **Branch:** `infra/agent-skills-commands`
 **Explainer:** [`prs/pr-005-ai-operator-guide-workflow-commands.md`](prs/pr-005-ai-operator-guide-workflow-commands.md)
 
 PR #5 is the repo admitting that "five context files in lockstep" was the
@@ -45,6 +85,39 @@ AI workflow concepts introduced:
 Vibe-coding lessons:
 [`Multi-tool context strategy`](vibe-coding-notes.md#multi-tool-context-strategy),
 [`Workflow commands should earn their keep`](vibe-coding-notes.md#workflow-commands-should-earn-their-keep).
+
+---
+
+## PR #4 — Teaching register and `docs/learn/`
+
+**Merged:** 2026-04-11  |  **Branch:** `learning/docs-and-context`
+**Explainer:** [`prs/pr-004-docs-learn-teaching-register.md`](prs/pr-004-docs-learn-teaching-register.md)
+
+PR #4 is where the repo stopped treating "things the AI should know" and
+"things the human author will want to remember later" as the same category of
+documentation. Before this PR, the root AI files were doing too much work:
+they were carrying rules, narrative, and teaching context that really wanted
+their own home. That made the always-loaded prompts bigger and made the
+learning trail harder to revisit.
+
+The fix was to create `docs/learn/` as a dedicated teaching layer. The AI
+context files stayed short and operational, while `python-notes.md`,
+`glossary.md`, `interview-prep.md`, `journey.md`, and `vibe-coding-notes.md`
+became the place where the project explains itself in plain language. That
+split also made the later `docs/ai/` operator-guide work in PR #5 possible:
+the repo now had a clean difference between source docs, routing docs, and
+tool adapters.
+
+The takeaway: good AI context is not "put every useful sentence into the
+startup prompt." It's deciding which knowledge needs to be always loaded,
+which knowledge should be looked up on demand, and which knowledge exists for
+the human maintainer rather than the model.
+
+AI workflow concepts introduced:
+[`AI context file`](glossary.md#ai-context-file),
+[`context window`](glossary.md#context-window).
+Vibe-coding lessons:
+[`Multi-tool context strategy`](vibe-coding-notes.md#multi-tool-context-strategy).
 
 ---
 

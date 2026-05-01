@@ -16,6 +16,7 @@
 | #3 | Phase 1 Foundations (F1–F8) | 1 (plan) | [`pr-003-phase-1-foundations.md`](pr-003-phase-1-foundations.md) |
 | #4 | `docs/learn/` + teaching register | — | [`pr-004-docs-learn-teaching-register.md`](pr-004-docs-learn-teaching-register.md) |
 | #5 | AI operator guide + workflow commands | infra | [`pr-005-ai-operator-guide-workflow-commands.md`](pr-005-ai-operator-guide-workflow-commands.md) |
+| #6 | Roadmap naming cleanup + hosted-provider strategy | docs | [`pr-006-roadmap-naming-and-hosted-provider-strategy.md`](pr-006-roadmap-naming-and-hosted-provider-strategy.md) |
 
 ## Conventions
 
