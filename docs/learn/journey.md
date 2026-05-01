@@ -115,7 +115,7 @@ the human maintainer rather than the model.
 
 AI workflow concepts introduced:
 [`AI context file`](glossary.md#ai-context-file),
-[`context window`](glossary.md#context-window).
+[`context window`](glossary.md#context-window-token-budget).
 Vibe-coding lessons:
 [`Multi-tool context strategy`](vibe-coding-notes.md#multi-tool-context-strategy).
 

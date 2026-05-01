@@ -43,11 +43,6 @@ future integration path without pretending the repo already trusts its backend
 selection or spend predictability enough for automatic routing. That keeps the
 docs honest and preserves the repo's "explicit paid choice" posture.
 
-## New Python idioms introduced
-
-- [`@property`](../python-notes.md#property) — the teaching note was updated
-  so it no longer teaches an outdated Phase 5 API shape
-
 ## New AI/ML concepts introduced
 
 - [`provider abstraction`](../glossary.md#provider-abstraction)

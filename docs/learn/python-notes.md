@@ -207,34 +207,35 @@ always have to type the parentheses.
 **Python idiom.**
 
 ```python
-class CostEstimate:
-    def __init__(self, usd: float | None) -> None:
-        self.usd = usd
+class Circle:
+    def __init__(self, radius: float) -> None:
+        self.radius = radius
 
     @property
-    def is_zero_cost(self) -> bool:
-        return self.usd == 0.0
+    def area(self) -> float:
+        return 3.14159 * self.radius ** 2
 
 # Usage:
-estimate = CostEstimate(0.0)
-estimate.is_zero_cost    # no parentheses — reads like an attribute
+c = Circle(2.0)
+c.area    # no parentheses — reads like an attribute
 ```
 
 Under the hood, `@property` turns the method into a descriptor, so attribute
-access (`estimate.is_zero_cost`) calls the method. The caller doesn't see the
-difference between a plain attribute and a property. This lets you start with
-a plain attribute and refactor to a computed value later without changing
-any callers — a fluency Java doesn't have.
+access (`c.area`) calls the method. The caller doesn't see the difference
+between a plain attribute and a property. This lets you start with a plain
+attribute and refactor to a computed value later without changing any
+callers — a fluency Java doesn't have.
 
 **When to use it.** When the value is computed or validated but looks
 conceptually like an attribute. Over-using `@property` for things that are
 cheap plain attributes just adds indirection.
 
-**Where it shows up:** the Phase 5 roadmap is moving away from a plain
-`cost_per_minute` scalar on `TranscriptionProvider` toward a richer
-provider-specific estimation hook. If that hook returns an estimate object,
-`@property` is a natural fit for derived metadata such as "is this estimate
-explicitly zero-cost?" without forcing callers to learn a method-heavy API.
+**Where it shows up:** not in `src/` yet. The closest planned use is the
+Phase 5 cost-estimation hook on `TranscriptionProvider`, described in
+[`docs/PLAN.md`](../PLAN.md#phase-5--cloud-transcription-providers-provider-abstraction).
+The previous `cost_per_minute` scalar shape was retired in PR #6, and the
+replacement contract is still being designed; this entry will be revisited
+with a real `src/transcriber/providers/` pointer once that code lands.
 
 ---
 
