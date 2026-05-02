@@ -5,12 +5,18 @@
 
 ## What this is
 
-SSM-Transcriber is a local-first audio/video transcription pipeline. The
-default path runs entirely on the user's machine via `faster-whisper` and
-costs `$0`. Cloud transcription (Deepgram, AssemblyAI, OpenAI Whisper) and
-paid LLM features are opt-in only and gated behind a two-gate spend model
-that requires both a configured key and an explicit `--budget low|best`
-flag, plus cost confirmation before any paid call.
+SSM-Transcriber is a provider-agnostic audio/video transcription pipeline
+where **accuracy is the primary deciding factor**, **cost is the gating
+constraint**, and **convenience is a legitimate tiebreaker**. Local
+(`faster-whisper`) and hosted (Deepgram, AssemblyAI, OpenAI Whisper)
+providers are first-class peers; the user typically picks the most
+accurate provider that fits the budget, but may opt for a different
+provider for convenience (familiar API, already-configured auth, an
+existing workflow already wired through one provider). The default budget
+is `free` so casual use costs `$0`, but every paid provider is opt-in
+behind a two-gate spend model that requires both a configured key and an
+explicit `--budget low|best` flag, plus cost confirmation before any paid
+call.
 
 See [`README.md`](../README.md) for the project description, and
 [`docs/PLAN.md`](../docs/PLAN.md) §Context for design philosophy.
@@ -39,6 +45,13 @@ the full audience description.
 - Markdown output uses general-purpose YAML frontmatter so transcripts drop
   into Obsidian, NotebookLM, and paste-into-AI workflows without lock-in.
 - Opt-in cloud providers and LLM features behind the two-gate spend model.
+- Head-to-head evaluation of providers on **accuracy first, then cost**
+  for the same source is a stated future direction. The provider-agnostic
+  architecture is built to support it, and those measurements are
+  intended to drive subsequent provider and default choices. (MVP ships
+  with AssemblyAI as the first hosted provider; the long-term provider
+  set is determined by what the evaluations show, with accuracy as the
+  primary tiebreaker.)
 
 ## Out of scope
 
