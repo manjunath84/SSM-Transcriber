@@ -53,16 +53,3 @@
 ## [Phase 6b — LangGraph Multi-Agent Foundation](../docs/PLAN.md#phase-6b--langgraph-multi-agent-foundation)
 
 **Status:** pending.
-
----
-
-## Vertical-slice exception: AssemblyAI MVP Slice 1
-
-**Status:** pending (next feature loop after this constitution PR merges).
-
-The next feature loop ships a vertical slice that touches Phase 1 + Phase 3
-+ Phase 5 work concurrently in order to deliver a working tool earlier. The
-slice will explicitly mark which F1–F8 contracts it implements in full vs
-implements in minimal form vs defers entirely. See the feature spec at
-`specs/2026-05-01-assemblyai-mvp-slice-1/` (created in the next feature
-loop) for the contract subset and exit criteria.

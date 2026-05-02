@@ -33,15 +33,12 @@ the full audience description.
 
 ## In scope
 
-- Local-first transcription via `faster-whisper`.
-- Multi-source support: local files (Phase 1), YouTube (Phase 2), Google
-  Drive (Phase 4).
-- Output formats: txt, srt, md, json (Phase 3). Markdown frontmatter is
-  general-purpose YAML so output drops into Obsidian, NotebookLM, and
-  paste-into-AI workflows without lock-in.
-- Opt-in cloud providers behind the two-gate spend model (Phase 5).
-- Opt-in LLM post-processing with cheapest-first fallback (Phase 6a).
-- Future multi-agent orchestration via LangGraph (Phase 6b).
+- Multi-source ingestion (local files, YouTube, Google Drive) and multiple
+  output formats. See [`README.md`](../README.md#roadmap) §Roadmap for the
+  phase-by-phase capability list.
+- Markdown output uses general-purpose YAML frontmatter so transcripts drop
+  into Obsidian, NotebookLM, and paste-into-AI workflows without lock-in.
+- Opt-in cloud providers and LLM features behind the two-gate spend model.
 
 ## Out of scope
 

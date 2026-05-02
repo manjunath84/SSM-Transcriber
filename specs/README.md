@@ -16,8 +16,6 @@ Each feature lives in `specs/YYYY-MM-DD-<feature>/`:
 - `plan.md` — numbered task groups.
 - `validation.md` — success criteria, test cases, edge cases.
 
-The first feature loop folder will be `specs/2026-05-01-assemblyai-mvp-slice-1/`.
-
 ## Source-of-truth split
 
 Constitution docs are **lightweight bridges** to canonical sources:

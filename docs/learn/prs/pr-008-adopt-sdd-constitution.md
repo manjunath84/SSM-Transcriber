@@ -94,9 +94,9 @@ None — this PR is doc-only.
 
 ## Further reading
 
-- [`../../specs/README.md`](../../specs/README.md)
-- [`../../specs/mission.md`](../../specs/mission.md)
-- [`../../specs/tech-stack.md`](../../specs/tech-stack.md)
-- [`../../specs/roadmap.md`](../../specs/roadmap.md)
-- [`../../docs/PLAN.md`](../../docs/PLAN.md)
+- [`specs/README.md`](../../../specs/README.md)
+- [`specs/mission.md`](../../../specs/mission.md)
+- [`specs/tech-stack.md`](../../../specs/tech-stack.md)
+- [`specs/roadmap.md`](../../../specs/roadmap.md)
+- [`docs/PLAN.md`](../../PLAN.md)
 - [`pr-006-roadmap-naming-and-hosted-provider-strategy.md`](pr-006-roadmap-naming-and-hosted-provider-strategy.md) — the prior doc-drift cleanup whose lessons shape this PR's bridge approach.
