@@ -11,6 +11,46 @@
 
 ---
 
+## PR #10 — Feature spec: AssemblyAI MVP Slice 1
+
+**Merged:** TBD  |  **Branch:** `feature/assemblyai-mvp-slice-1`
+**Explainer:** [`prs/pr-010-assemblyai-mvp-slice-1-spec.md`](prs/pr-010-assemblyai-mvp-slice-1-spec.md)
+
+PR #10 is the first real test of SDD on this repo: the constitution
+landed (PR #8), the mission was reframed (PR #9), and now the first
+feature loop produces a spec triple — `requirements.md`, `plan.md`,
+`validation.md` — *before* any code. The slice itself is small in scope
+(local file → AssemblyAI → Markdown) but load-bearing: it validates the
+whole paid-provider plumbing (two-gate spend, tenacity retry, polling,
+atomic write, frontmatter) on a 30-second WAV before the Drive source
+loop adds OAuth on top.
+
+The interesting design pressure was *not* the technical decisions — the
+brainstorming earlier in the same session settled those (diarization on
+by default, per-utterance timestamps, `.env`-based key, soft $5 cost cap,
+suffix-increment collision policy). The pressure was on what the spec
+should and should *not* contain. SDD says "Goals, Mission, Audience,
+Constraints — yes; variable names, function signatures — no." So the
+spec deliberately stops at task groups (e.g. "implement the markdown
+formatter") and trusts the implementer to decide internal function
+signatures during the build. That's harder than it sounds: the temptation
+to over-specify in advance is real.
+
+The "Why AssemblyAI is the first hosted provider" decision row makes the
+spec self-explanatory under the new mission framing: AssemblyAI is picked
+on **convenience** (existing credit + working SDK + familiar API), not on
+a claim that it is the most accurate or cheapest option. The mission
+ranks accuracy as the primary deciding factor for the long-term provider
+set; the spec records that the MVP's choice does not silently override
+that ranking.
+
+The takeaway: feature specs are not a replacement for chat brainstorms;
+they are the *artifact* of the brainstorm, committed before
+implementation so that drift between the conversation and the code is a
+review-blocker, not an after-the-fact discovery.
+
+---
+
 ## PR #9 — Mission: provider-agnostic framing with default-cheap
 
 **Merged:** TBD  |  **Branch:** `docs/mission-provider-agnostic-framing`
