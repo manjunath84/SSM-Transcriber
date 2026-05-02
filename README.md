@@ -40,6 +40,8 @@ All phases build on the **Phase 1 Foundations** (`PreparedMedia`, versioned cach
 two-gate spend model, `RunWorkspace`, sync-by-default, fixture/stub strategy) defined in
 [`docs/PLAN.md`](docs/PLAN.md). CI runs `ruff` + `mypy` + `pytest` on every PR.
 
+See [`specs/`](specs/) for the SDD constitution (mission, tech-stack, roadmap) and per-feature specs.
+
 ## Stack
 
 - **Transcription**: `faster-whisper` (local) · Deepgram · AssemblyAI · OpenAI Whisper

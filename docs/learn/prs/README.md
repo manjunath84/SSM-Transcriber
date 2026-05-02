@@ -17,6 +17,7 @@
 | #4 | `docs/learn/` + teaching register | — | [`pr-004-docs-learn-teaching-register.md`](pr-004-docs-learn-teaching-register.md) |
 | #5 | AI operator guide + workflow commands | infra | [`pr-005-ai-operator-guide-workflow-commands.md`](pr-005-ai-operator-guide-workflow-commands.md) |
 | #6 | Roadmap naming cleanup + hosted-provider strategy | docs | [`pr-006-roadmap-naming-and-hosted-provider-strategy.md`](pr-006-roadmap-naming-and-hosted-provider-strategy.md) |
+| #8 | Adopt SDD: bootstrap project constitution under `specs/` | infra | [`pr-008-adopt-sdd-constitution.md`](pr-008-adopt-sdd-constitution.md) |
 
 ## Conventions
 

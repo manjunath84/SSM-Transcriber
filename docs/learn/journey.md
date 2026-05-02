@@ -11,6 +11,41 @@
 
 ---
 
+## PR #8 — Adopt SDD: bootstrap project constitution under `specs/`
+
+**Merged:** TBD  |  **Branch:** `sdd/constitution-bootstrap`
+**Explainer:** [`prs/pr-008-adopt-sdd-constitution.md`](prs/pr-008-adopt-sdd-constitution.md)
+
+PR #8 is the repo crossing a workflow threshold. After PR #6 stabilized the
+docs and removed drift, the natural next question was: when an AI tool
+opens this repo cold, where does it start? Five well-edited files (README,
+PLAN, learn/, CLAUDE.md, ai/) are still five files. The author adopted
+Spec-Driven Development (SDD) — write the spec first, implement against
+it — and wanted a `specs/` directory holding mission, tech-stack, and
+roadmap as the project constitution, then per-feature folders for each
+loop.
+
+The brownfield trap was sharp: this repo already has effective
+mission/stack/roadmap content. Naively duplicating it into `specs/` would
+re-create the exact drift PR #6 had just finished cleaning up. So the
+approach this PR settles on is the **lightweight bridge**: `specs/` files
+are small (~250 lines total), summarize the canonical sources for an
+agent reading the constitution alone, and link out for detail. Roadmap
+headings are *verbatim* from `docs/PLAN.md` so a rename is a one-PR fix
+instead of a drift event. F1–F8 contract names are inlined; bodies stay
+in PLAN.md.
+
+The takeaway: adopting a new workflow on a brownfield repo isn't about
+recreating the project — it's about adding the *missing layer* without
+touching the layers that already work. The bridge file pattern is reusable
+any time you want a stable agent-facing surface that summarizes content
+living somewhere else.
+
+AI workflow concepts introduced:
+[`Spec-driven development`](glossary.md#spec-driven-development).
+
+---
+
 ## PR #6 — Roadmap naming cleanup and hosted-provider strategy
 
 **Merged:** 2026-05-01  |  **Branch:** `codex/docs-stale-naming-cleanup`

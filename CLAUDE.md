@@ -1,6 +1,7 @@
 # SSM-Transcriber — Claude Code Context
 
 Start here:
+- [`specs/`](specs/) — SDD constitution (mission, tech-stack, roadmap) and per-feature specs
 - [`docs/ai/README.md`](docs/ai/README.md) — AI-agnostic operator guide
 - [`docs/PLAN.md`](docs/PLAN.md) — detailed roadmap and F1–F8 contracts
 - [`docs/learn/README.md`](docs/learn/README.md) — living-doc and teaching-register rules
