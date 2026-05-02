@@ -254,6 +254,24 @@ artifact or checklist, such as review and ship preparation.
 
 ---
 
+## Spec-driven development
+
+A workflow where the spec is written and committed *before* implementation,
+and the implementation is then evaluated against the spec rather than the
+spec being reverse-engineered from working code. In this repo, SDD takes the
+form of a `specs/` directory holding the project constitution
+(`mission.md`, `tech-stack.md`, `roadmap.md`) plus per-feature folders
+named `specs/YYYY-MM-DD-<feature>/` containing `requirements.md`,
+`plan.md`, and `validation.md`. The constitution files are *bridges* to
+canonical sources (`README.md`, `docs/PLAN.md`, `docs/learn/README.md`,
+`CLAUDE.md`) so adopting SDD on a brownfield repo does not duplicate
+content. The terminal state of each feature loop is "spec committed, user
+explicitly approves" — implementation is a separate step.
+
+**Where it shows up:** [`specs/`](../../specs/).
+
+---
+
 ## Two-gate spend model
 
 This project's policy (F4) for when a paid API call is permitted. A paid
