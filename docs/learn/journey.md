@@ -11,6 +11,52 @@
 
 ---
 
+## PR #9 — Mission: provider-agnostic framing with default-cheap
+
+**Merged:** TBD  |  **Branch:** `docs/mission-provider-agnostic-framing`
+**Explainer:** [`prs/pr-009-mission-provider-agnostic-framing.md`](prs/pr-009-mission-provider-agnostic-framing.md)
+
+PR #9 is a small but real repositioning of the project identity. The
+mission statement that landed in PR #8 led with "local-first," which was
+inherited from older repo language and was doing two jobs at once: stating
+a cost philosophy (default to $0) and stating a project identity (local is
+the canonical path, cloud is the exception). Both were defensible until the
+author surfaced a concrete future goal — head-to-head accuracy and cost
+comparison across providers — that fits awkwardly under a "local-first
+always" identity.
+
+This PR keeps the cost protection but drops the asymmetric framing. Local
+and hosted providers are now described as first-class peers in
+`specs/mission.md`; the default budget is still `free` so casual use still
+costs `$0`; the two-gate spend protection (configured key + explicit
+`--budget low|best` + cost confirmation) is preserved verbatim. The mission
+now ranks three deciding factors: **accuracy is primary**, **cost is the
+gating constraint**, and **convenience is a legitimate tiebreaker** —
+"cheapest" alone is not a sound reason to pick a transcription provider;
+cost determines whether a paid option is available at all, not which paid
+option to pick when several pass the budget; and a real user can
+reasonably reach for a provider they already have wired up rather than
+re-optimize from scratch every job. A new "in scope" bullet records that
+head-to-head provider evaluation (accuracy first, then cost) is a stated
+future direction and is intended to drive future provider and default
+choices; the MVP's AssemblyAI choice is provisional pending those
+evaluations, with accuracy as the primary tiebreaker.
+
+The takeaway: a project's elevator pitch is not just marketing — it
+constrains what feels in-scope vs out-of-scope to the next implementer (AI
+or human). When the elevator pitch and the actual long-term vision diverge,
+fix the pitch early. Doing it later is harder because more downstream docs
+will have inherited the older framing.
+
+There is a remaining inconsistency in `docs/PLAN.md` (a "Local-first,
+always" header under the Cost Optimization Strategy section) — it reads as
+a *strategy principle* rather than an identity claim, so it does not
+contradict the new mission, but it is the next sentence worth revisiting if
+PLAN.md is edited for any other reason. Flagged in the explainer, not
+addressed in this PR.
+
+---
+
 ## PR #8 — Adopt SDD: bootstrap project constitution under `specs/`
 
 **Merged:** TBD  |  **Branch:** `sdd/constitution-bootstrap`
