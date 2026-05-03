@@ -2,11 +2,14 @@
 
 All internal settings are prefixed ``TRANSCRIBER_``. Third-party API keys
 (``ASSEMBLYAI_API_KEY``, ``DEEPGRAM_API_KEY``, ``OPENAI_API_KEY``, etc.) are
-read directly by vendor SDKs and are not managed here. The
-``assemblyai_configured`` boundary helper below keeps the only
-``os.getenv`` call for that vendor key inside this module so the rest of
-the codebase can honour the "never read os.environ directly" rule from
-CLAUDE.md.
+unprefixed by convention and read via ``os.getenv`` from the process
+environment. ``pydantic-settings`` only loads ``.env`` values for declared
+model fields (i.e. the ``TRANSCRIBER_*`` ones), so we eagerly call
+``load_dotenv`` at module import to push every ``.env`` entry — including
+unprefixed vendor keys — into ``os.environ`` before the singleton is built.
+The ``assemblyai_configured`` boundary helper keeps the only ``os.getenv``
+call for the vendor key inside this module, so the rest of the codebase
+can honour the "never read os.environ directly" rule from CLAUDE.md.
 
 Phase 0.5: stub with only the fields needed for the CLI to start.
 Phase 1+ will extend this with cache, output, and provider settings as
@@ -18,8 +21,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Load `.env` into `os.environ` for unprefixed vendor keys (ASSEMBLYAI_API_KEY,
+# etc.). `pydantic-settings` reads `.env` for declared TRANSCRIBER_* fields
+# only, so this is the boundary where vendor keys actually become visible to
+# `os.getenv`. `override=False` means real env vars win over the file.
+load_dotenv(override=False)
 
 
 class TranscriberSettings(BaseSettings):
