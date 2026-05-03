@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import requests
 import responses
 from responses import matchers
 
@@ -125,17 +126,44 @@ def test_upload_429_then_200_succeeds(rsps: responses.RequestsMock, wav: Path) -
 
 
 def test_upload_three_429s_fails(rsps: responses.RequestsMock, wav: Path) -> None:
-    """Case 3: three consecutive 429s → fails after retry exhaustion (no 4th)."""
+    """Case 3: three consecutive 429s → ProviderError after retry exhaustion.
+
+    Tightened from a generic ``Exception`` match: the retry-exhaustion path
+    must raise ``ProviderError`` so the CLI's exit-code matrix maps it to
+    exit 3. A bare tenacity decorator with ``reraise=True`` would propagate
+    the underlying ``_Transient`` and the CLI would emit an uncaught
+    traceback instead — exactly the bug the ``_with_retry`` wrapper closes.
+    """
     for _ in range(3):
         rsps.post(f"{API_BASE}/upload", json={"error": "rate limited"}, status=429)
 
     provider = AssemblyAIProvider(poll_interval_seconds=0.0)
-    with pytest.raises(Exception):  # noqa: B017 — tenacity wraps the underlying transient
+    with pytest.raises(ProviderError) as exc:
         provider.transcribe(wav, language=None, diarize=False, speech_model="universal-3-pro")
 
+    assert "after retries" in str(exc.value)
     # Exactly 3 upload calls were registered; if a 4th had been attempted, it
     # would raise ConnectionError because no mock matches it.
     assert len(rsps.calls) == 3
+
+
+def test_upload_timeout_exhausted_raises_provider_error(
+    rsps: responses.RequestsMock, wav: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defence against the same class for ``requests.Timeout``: the
+    retry-exhaustion path must surface as ``ProviderError`` regardless of
+    which transient exception class drove the retries."""
+
+    def _always_timeout(*_args: object, **_kwargs: object) -> object:
+        raise requests.Timeout("simulated timeout")
+
+    monkeypatch.setattr("transcriber.providers.assemblyai.requests.post", _always_timeout)
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    with pytest.raises(ProviderError) as exc:
+        provider.transcribe(wav, language=None, diarize=False, speech_model="universal-3-pro")
+
+    assert "after retries" in str(exc.value)
 
 
 def test_upload_401_no_retry(rsps: responses.RequestsMock, wav: Path) -> None:

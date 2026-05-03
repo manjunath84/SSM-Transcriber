@@ -147,6 +147,27 @@ def test_soft_cap_silent_below_threshold() -> None:
     assert not any("exceeds soft cap" in m for m in msgs)
 
 
+def test_unknown_budget_value_rejected_before_paid_authorization() -> None:
+    """Defence-in-depth: even if a caller bypasses the CLI's Typer Enum
+    and passes a free-form string, an unrecognised tier must NOT fall
+    through to ``budget == "free"`` (which would silently authorise paid
+    use). The check rejects unknown values explicitly with a useful
+    error naming the allowed set."""
+    _, notify = _capture_notify()
+    with pytest.raises(BudgetError) as exc:
+        check(
+            provider_name="AssemblyAI",
+            budget="paind",  # typo'd "paid"
+            key_configured=True,
+            cost_usd=1.0,
+            yes=True,
+            prompt=_noop_prompt,
+            notify=notify,
+        )
+    assert "Unknown budget" in str(exc.value)
+    assert "free" in str(exc.value) and "low" in str(exc.value) and "best" in str(exc.value)
+
+
 def test_user_declines_returns_false() -> None:
     _, notify = _capture_notify()
 

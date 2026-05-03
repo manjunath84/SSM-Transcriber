@@ -32,6 +32,14 @@ ASSEMBLYAI_RATE_PER_MINUTE_USD: float = 0.009
 # gate. The hard gates remain Gate 1 and Gate 2.
 SOFT_CAP_USD: float = 5.0
 
+# Budget tier names the CLI/config accept. Unknown values must NOT be
+# treated as "paid authorized" — that would weaken the two-gate spend
+# contract (``--budget typo -y`` would silently proceed). Defence-in-depth:
+# the CLI ``--budget`` flag is also a Typer Enum so bad inputs fail at
+# parse time; this allowlist is the second line of defence inside the
+# gate function.
+ALLOWED_BUDGETS: frozenset[str] = frozenset({"free", "low", "best"})
+
 
 class BudgetError(TranscriberError):
     """Gate 1 or Gate 2 failed. CLI maps this to exit code 2 (config)."""
@@ -67,6 +75,15 @@ def check(
     ``prompt`` and ``notify`` are injected so tests can assert call counts
     and content without spinning up ``rich`` or stdin.
     """
+    # Reject unknown budget tiers BEFORE the gate checks. An unrecognised
+    # value like ``"typo"`` would otherwise fall through Gate 2's
+    # ``budget == "free"`` check and silently authorise paid use.
+    if budget not in ALLOWED_BUDGETS:
+        raise BudgetError(
+            f"Unknown budget {budget!r}; expected one of "
+            f"{sorted(ALLOWED_BUDGETS)}."
+        )
+
     # Gate 1: key/endpoint configured?
     if not key_configured:
         raise BudgetError(

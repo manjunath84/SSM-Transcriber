@@ -147,9 +147,22 @@ def _format_timestamp(ms: int) -> str:
 def _yaml_string(value: str) -> str:
     """Render a string as bare YAML when safe, double-quoted otherwise.
 
-    Quoting matters for: empty strings, leading/trailing whitespace, YAML
-    reserved words, ISO dates (would be parsed as a date object), and
-    strings containing unsafe characters at the start.
+    Plain (unquoted) scalars look cleanest but YAML 1.2 has several
+    contexts that change the parse mid-string. Quoting matters for:
+
+    - empty strings, leading/trailing whitespace
+    - YAML reserved words (``null``, ``true``, etc.)
+    - ISO dates (``YYYY-MM-DD`` would be parsed as a date object)
+    - strings starting with reserved indicators (``- ? @ % & * ! | > ' " [ ] { } # ,``)
+    - embedded ``": "`` (colon+space) — the mapping-value separator,
+      which would split the scalar and corrupt the parse
+    - embedded ``" #"`` (space+hash) — starts a comment in plain context,
+      truncating the value at the hash
+    - trailing ``":"`` — looks like an empty mapping value
+
+    Filename-derived titles like ``Lecture: Intro`` and ``foo # bar`` hit
+    the latter two; the body of the function below is the only thing
+    standing between user filenames and broken-but-silent frontmatter.
     """
     if not value:
         return '""'
@@ -160,6 +173,10 @@ def _yaml_string(value: str) -> str:
     if _looks_like_iso_date(value):
         return _double_quote(value)
     if value[0] in "-?@`%&*!|>'\"[]{}#," or value.startswith(": "):
+        return _double_quote(value)
+    if ": " in value or " #" in value:
+        return _double_quote(value)
+    if value.endswith(":"):
         return _double_quote(value)
     return value
 

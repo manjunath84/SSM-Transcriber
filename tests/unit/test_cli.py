@@ -186,6 +186,24 @@ def test_user_declines_prompt_exits_0(
     assert "Cancelled" in result.stdout or "cancelled" in result.stdout
 
 
+def test_invalid_budget_value_rejected_at_typer_parse(tmp_path: Path) -> None:
+    """``--budget paind`` (typo'd "paid") must NOT silently authorise paid
+    use. Typer's Enum binding rejects the value at parse time before any
+    subsystem runs. Without the Enum (when ``budget`` was a free-form
+    ``str``), only ``"free"`` was blocked and any other string fell
+    through Gate 2 to the spend path."""
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["transcribe", str(src), "--budget", "paind", "-y"])
+    # Typer/Click maps invalid Enum values to its usage-error code (2).
+    assert result.exit_code == 2
+    # In newer typer versions stderr is folded into stdout; either way the
+    # invalid value or a typer "Invalid value" hint must be visible.
+    assert "paind" in result.output or "Invalid value" in result.output
+
+
 def test_eof_on_prompt_treated_as_decline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

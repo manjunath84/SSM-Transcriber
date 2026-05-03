@@ -109,3 +109,47 @@ def test_render_neither_speakers_nor_timestamps(workspace: RunWorkspace) -> None
     assert "World." in body
     assert "[" not in body  # no timestamps
     assert "**" not in body  # no speaker bold
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Lecture: Intro",  # embedded `: ` would split the YAML mapping
+        "foo # bar",  # ` #` starts a comment in plain scalar context
+        "trailing-colon:",  # trailing `:` looks like an empty mapping value
+        "ends with #",  # ends with hash
+    ],
+)
+def test_yaml_frontmatter_quotes_unsafe_titles(
+    workspace: RunWorkspace, title: str
+) -> None:
+    """Filename-derived titles can contain ``:``, ``#`` etc. Unquoted, the
+    YAML parser silently truncates or splits them. The formatter must
+    double-quote any title with these embedded indicators so the produced
+    frontmatter is valid YAML round-trip — Obsidian / NotebookLM / paste-
+    into-AI all break on broken frontmatter.
+    """
+    media = PreparedMedia(
+        kind="local",
+        original_uri=f"./{title}.mp4",
+        local_path=Path(f"/abs/{title}.mp4"),
+        title=title,
+        duration_seconds=10.0,
+        workspace=workspace,
+        extra={},
+    )
+    result = TranscriptResult(
+        text="hi",
+        segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
+        language="en",
+        duration_seconds=10.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    output = render(result, media, created=date(2026, 5, 3))
+
+    # The title line must be the literal double-quoted form; this is the
+    # round-trip-safe way to express any of the unsafe scalars above.
+    expected_line = f'title: "{title}"'
+    assert expected_line in output, f"expected {expected_line!r} in:\n{output}"

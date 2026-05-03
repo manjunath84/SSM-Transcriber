@@ -13,6 +13,7 @@ per-provider cost-estimation hook.
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import time
@@ -56,16 +57,35 @@ class _Transient(Exception):
 
 _RETRYABLE_EXC = (_Transient, requests.Timeout, requests.ConnectionError)
 
-# Retry policy: 3 attempts, exponential backoff (1s/2s/4s), retry only on
-# transient HTTP statuses + network timeouts. Permanent 4xx (other than
-# 429) and parse errors raise immediately.
-_retry_policy = retry(
-    retry=retry_if_exception_type(_RETRYABLE_EXC),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=4),
-    before_sleep=before_sleep_log(logger, logging.INFO),
-    reraise=True,
-)
+
+def _with_retry[F: Callable[..., Any]](fn: F) -> F:
+    """Apply tenacity retry, then convert *exhausted* transient failures to
+    ``ProviderError`` so the CLI's exit-code matrix maps them to exit 3.
+
+    Without this wrapper, the bare tenacity decorator with ``reraise=True``
+    propagates the last underlying exception (``_Transient`` / ``requests.
+    Timeout`` / ``requests.ConnectionError``) to the caller. The CLI only
+    catches ``ProviderError``, so an exhausted-retry case used to escape as
+    an uncaught traceback with exit code 1 instead of the documented 3.
+    """
+    retried = retry(
+        retry=retry_if_exception_type(_RETRYABLE_EXC),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=4),
+        before_sleep=before_sleep_log(logger, logging.INFO),
+        reraise=True,
+    )(fn)
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return retried(*args, **kwargs)
+        except _RETRYABLE_EXC as exc:
+            raise ProviderError(
+                f"AssemblyAI request failed after retries: {exc}"
+            ) from exc
+
+    return wrapper  # type: ignore[return-value]
 
 
 def _api_headers() -> dict[str, str]:
@@ -106,7 +126,7 @@ def _handle_response(resp: requests.Response) -> dict[str, Any]:
     return body
 
 
-@_retry_policy
+@_with_retry
 def _upload(wav_path: Path) -> str:
     """Stream-upload the WAV to AssemblyAI; return the upload URL."""
     with wav_path.open("rb") as f:
@@ -120,7 +140,7 @@ def _upload(wav_path: Path) -> str:
     return str(payload["upload_url"])
 
 
-@_retry_policy
+@_with_retry
 def _create_transcript(
     upload_url: str,
     *,
@@ -147,7 +167,7 @@ def _create_transcript(
     return _handle_response(resp)
 
 
-@_retry_policy
+@_with_retry
 def _get_transcript(job_id: str) -> dict[str, Any]:
     resp = requests.get(
         f"{API_BASE}/transcript/{job_id}",

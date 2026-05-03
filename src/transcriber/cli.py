@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -31,6 +32,18 @@ from transcriber.formatters import markdown as md_formatter
 from transcriber.providers.assemblyai import AssemblyAIProvider
 from transcriber.providers.base import ProviderError
 from transcriber.sources.local import LocalSource
+
+
+class Budget(StrEnum):
+    """Budget tier for ``--budget``. Typer rejects values outside this set
+    at parse time, so a typo like ``--budget paind`` fails before any
+    paid call can be authorised. ``StrEnum`` (Python 3.11+) gives every
+    member ``str`` semantics, so comparisons and ``budget.value`` work
+    identically to a plain ``str + Enum`` pair."""
+
+    free = "free"
+    low = "low"
+    best = "best"
 
 # Library code uses ``logger.info`` / ``logger.warning`` everywhere (job IDs,
 # retry attempts, polling status, RunWorkspace cleanup failures). Without
@@ -95,9 +108,9 @@ def transcribe(
         typer.Option("--no-timestamps", help="Strip mm:ss timestamp prefixes (default: on)"),
     ] = False,
     budget: Annotated[
-        str,
+        Budget,
         typer.Option("--budget", help="Cost ceiling: free | low | best"),
-    ] = "free",
+    ] = Budget.free,
     max_wait: Annotated[
         int,
         typer.Option("--max-wait", help="Polling cap in minutes (default: 30)"),
@@ -141,7 +154,7 @@ def transcribe(
             try:
                 proceed = budget_check(
                     provider_name="AssemblyAI",
-                    budget=budget,
+                    budget=budget.value,
                     key_configured=settings.assemblyai_configured,
                     cost_usd=cost_usd,
                     yes=yes,
