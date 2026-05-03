@@ -1,13 +1,35 @@
-"""SSM-Transcriber CLI — entry point for all commands."""
+"""SSM-Transcriber CLI — entry point for all commands.
+
+Slice 1 wires the ``transcribe`` command end-to-end for the local-file →
+AssemblyAI → markdown path. Other source resolvers (YouTube, Drive),
+local providers (faster-whisper), and other formatters (txt / srt /
+json) land in their own phases.
+"""
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.prompt import Confirm
 from rich.table import Table
+
+from transcriber.config import settings
+from transcriber.core import atomic
+from transcriber.core.audio import AudioExtractError, extract as extract_audio
+from transcriber.core.budget import (
+    BudgetError,
+    check as budget_check,
+    estimate_assemblyai_cost,
+)
+from transcriber.core.workspace import RunWorkspace
+from transcriber.formatters import markdown as md_formatter
+from transcriber.providers.assemblyai import AssemblyAIProvider
+from transcriber.providers.base import ProviderError
+from transcriber.sources.local import LocalSource
 
 app = typer.Typer(
     name="ssm-transcriber",
@@ -32,49 +54,127 @@ def transcribe(
     ] = None,
     fmt: Annotated[
         str,
-        typer.Option("-f", "--format", help="Output format: txt | srt | md | json"),
-    ] = "txt",
-    quality: Annotated[
-        str,
-        typer.Option("-q", "--quality", help="Model quality: fast | balanced | best"),
-    ] = "balanced",
+        typer.Option("-f", "--format", help="Output format (Slice 1: md only)"),
+    ] = "md",
     language: Annotated[
         str | None,
         typer.Option("-l", "--language", help="Language code, e.g. 'en'. Default: auto-detect"),
     ] = None,
-    no_cache: Annotated[
+    model: Annotated[
+        str,
+        typer.Option("--model", help="AssemblyAI speech model: best | nano"),
+    ] = "best",
+    no_speakers: Annotated[
         bool,
-        typer.Option("--no-cache", help="Skip cache and force re-transcription"),
+        typer.Option("--no-speakers", help="Disable speaker diarization (default: on)"),
+    ] = False,
+    no_timestamps: Annotated[
+        bool,
+        typer.Option("--no-timestamps", help="Strip mm:ss timestamp prefixes (default: on)"),
     ] = False,
     budget: Annotated[
         str,
         typer.Option("--budget", help="Cost ceiling: free | low | best"),
     ] = "free",
-    summarize: Annotated[
+    max_wait: Annotated[
+        int,
+        typer.Option("--max-wait", help="Polling cap in minutes (default: 30)"),
+    ] = 30,
+    keep_temp: Annotated[
         bool,
-        typer.Option("--summarize", help="Generate LLM summary after transcription"),
+        typer.Option("--keep-temp", help="Preserve workspace temp dir for debugging"),
     ] = False,
     yes: Annotated[
         bool,
         typer.Option("-y", "--yes", help="Skip cost confirmation prompts"),
     ] = False,
 ) -> None:
-    """Transcribe audio or video from any supported source.
+    """Transcribe audio or video from any supported source."""
+    if fmt != "md":
+        console.print(f"[red]error:[/red] only --format md is supported in Slice 1 (got '{fmt}').")
+        raise typer.Exit(code=2)
 
-    Phase 0 stub — implementation lands in Phase 1. The command exits non-zero
-    so shell scripts don't silently treat "not implemented" as success.
-    """
-    console.print("[yellow]Phase 1 not yet implemented.[/yellow]")
-    console.print(f"  source    = {source}")
-    console.print(f"  output    = {output or 'auto'}")
-    console.print(f"  format    = {fmt}")
-    console.print(f"  quality   = {quality}")
-    console.print(f"  language  = {language or 'auto'}")
-    console.print(f"  budget    = {budget}")
-    console.print(f"  summarize = {summarize}")
-    console.print(f"  cache     = {'disabled' if no_cache else 'enabled'}")
-    console.print(f"  yes       = {yes}")
-    raise typer.Exit(code=1)
+    keep = keep_temp or settings.keep_temp
+    try:
+        with RunWorkspace(keep=keep) as workspace:
+            # Resolve source (local only in Slice 1).
+            try:
+                media = LocalSource.prepare(source, workspace)
+            except FileNotFoundError as exc:
+                console.print(f"[red]error:[/red] {exc}")
+                raise typer.Exit(code=4) from exc
+            except ValueError as exc:
+                console.print(f"[red]error:[/red] {exc}")
+                raise typer.Exit(code=2) from exc
+
+            # Extract audio + duration via ffprobe.
+            try:
+                wav_path, duration_seconds = extract_audio(media.local_path, workspace)
+            except AudioExtractError as exc:
+                console.print(f"[red]error:[/red] {exc}")
+                raise typer.Exit(code=4) from exc
+
+            # Two-gate spend check.
+            cost_usd = estimate_assemblyai_cost(duration_seconds)
+            try:
+                proceed = budget_check(
+                    provider_name="AssemblyAI",
+                    budget=budget,
+                    key_configured=settings.assemblyai_configured,
+                    cost_usd=cost_usd,
+                    yes=yes,
+                    prompt=lambda msg: Confirm.ask(msg, default=False, console=console),
+                    notify=lambda msg: console.print(msg),
+                )
+            except BudgetError as exc:
+                console.print(f"[red]error:[/red] {exc}")
+                raise typer.Exit(code=2) from exc
+            if not proceed:
+                console.print("[yellow]Cancelled by user; no charge incurred.[/yellow]")
+                raise typer.Exit(code=0)
+
+            # Provider call.
+            provider = AssemblyAIProvider(max_wait_seconds=max_wait * 60)
+            try:
+                result = provider.transcribe(
+                    wav_path,
+                    language=language,
+                    diarize=not no_speakers,
+                    speech_model=model,
+                    on_job_id=lambda job_id: console.print(
+                        f"[cyan]AssemblyAI job ID:[/cyan] {job_id}"
+                    ),
+                )
+            except ProviderError as exc:
+                console.print(f"[red]error:[/red] {exc}")
+                raise typer.Exit(code=3) from exc
+
+            # Render markdown.
+            content = md_formatter.render(
+                result,
+                media,
+                include_speakers=not no_speakers,
+                include_timestamps=not no_timestamps,
+            )
+
+            # Resolve output path with collision-suffix policy.
+            if output is None:
+                stem = media.local_path.stem
+                date_str = date.today().isoformat()
+                output = settings.output_dir / f"{stem}-{date_str}.md"
+            output = atomic.resolve_collision(output)
+
+            try:
+                atomic.write_text_atomic(output, content)
+            except OSError as exc:
+                console.print(f"[red]error:[/red] failed to write output: {exc}")
+                raise typer.Exit(code=4) from exc
+
+            console.print(f"[green]✓[/green] Saved to: {output}")
+    except KeyboardInterrupt:
+        # Standard SIGINT exit code; workspace cleanup runs via __exit__.
+        console.print("[yellow]Interrupted.[/yellow]")
+        raise typer.Exit(code=130) from None
 
 
 # ── transcriber providers ─────────────────────────────────────────────────────
@@ -83,15 +183,13 @@ def transcribe(
 def providers() -> None:
     """List transcription providers registered via the provider registry.
 
-    Phase 0 stub — the registry lands in Phase 5. Until then, only the
-    built-in local provider is "available", and there is no registry to
-    enumerate. This intentionally does NOT hardcode names or prices here
-    to avoid teaching contributors to duplicate metadata outside the
-    registry.
+    Phase 0/Slice 1 stub — the registry lands in Phase 5. Until then,
+    AssemblyAI is hardcoded into the transcribe command.
     """
     console.print(
-        "[green]faster_whisper[/green]  local  $0.000/min  [dim](Phase 1)[/dim]\n"
-        "[yellow]No provider registry yet — cloud providers land in Phase 5.[/yellow]"
+        "[green]assemblyai[/green]  cloud  $0.009/min  "
+        "[dim](Slice 1; via --budget low|best)[/dim]\n"
+        "[yellow]No provider registry yet — Phase 5 generalizes this.[/yellow]"
     )
 
 
@@ -111,8 +209,6 @@ def auth(
 @app.command()
 def config() -> None:
     """Show current configuration (reads from .env and TRANSCRIBER_* env vars)."""
-    from transcriber.config import settings
-
     table = Table(title="Transcriber Settings", show_header=True, header_style="bold cyan")
     table.add_column("Setting", style="bold")
     table.add_column("Value")

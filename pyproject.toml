@@ -43,6 +43,9 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
 [tool.mypy]
 python_version = "3.12"
 mypy_path = "src"
