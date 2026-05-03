@@ -1,22 +1,26 @@
 # PR #13 — Prevent vendor-API-shape regressions: SDD template + mock convention
 
 **Merged:** TBD  |  **Branch:** `infra/prevent-vendor-api-shape-regressions`  |  **Codex review:** TBD
-**Journey entry:** [`../journey.md#pr-13--prevent-vendor-api-shape-regressions`](../journey.md#pr-13--prevent-vendor-api-shape-regressions)
+**Journey entry:** [`../journey.md#pr-13--prevent-vendor-api-shape-regressions-sdd-template--mock-convention`](../journey.md#pr-13--prevent-vendor-api-shape-regressions-sdd-template--mock-convention)
 
 ## The problem in one paragraph
 
 PR #12's first end-to-end run against a real audio source failed three
-times in a row, each time exposing a wrong-shape defect that 41 unit
-tests had missed: a `pydantic-settings`/`monkeypatch.setenv` mismatch
-that masked the `.env` loading bug, a deprecated AssemblyAI request
-field name (`speech_model` -> `speech_models`), and retired model
-identifiers (`best`/`nano` -> `universal-3-pro`/`universal-2`). Two of
-the three were vendor API drift; the third was a mock-fidelity gap
-(the `responses` library was matching URL+method only). All three
-share a root cause: **the implementation paraphrased shape information
-from training data instead of copying from a known-working source.**
-PR #13 closes that root cause structurally so the same class of bug
-can't recur silently.
+times in a row, each time exposing a defect that 41 unit tests had
+missed: a `pydantic-settings`/`monkeypatch.setenv` mismatch that masked
+the `.env` loading bug, a deprecated AssemblyAI request field name
+(`speech_model` -> `speech_models`), and retired model identifiers
+(`best`/`nano` -> `universal-3-pro`/`universal-2`). The defects split
+into two classes: **#2 and #3 are vendor API drift** with a shared
+root cause — the implementation paraphrased shape information from
+training data instead of copying from a known-working source — while
+**#1 is a test-environment bypass** (a different class with its own
+structural fix in PR #12 itself, the `load_dotenv()` call). Defect #2
+also had a separate hiding mechanism: the `responses` mocks matched
+URL+method only and never the request body shape. **PR #13 closes the
+vendor-shape class** (defects #2 and #3); defect #1 was already fixed
+in PR #12. The combination prevents the same class of bug from
+recurring silently.
 
 ## What changed (high level)
 
@@ -108,15 +112,14 @@ guessing from training data?).
   three different lifecycle stages.
 - **One-sentence hook:** "After three real-API defects in one run,
   diagnosed two as vendor drift and one as test bypass, then added
-  three layered defences: a verbatim-call section in the SDD spec
-  template, a body-shape mock guardrail, and a ctx7 fallback for new
-  vendors — each catching the same class of bug at a different stage
-  (spec review, unit-test write-time, docs research)."
-- **Pointer:** `interview-prep.md` — testing-discipline / post-mortem
-  section (entry to be added when interview-prep is next refreshed).
+  three layered defences for the vendor-drift class: a verbatim-call
+  section in the SDD spec template, a body-shape mock guardrail, and a
+  ctx7 fallback for new vendors — each catching the same class of bug
+  at a different stage (spec review, unit-test write-time, docs
+  research)."
 
 ## Further reading
 
-- [`pr-012-assemblyai-mvp-slice-1-impl.md`](pr-012-assemblyai-mvp-slice-1-impl.md) — the incident this PR is the structural follow-up to (see the "What the manual real-API run caught" section).
+- PR #12 ([`pr-012-assemblyai-mvp-slice-1-impl.md`](pr-012-assemblyai-mvp-slice-1-impl.md), available on `main` once PR #12 merges) — the incident this PR is the structural follow-up to; "What the manual real-API run caught" section captures the three defects.
 - [`../../../specs/REQUIREMENTS_TEMPLATE.md`](../../../specs/REQUIREMENTS_TEMPLATE.md) — the new template.
 - [`../../../CLAUDE.md`](../../../CLAUDE.md) — the two new guardrail bullets.

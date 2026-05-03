@@ -63,11 +63,12 @@ either a constitution doc, a previous PR, or a captured user preference
 > fetch) and capture the response shape *here* before writing
 > implementation code.
 >
-> Why this is required: vendor APIs change. PR #12 found three
-> wrong-shape defects in a single end-to-end run because the
-> implementation paraphrased the user's working curl
-> (`speech_models: ["universal-3-pro"]`) into stale training-data
-> shape (`speech_model: "best"`). The fix to that class of bug is
+> Why this is required: vendor APIs change. PR #12 found two wrong-shape
+> defects (and one unrelated `.env`-loading defect) in a single end-to-end
+> run; both shape defects had the same root cause — the implementation
+> paraphrased the user's working curl (`speech_models: ["universal-3-pro"]`)
+> into stale training-data shape (`speech_model: "best"`) and then again
+> when the model identifier was retired. The fix to *that* class is
 > structural: pin the working call here, copy from it, never restate.
 
 ### `<vendor name>`

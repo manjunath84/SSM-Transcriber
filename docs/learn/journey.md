@@ -17,13 +17,18 @@
 **Explainer:** [`prs/pr-013-prevent-vendor-api-shape-regressions.md`](prs/pr-013-prevent-vendor-api-shape-regressions.md)
 
 PR #13 is the structural follow-up to PR #12. The first end-to-end run
-in PR #12 surfaced three wrong-shape defects in a single attempt:
+in PR #12 surfaced three defects in a single attempt:
 `monkeypatch.setenv` masked the `.env` loading bug, AssemblyAI had
 deprecated the singular `speech_model` field for plural `speech_models`,
 and `best`/`nano` were retired in favour of `universal-3-pro` /
-`universal-2`. The fixes for each landed in PR #12. This PR closes the
-*class* of defect — "wrong vendor API shape because the implementation
-paraphrased rather than copied" — by codifying three layered defences:
+`universal-2`. The fixes for each landed in PR #12. The defects split
+into two classes: the field-name and model-name defects (#2, #3) are
+*vendor API drift* — the implementation paraphrased shape information
+from training data instead of copying from a known-working source. The
+`.env` defect (#1) is a different class — a test-environment bypass
+where `monkeypatch.setenv` populated `os.environ` directly without ever
+exercising the `.env`-loading path. This PR closes the **vendor-shape
+class** (#2, #3) by codifying three layered defences:
 
 1. A new `specs/REQUIREMENTS_TEMPLATE.md` whose **`## Reference calls
    (verbatim)`** section is required for any feature integrating with a

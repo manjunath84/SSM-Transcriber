@@ -45,17 +45,18 @@ and agents are not built yet.
 - Living docs update only when the concept exists and can cite a real repo
   location.
 - Vendor API calls (request shape, field names, model identifiers) must be
-  copied verbatim from a working call recorded in the feature spec's
-  `## Reference calls (verbatim)` section, or from a fresh ctx7 docs fetch
-  with the retrieval date captured. Never paraphrase from memory or
-  training data — vendor APIs change, and PR #12 caught three wrong-shape
-  bugs in one run for exactly this reason.
-- HTTP mocks (`responses` library) must include body-shape matchers
-  (`responses.matchers.json_params_matcher` or equivalent) for any test
-  that exercises the request payload. URL+method-only matching lets
-  wrong-field-name regressions through; see PR #12's
-  `test_create_transcript_body_uses_plural_speech_models` as the
-  exemplar.
+  copied byte-for-byte from a working call pasted into the feature spec's
+  `## Reference calls (verbatim)` section, or from a ctx7 docs fetch
+  performed within the current PR (retrieval date captured in that section
+  too). Never paraphrase from memory or training data — vendor APIs change,
+  and PR #12 caught two wrong-shape bugs (and one unrelated `.env`-loading
+  bug) in one run for exactly this reason.
+- HTTP mocks (`responses` library) must use
+  `responses.matchers.json_params_matcher` (or the equivalent body-content
+  matcher for non-JSON payloads) on every mock whose corresponding
+  production code constructs a request body. URL+method-only matching
+  lets wrong-field-name regressions through unnoticed — exactly what hid
+  PR #12's `speech_model` → `speech_models` regression past 41 unit tests.
 
 ## Claude-specific workflow
 
