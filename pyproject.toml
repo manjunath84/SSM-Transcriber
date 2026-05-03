@@ -15,7 +15,7 @@ dependencies = [
     "rich>=13.7.0",
     "pydantic-settings>=2.3.0",
     "ffmpeg-python>=0.2.0",
-    "assemblyai>=0.30.0",
+    "requests>=2.32.0",
     "tenacity>=8.2.0",
 ]
 
@@ -26,6 +26,7 @@ dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",
     "responses>=0.25.0",
+    "types-requests>=2.32.0",
 ]
 
 [project.scripts]
@@ -49,7 +50,7 @@ mypy_path = "src"
 # Vendor SDKs without type stubs. Adding modules here is preferable to
 # scattering ``# type: ignore[import-untyped]`` comments at import sites.
 [[tool.mypy.overrides]]
-module = ["ffmpeg", "assemblyai"]
+module = ["ffmpeg"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
