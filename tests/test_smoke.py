@@ -30,11 +30,12 @@ def test_cli_help_runs() -> None:
 
 
 def test_cli_providers_command() -> None:
+    """Slice 1 only ships AssemblyAI; faster-whisper returns when Phase 1 MVP lands."""
     runner = CliRunner()
     result = runner.invoke(app, ["providers"])
     assert result.exit_code == 0
-    assert "faster_whisper" in result.stdout
-    assert "$0.000" in result.stdout
+    assert "assemblyai" in result.stdout
+    assert "$0.009" in result.stdout
 
 
 def test_cli_config_command() -> None:
@@ -44,18 +45,20 @@ def test_cli_config_command() -> None:
     assert "TRANSCRIBER_WHISPER_MODEL_SIZE" in result.stdout
 
 
-def test_cli_transcribe_stub_exits_nonzero() -> None:
-    """Phase 0 stub must NOT exit 0 — that would let shell scripts treat it as success."""
+def test_cli_transcribe_missing_file_exits_4() -> None:
+    """Slice 1 contract: a non-existent source path is a local error → exit 4."""
     runner = CliRunner()
-    result = runner.invoke(app, ["transcribe", "./fake.mp4"])
-    assert result.exit_code == 1
-    assert "not yet implemented" in result.stdout.lower()
+    result = runner.invoke(app, ["transcribe", "./does-not-exist.mp4", "--budget", "low", "-y"])
+    assert result.exit_code == 4
+    assert "not found" in result.stdout.lower()
 
 
-def test_cli_auth_stub_exits_nonzero() -> None:
+def test_cli_auth_stub_exits_with_config_code() -> None:
+    """Auth stub exits 2 (config/usage error) per the {0,2,3,4} matrix
+    documented in validation.md, not 1 (outside the matrix)."""
     runner = CliRunner()
     result = runner.invoke(app, ["auth", "google-drive"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
 
 
 def test_cache_dir_expands_tilde(monkeypatch: object) -> None:

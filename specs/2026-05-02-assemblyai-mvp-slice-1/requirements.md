@@ -70,7 +70,7 @@ Per `specs/tech-stack.md` and `docs/PLAN.md`:
 | Filename collision | Suffix increment: `-2`, `-3`, etc. Never overwrites. |
 | Speaker diarization | ON by default (free or near-free on AssemblyAI; harder to add after the fact than to ignore). `--no-speakers` to disable. |
 | Per-utterance timestamps | ON by default (`[mm:ss]` prefix). `--no-timestamps` to strip. |
-| Speech model | `best` by default. `--model best\|nano` flag. |
+| Speech model | `universal-3-pro` by default. `--model universal-3-pro\|universal-2` flag. (Originally specced as `best`/`nano`; AssemblyAI retired those shorthands during implementation — see fix commit `46ccaa1`.) |
 | Soft cost cap | $5. Above this, print a louder warning before the standard confirmation prompt. `--yes` still bypasses the prompt (consistent with smaller jobs). |
 | AssemblyAI job ID | Print at start of polling AND embed in markdown frontmatter as `assemblyai_job_id`. Cheap insurance against Ctrl-C and crashes. |
 | Polling cap | 30 min wall clock. `--max-wait MINUTES` overrides. |
@@ -92,7 +92,7 @@ source_kind: local
 duration_seconds: <float, from ffprobe>
 language: <ISO code>
 provider: assemblyai
-model: <best|nano>
+model: <universal-3-pro|universal-2>
 diarized: <bool>
 speakers: <int or null>
 assemblyai_job_id: <string>
@@ -116,9 +116,20 @@ Field order is stable across runs (sortable diffs).
 
 ### Dependencies added
 
-Runtime: `assemblyai>=0.30.0`, `tenacity>=8.2.0`.
-Dev: `responses>=0.25.0` (mocked HTTP for unit tests).
+Runtime: `requests>=2.32.0`, `tenacity>=8.2.0`, `python-dotenv>=1.0.0`.
+Dev: `responses>=0.25.0` (mocked HTTP for unit tests),
+`types-requests>=2.32.0`.
+
+(Originally specced as `assemblyai>=0.30.0`; the SDK was deliberately
+*not* added during implementation — see commit `17615ea` and the
+"Why this approach" section of the PR-012 explainer for the rationale,
+which centres on unambiguous test ownership of the retry policy.
+`python-dotenv` was added in fix commit `d5eb072` to load unprefixed
+vendor keys from `.env` into `os.environ`; without it, the
+`ASSEMBLYAI_API_KEY` slot below would be invisible to `os.getenv`.)
 
 `pyproject.toml` already has `ffmpeg-python`, `typer`, `rich`,
 `pydantic-settings`. `.env.example` already has the
-`ASSEMBLYAI_API_KEY=` slot at line 45 — no `.env.example` change needed.
+`ASSEMBLYAI_API_KEY=` slot at line 45 — no `.env.example` change needed
+(see fix commit `d5eb072` for the `load_dotenv()` plumbing that
+actually makes that slot reachable).
