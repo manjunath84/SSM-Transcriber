@@ -44,6 +44,18 @@ and agents are not built yet.
   user-facing output.
 - Living docs update only when the concept exists and can cite a real repo
   location.
+- Vendor API calls (request shape, field names, model identifiers) must be
+  copied verbatim from a working call recorded in the feature spec's
+  `## Reference calls (verbatim)` section, or from a fresh ctx7 docs fetch
+  with the retrieval date captured. Never paraphrase from memory or
+  training data — vendor APIs change, and PR #12 caught three wrong-shape
+  bugs in one run for exactly this reason.
+- HTTP mocks (`responses` library) must include body-shape matchers
+  (`responses.matchers.json_params_matcher` or equivalent) for any test
+  that exercises the request payload. URL+method-only matching lets
+  wrong-field-name regressions through; see PR #12's
+  `test_create_transcript_body_uses_plural_speech_models` as the
+  exemplar.
 
 ## Claude-specific workflow
 

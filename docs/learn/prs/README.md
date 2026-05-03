@@ -22,6 +22,7 @@
 | #10 | Feature spec: AssemblyAI MVP Slice 1 | feature (spec) | [`pr-010-assemblyai-mvp-slice-1-spec.md`](pr-010-assemblyai-mvp-slice-1-spec.md) |
 | #11 | PLAN: tighten VAD framing and Phase 1 transcription boundary | docs | [`pr-011-plan-vad-and-transcription-boundary.md`](pr-011-plan-vad-and-transcription-boundary.md) |
 | #12 | Implementation: AssemblyAI MVP Slice 1 | feature (impl) | [`pr-012-assemblyai-mvp-slice-1-impl.md`](pr-012-assemblyai-mvp-slice-1-impl.md) |
+| #13 | Prevent vendor-API-shape regressions: SDD template + mock convention | infra | [`pr-013-prevent-vendor-api-shape-regressions.md`](pr-013-prevent-vendor-api-shape-regressions.md) |
 
 ## Conventions
 
