@@ -117,7 +117,7 @@ def config() -> None:
     table.add_column("Setting", style="bold")
     table.add_column("Value")
 
-    for key, value in settings.model_dump().items():
+    for key, value in settings.redacted_dump().items():
         table.add_row(f"TRANSCRIBER_{key.upper()}", str(value))
 
     console.print(table)
