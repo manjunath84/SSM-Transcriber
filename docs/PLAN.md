@@ -36,7 +36,7 @@ The full architecture (LangGraph multi-agent, cloud providers, Google Drive, Not
 | Transcription | `faster-whisper` local (CPU/GPU) — **$0** | Deepgram ($0.006/min), AssemblyAI ($0.009/min) |
 | LLM post-processing | Skipped unless `--summarize` flag | Groq free tier → Gemini Flash → Claude Haiku (cheapest first) |
 | Re-processing same file | Content-hash cache — skip if already transcribed | — |
-| Cloud audio upload size | Strip silence with VAD before upload (saves 20-40% duration) | — |
+| Cloud audio upload size | Optimize VAD at transcription engine level (preserve timestamps) | — |
 | Large model on weak hardware | Default `base` model; `--quality best` opts into `large-v3` | — |
 
 ### Key cost-saving techniques applied throughout
@@ -444,7 +444,7 @@ Files to create/modify:
 - `src/transcriber/sources/__init__.py` + `src/transcriber/sources/base.py` — `PreparedMedia` dataclass (F2) and `LocalSource` that returns one. No `resolve_source()` yet; the CLI wires `LocalSource` directly until Phase 2
 - `src/transcriber/core/workspace.py` — `RunWorkspace` context manager (F5)
 - `src/transcriber/core/audio_extractor.py` — `ffmpeg-python`: extract audio from video → 16kHz mono WAV **written into the run workspace**. Does NOT strip silence from the canonical path. Separately computes a VAD sidecar `speech_regions: list[tuple[float, float]]` on the original timeline (F-cost-section, item 3)
-- `src/transcriber/core/transcriber.py` — `faster-whisper` wrapper: lazy singleton model loader, transcribes the **full** WAV, returns `TranscriptResult`. Exposes `model_id` and `model_revision` for the cache key
+- `src/transcriber/core/transcriber.py` — define a minimal transcription boundary/interface here early. Implement the `faster-whisper` wrapper behind this interface so sources do not tightly couple to the implementation. Lazy singleton model loader, transcribes the **full** WAV, returns `TranscriptResult`. Exposes `model_id` and `model_revision` for the cache key
 - `src/transcriber/core/cache.py` — versioned `CacheKey` composite (F3), atomic writes, `get` / `set`, schema-versioned directory layout
 - `src/transcriber/core/models.py` — `download_model(quality)` helper + preflight check surfaced in the CLI (F6)
 - `src/transcriber/config.py` — extend stub with `CACHE_DIR`, `CACHE_ENABLED`, `LOG_LEVEL`, `KEEP_TEMP`; add `redacted_dump()` (F8)
@@ -699,7 +699,7 @@ The graph emits a `transcription_complete` event as a LangGraph message at the e
 | 0 | `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.github/copilot-instructions.md` | AI tool context |
 | 0 | `src/transcriber/cli.py` | Typer CLI skeleton |
 | 1 | `src/transcriber/core/audio_extractor.py` | ffmpeg audio extraction |
-| 1 | `src/transcriber/core/transcriber.py` | faster-whisper wrapper |
+| 1 | `src/transcriber/core/transcriber.py` | Transcription boundary + faster-whisper wrapper |
 | 1 | `src/transcriber/config.py` | pydantic-settings config |
 | 2 | `src/transcriber/sources/youtube.py` | yt-dlp YouTube download |
 | 2 | `src/transcriber/sources/__init__.py` | Source resolver |
