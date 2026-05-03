@@ -37,6 +37,7 @@ htmlcov/
 # Transcriber runtime
 /output/
 /tmp/
+/temp/
 # Only ignore media at repo root — allow tests/fixtures/*.wav etc.
 /*.wav
 /*.mp3
