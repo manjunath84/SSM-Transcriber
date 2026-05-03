@@ -254,6 +254,23 @@ artifact or checklist, such as review and ship preparation.
 
 ---
 
+## `tenacity`
+
+A small Python library for adding retry-with-backoff logic to functions
+that call something flaky — usually a network endpoint. The core API is
+the `@retry(...)` decorator, which wraps the call with a configurable
+"retry-on-which-exceptions", "stop-after-N-attempts", and "wait-this-
+long-between-attempts" policy. In this repo, `tenacity` is the retry
+layer at the heart of every cloud-provider HTTP call: 3 attempts max,
+exponential backoff (1s / 2s / 4s), retry only on
+429 / 502 / 503 / 504 / timeout / connection errors, never on other 4xx.
+
+**Where it shows up:** `src/transcriber/providers/assemblyai.py`
+`_retry_policy`. Phase 5's full provider abstraction will reuse the
+same shape across Deepgram, OpenAI Whisper, etc.
+
+---
+
 ## Spec-driven development
 
 A workflow where the spec is written and committed *before* implementation,

@@ -11,6 +11,61 @@
 
 ---
 
+## PR #12 — Implementation: AssemblyAI MVP Slice 1
+
+**Merged:** TBD  |  **Branch:** `impl/assemblyai-mvp-slice-1`
+**Explainer:** [`prs/pr-012-assemblyai-mvp-slice-1-impl.md`](prs/pr-012-assemblyai-mvp-slice-1-impl.md)
+
+PR #12 is the first end-to-end feature loop the repo runs under SDD,
+and the first PR that ships running code instead of constitution or
+spec. The implementation lands the AssemblyAI MVP Slice 1 spec from
+PR #10 — local file → ffmpeg → AssemblyAI v2 REST → enriched Markdown
+with a stable YAML frontmatter — across seven implementation commits
+that map one-to-one to the spec's nine task groups, plus a teaching-
+artifacts commit. Every test case in `validation.md` (24 of them) has a
+matching unit test; the one real-API verification step lives in a
+manual runbook (`tests/manual/end_to_end.md`) that costs ~$0.005 per
+run and stays out of CI on purpose.
+
+The design call most worth reading is the **rejection of the official
+`assemblyai` SDK** in favour of a thin `requests` + `tenacity` client.
+The spec's test cases — "first 429 then 200 succeeds via retry",
+"three 429s fail after exhaustion", "401 fails immediately with no
+retry" — are assertions about the exact retry policy. The SDK has its
+own retry layer, which would compound with ours and make those test
+cases ambiguous about which layer was actually retrying. Going
+SDK-free traded ~150 lines of HTTP client for unambiguous test
+ownership. Phase 5's full provider abstraction (multi-provider
+registry) can revisit the SDK question when there are 3+ providers.
+
+The second pattern worth naming is **dependency injection for
+testability**: the budget module takes `prompt` and `notify` callables
+rather than importing `rich` or stdin; the AssemblyAI provider takes
+`sleep` and `clock` callables so the polling-timeout test doesn't have
+to wait 30 minutes. Java developers will recognize this as ordinary
+constructor injection; Python codebases sometimes reach for monkey-
+patching instead, which works but couples tests to implementation
+paths. The injected-callable pattern keeps the unit boundary obvious
+and the tests fast.
+
+The takeaway from this loop: **SDD scales when the spec is precise
+enough that the implementation can ship without re-asking the
+architect, but not so prescriptive that the implementer can't make
+real engineering calls.** The SDK-vs-raw-HTTP decision is the kind of
+choice the spec correctly *did not* make for the implementer; the spec
+specified the behaviour (retry exactly these codes exactly this many
+times) and trusted the implementer to pick the cleanest way to honour
+it. That separation is what made the test cases verifiable rather than
+loose.
+
+New Python idioms:
+[`typing.Protocol`](python-notes.md#typing-protocol),
+[`tenacity.retry` decorator](python-notes.md#tenacity-retry).
+New tooling concept:
+[`tenacity`](glossary.md#tenacity).
+
+---
+
 ## PR #11 — PLAN: tighten VAD framing and Phase 1 transcription boundary
 
 **Merged:** TBD  |  **Branch:** `docs/plan-vad-and-transcription-boundary`

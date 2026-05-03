@@ -44,7 +44,7 @@
 
 ## [Phase 5 — Cloud Transcription Providers (provider abstraction)](../docs/PLAN.md#phase-5--cloud-transcription-providers-provider-abstraction)
 
-**Status:** pending.
+**Status:** partial — AssemblyAI only (PR #12). Provider-agnostic registry, per-provider rate hooks, and Deepgram / OpenAI Whisper / Hugging Face implementations still pending. Two-gate spend (F4) implemented in minimal form (hardcoded around AssemblyAI in the budget module).
 
 ## [Phase 6a — LLM Post-Processing (opt-in, cheapest-first)](../docs/PLAN.md#phase-6a--llm-post-processing-opt-in-cheapest-first)
 

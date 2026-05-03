@@ -16,6 +16,7 @@
   - [Union syntax (`X | Y`) vs `Optional[X]`](#union-syntax)
   - [`Literal` types](#literal-types)
   - [`Annotated` and CLI parameters](#typer-and-annotated)
+  - [`typing.Protocol`](#typing-protocol)
 - [Data objects](#data-objects)
   - [Frozen dataclasses](#frozen-dataclasses)
   - [`@property`](#property)
@@ -25,6 +26,8 @@
 - [Module structure](#module-structure)
   - [Module-level singletons](#module-level-singletons)
   - [Lazy imports inside functions](#lazy-imports)
+- [External calls and resilience](#external-calls-and-resilience)
+  - [`tenacity.retry` decorator](#tenacity-retry)
 
 ---
 
@@ -149,6 +152,53 @@ Annotated form as a plain default value, which is what you want.
 
 **Where it shows up:** [`src/transcriber/cli.py`](../../src/transcriber/cli.py)
 — every CLI parameter uses this form.
+
+---
+
+### `typing.Protocol`
+
+**Java analogue:** an `interface`. Anything that has methods of the
+right shape "implements" it; you don't have to inherit explicitly.
+Python's twist on Java's interface: structural typing — duck-typing
+that the type checker can verify.
+
+**Python idiom.**
+
+```python
+from typing import Protocol
+
+class Formatter(Protocol):
+    def render(self, result: TranscriptResult, media: PreparedMedia) -> str: ...
+
+# A function that takes any Formatter:
+def write_output(fmt: Formatter, ...) -> None:
+    content = fmt.render(result, media)
+    ...
+
+# MarkdownFormatter doesn't inherit Formatter — it just has the right shape.
+class MarkdownFormatter:
+    def render(self, result: TranscriptResult, media: PreparedMedia) -> str: ...
+
+write_output(MarkdownFormatter(), ...)   # mypy accepts this
+```
+
+`Protocol` is structural: anything with a matching `render(...)`
+satisfies it, even if it's a class from a different package that has
+never heard of `Formatter`. This is the opposite of Java's nominal
+typing, where `MarkdownFormatter` would have to write
+`implements Formatter` for the assignment to compile.
+
+**When to use it.** When you want a type-checked contract but don't
+control all the implementations (third-party providers, plugins,
+test doubles), or when adding a base class would force unrelated
+classes into a hierarchy they don't naturally belong to. ABCs
+(`abc.ABC` + `@abstractmethod`) are the heavier alternative — use
+those when you also want concrete shared behaviour.
+
+**Where it shows up:** [`src/transcriber/formatters/base.py`](../../src/transcriber/formatters/base.py)
+defines the `Formatter` Protocol; [`src/transcriber/formatters/markdown.py`](../../src/transcriber/formatters/markdown.py)
+satisfies it without inheriting. Phase 3's other formatters
+(`txt.py`, `srt.py`, `json_fmt.py`) will satisfy it the same way.
 
 ---
 
@@ -411,3 +461,59 @@ architectural mistake. Code clarity beats micro-optimization for non-CLI code.
 **Where it shows up:** [`src/transcriber/cli.py:114`](../../src/transcriber/cli.py)
 imports `settings` inside the `config` command function for CLI-startup
 speed.
+
+---
+
+## External calls and resilience
+
+### `tenacity.retry` decorator
+
+**Java analogue:** Spring Retry's `@Retryable` or Resilience4j's
+`Retry` decorator. Wrap a method so transient failures auto-retry with
+backoff before giving up.
+
+**Python idiom.**
+
+```python
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+@retry(
+    retry=retry_if_exception_type((ConnectionError, _Transient)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    reraise=True,
+)
+def upload(wav_path: Path) -> str:
+    resp = requests.post(URL, data=wav_path.read_bytes(), timeout=120)
+    resp.raise_for_status()
+    return resp.json()["upload_url"]
+```
+
+This wraps `upload` with a retry policy: at most 3 attempts, exponential
+backoff (1s → 2s → 4s), retry only on the named exception types,
+re-raise the original exception (not tenacity's wrapper) if all
+attempts fail.
+
+**When to use it.** Any external network call where 429 / 503 / network
+timeouts are recoverable transient failures. NOT for permanent failures
+like 401 (auth) or 422 (validation) — retrying those just wastes your
+quota. The trick is to translate "permanent" responses into a
+non-retryable exception type before tenacity sees them, and "transient"
+responses into a retryable type.
+
+**Pattern in this repo:** an internal sentinel exception (`_Transient`)
+wraps the transient HTTP statuses; permanent 4xx raise the public
+`ProviderError` immediately. The `retry_if_exception_type` filter only
+includes `_Transient` and the network errors, so `ProviderError` skips
+the retry loop entirely.
+
+**Where it shows up:** [`src/transcriber/providers/assemblyai.py`](../../src/transcriber/providers/assemblyai.py)
+`_retry_policy` decorates each of the three HTTP functions
+(`_upload`, `_create_transcript`, `_get_transcript`). Future Phase 5
+provider implementations (Deepgram, OpenAI Whisper) will reuse the
+same shape.
