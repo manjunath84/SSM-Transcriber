@@ -78,6 +78,43 @@ constructor injection; Python codebases sometimes reach for monkey-
 patching instead, which works but couples tests to implementation paths.
 The injected-callable pattern keeps the unit boundary obvious.
 
+## What the manual real-API run caught
+
+The first end-to-end run against `temp/Session16.mp4` (a 67-min Neo4j
+session) **failed three times in a row**, each time exposing a real
+defect that the 41 unit tests had missed. All three are now fixed on
+this branch (commits `d5eb072`, `ea3d852`, `46ccaa1`):
+
+1. **`.env` key never reached `os.environ`.** `pydantic-settings` only
+   loads `.env` values for declared `TRANSCRIBER_*` fields. The
+   unprefixed `ASSEMBLYAI_API_KEY` sat in the file but was invisible to
+   `os.getenv`. Gate 1 of the budget check kept failing with the
+   documented `.env` workflow. Fix: call `python-dotenv`'s
+   `load_dotenv(override=False)` at config module import, before the
+   settings singleton is built. The unit tests passed because
+   `monkeypatch.setenv` populates `os.environ` directly and bypasses the
+   `.env`-loading path entirely.
+2. **AssemblyAI deprecated singular `speech_model` for plural
+   `speech_models`.** The provider sent the wrong field name; the API
+   returned HTTP 400 with a deprecation message. The unit tests passed
+   because the `responses` mocks matched URL+method only — never the
+   request body shape. Fix: change the wire field name + add a
+   `responses.matchers.json_params_matcher` regression test that locks
+   the body shape down for next time.
+3. **AssemblyAI also retired the `best`/`nano` shorthands.** Valid
+   model values are now `universal-3-pro` and `universal-2`. The CLI's
+   `--model best` got a 400 saying so. Fix: flip the default to
+   `universal-3-pro` (which the user's reference curl had been using
+   all along — a signal I dismissed as cosmetic earlier in the session).
+
+The pattern is **"unit tests passed but the real API failed"** for all
+three. Two were vendor API changes I couldn't have prevented at unit-
+test time; the third was a mock-fidelity gap. Either way, the manual
+real-API runbook in `validation.md` was vindicated as a hard gate —
+this is exactly what it exists to catch, and it caught all three before
+merge. The fourth attempt produced a clean 137-line markdown with full
+diarization and an estimated-vs-actual cost match.
+
 ## New Python idioms introduced
 
 - [`typing.Protocol`](../python-notes.md#typing-protocol) — used for the
@@ -109,9 +146,10 @@ The injected-callable pattern keeps the unit boundary obvious.
   having listed it. The decision is documented at the top of
   `providers/assemblyai.py` and in this explainer; reviewers concerned
   about vendor-SDK divergence should re-read that note.
-- The **manual runbook** (`tests/manual/end_to_end.md`) has not been
-  executed yet — verification evidence will be attached to the PR
-  before merge. Real AssemblyAI calls deliberately stay out of CI.
+- The **manual runbook** has been executed (one ~67-min real-world
+  source, ~$0.60). The fourth attempt succeeded; the first three caught
+  three real defects documented in "What the manual real-API run
+  caught" above. Real AssemblyAI calls deliberately stay out of CI.
 - The **PR #7 missing learning artifact** (the merge-date backfill
   that shipped as `b798271`) is still not addressed. Pre-existing gap;
   not introduced by this PR; flagged again here for a future small
@@ -120,12 +158,16 @@ The injected-callable pattern keeps the unit boundary obvious.
 ## Interview angle
 
 - **Story type:** end-to-end SDD execution / decision making under
-  spec.
-- **One-sentence hook:** "First feature loop under SDD: spec → impl →
-  tests → real-API runbook, with a deliberate vendor-SDK rejection in
-  favour of a thin `requests` + `tenacity` client because the spec's
-  test cases were HTTP-level assertions that the SDK's own retry would
-  have made ambiguous."
+  spec / how manual verification exists for a reason.
+- **One-sentence hook (workflow):** "First feature loop under SDD: spec
+  → impl → tests → real-API runbook, with a deliberate vendor-SDK
+  rejection in favour of a thin `requests` + `tenacity` client because
+  the spec's test cases were HTTP-level assertions that the SDK's own
+  retry would have made ambiguous."
+- **One-sentence hook (testing):** "41 unit tests passed but three
+  real defects shipped to the first end-to-end run — one mock-fidelity
+  gap, two vendor API changes — which is exactly why a real-API runbook
+  was a hard gate in `validation.md` rather than a nice-to-have."
 - **Pointer:** `interview-prep.md` — workflow design / agentic-
   engineering section (entry to be added when interview-prep is next
   refreshed).

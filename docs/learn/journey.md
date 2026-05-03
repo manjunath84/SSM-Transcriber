@@ -27,6 +27,20 @@ matching unit test; the one real-API verification step lives in a
 manual runbook (`tests/manual/end_to_end.md`) that costs ~$0.005 per
 run and stays out of CI on purpose.
 
+The single most valuable lesson from this PR landed *after* the 41-test
+unit suite went green: the first end-to-end run against a 67-min real
+audio source failed three times in a row, each surfacing a real defect
+the unit tests had missed (`.env` loading bypassed by `monkeypatch.setenv`,
+deprecated AssemblyAI request field, retired model name). Fix commits
+`d5eb072`, `ea3d852`, `46ccaa1` patched all three; the fourth attempt
+produced the expected diarized markdown. The pattern across all three
+was **"unit tests passed but real API failed"** — two were vendor
+deprecations no mock could have caught at unit-test time, one was a
+mock-fidelity gap (the `responses` library was matching URL+method only,
+never request body shape). The manual real-API runbook in
+`validation.md` was vindicated as a *hard gate* rather than a nice-to-
+have: that's exactly what it exists to catch.
+
 The design call most worth reading is the **rejection of the official
 `assemblyai` SDK** in favour of a thin `requests` + `tenacity` client.
 The spec's test cases — "first 429 then 200 succeeds via retry",
