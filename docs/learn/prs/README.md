@@ -20,6 +20,7 @@
 | #8 | Adopt SDD: bootstrap project constitution under `specs/` | infra | [`pr-008-adopt-sdd-constitution.md`](pr-008-adopt-sdd-constitution.md) |
 | #9 | Mission: provider-agnostic framing with default-cheap | docs | [`pr-009-mission-provider-agnostic-framing.md`](pr-009-mission-provider-agnostic-framing.md) |
 | #10 | Feature spec: AssemblyAI MVP Slice 1 | feature (spec) | [`pr-010-assemblyai-mvp-slice-1-spec.md`](pr-010-assemblyai-mvp-slice-1-spec.md) |
+| #11 | PLAN: tighten VAD framing and Phase 1 transcription boundary | docs | [`pr-011-plan-vad-and-transcription-boundary.md`](pr-011-plan-vad-and-transcription-boundary.md) |
 
 ## Conventions
 

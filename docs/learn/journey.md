@@ -11,6 +11,46 @@
 
 ---
 
+## PR #11 — PLAN: tighten VAD framing and Phase 1 transcription boundary
+
+**Merged:** TBD  |  **Branch:** `docs/plan-vad-and-transcription-boundary`
+**Explainer:** [`prs/pr-011-plan-vad-and-transcription-boundary.md`](prs/pr-011-plan-vad-and-transcription-boundary.md)
+
+PR #11 is a tiny doc-only PR — three single-line edits to
+`docs/PLAN.md` — but it closes two pieces of internal drift that would
+have cost real time later. The first edit removes the last
+"strip silence with VAD before upload" reference from the cost table.
+That framing contradicted the F-cost-section principle "VAD is a sidecar
+only; do not strip canonical audio before transcription" (also stated in
+`CLAUDE.md`). It would also have broken sentence-level timestamp
+alignment with the original media if anyone had implemented against the
+older cost-table wording. The new wording — "Optimize VAD at the
+transcription engine level (preserve timestamps)" — matches what every
+other doc in the repo already says.
+
+The second edit adds an explicit "define a minimal transcription
+boundary/interface here early" note to the Phase 1 transcriber file
+description. Without this, Phase 1's `faster-whisper` wrapper would have
+been wired directly into source code, and every later provider PR would
+have had to refactor those call sites. With this, the boundary lands
+once in Phase 1, and the in-flight AssemblyAI Slice 1 implementation
+(PR #10 spec) plus eventual Phase 5 generalization become *additive*
+rather than rewrites.
+
+The takeaway: doc PRs are not just tidying. The PLAN file is what every
+AI tool reads before writing implementation code; a stale line there
+becomes a stale line in the next implementation PR. PR #6 made this
+case for naming drift; PR #9 made it for the project-identity framing;
+PR #11 makes it for principle-vs-table consistency. Same lesson, smaller
+scope each time — which is the point.
+
+This PR follows the same pattern PR #9 used: constitution-level edit,
+own branch, kept separate from the in-flight feature work
+(`impl/assemblyai-mvp-slice-1` is on its own branch and not affected by
+this).
+
+---
+
 ## PR #10 — Feature spec: AssemblyAI MVP Slice 1
 
 **Merged:** TBD  |  **Branch:** `feature/assemblyai-mvp-slice-1`
