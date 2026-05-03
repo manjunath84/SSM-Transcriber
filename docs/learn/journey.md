@@ -33,13 +33,22 @@ audio source failed three times in a row, each surfacing a real defect
 the unit tests had missed (`.env` loading bypassed by `monkeypatch.setenv`,
 deprecated AssemblyAI request field, retired model name). Fix commits
 `d5eb072`, `ea3d852`, `46ccaa1` patched all three; the fourth attempt
-produced the expected diarized markdown. The pattern across all three
-was **"unit tests passed but real API failed"** — two were vendor
-deprecations no mock could have caught at unit-test time, one was a
-mock-fidelity gap (the `responses` library was matching URL+method only,
-never request body shape). The manual real-API runbook in
-`validation.md` was vindicated as a *hard gate* rather than a nice-to-
-have: that's exactly what it exists to catch.
+produced the expected diarized markdown. The unifying pattern was
+**"unit tests passed but real API failed,"** but the *root causes split
+into two classes*: defects #2 and #3 were vendor API drift (no mock
+could catch the deprecated field name or the retired model identifier
+at unit-test time, because both describe the live wire contract);
+defect #1 was a test-environment bypass (`monkeypatch.setenv` populates
+`os.environ` directly and never exercises the `.env`-loading path that
+production actually uses). Defect #2 had a separate, additional gap
+that hid it locally — the `responses` mocks matched URL+method only,
+never the request body shape — so the body-shape regression test added
+with the fix double-protects against future field-name regressions.
+The manual real-API runbook in `validation.md` was vindicated as a
+*hard gate* rather than a nice-to-have: that's exactly what it exists
+to catch. (PR #13 is the structural prevention layer for the vendor-
+drift class; the test-bypass class is fixed structurally by the
+`load_dotenv` call landed here.)
 
 The design call most worth reading is the **rejection of the official
 `assemblyai` SDK** in favour of a thin `requests` + `tenacity` client.

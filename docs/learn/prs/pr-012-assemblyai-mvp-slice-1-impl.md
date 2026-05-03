@@ -22,8 +22,11 @@ task groups, plus this teaching-artifacts commit:
 
 1. **Deps + config.** `requests` and `tenacity` to runtime; `responses`
    and `types-requests` to dev. New `keep_temp` setting and an
-   `assemblyai_configured` boundary helper that keeps the only
-   `os.getenv("ASSEMBLYAI_API_KEY")` call inside `config.py`.
+   `assemblyai_configured` boundary helper. The vendor key is read in
+   exactly two places — `config.py` (this property) and
+   `providers/assemblyai.py:_api_headers` (defence-in-depth at the HTTP
+   layer); the rest of the codebase routes through the property to
+   honour the "no `os.getenv` outside boundaries" rule from CLAUDE.md.
 2. **F1/F2/F5/F8 minimal foundations.** `PreparedMedia` per F2,
    `LocalSource`, `RunWorkspace` per F5, ffmpeg-python audio extraction
    with explicit error mapping to exit code 4.
@@ -107,13 +110,26 @@ this branch (commits `d5eb072`, `ea3d852`, `46ccaa1`):
    `universal-3-pro` (which the user's reference curl had been using
    all along — a signal I dismissed as cosmetic earlier in the session).
 
-The pattern is **"unit tests passed but the real API failed"** for all
-three. Two were vendor API changes I couldn't have prevented at unit-
-test time; the third was a mock-fidelity gap. Either way, the manual
-real-API runbook in `validation.md` was vindicated as a hard gate —
-this is exactly what it exists to catch, and it caught all three before
-merge. The fourth attempt produced a clean 137-line markdown with full
-diarization and an estimated-vs-actual cost match.
+The unifying pattern is **"unit tests passed but the real API failed"**
+for all three, but the *root causes split into two classes*: defects
+**#2 and #3 are vendor API drift** (deprecated field name, retired
+model identifiers — no mock could have caught these at unit-test time
+because they describe the live wire contract); **defect #1 is a
+test-environment bypass** (`monkeypatch.setenv` populates `os.environ`
+directly and never exercises the `.env`-loading path that production
+actually uses). Defect #2 had a separate, *additional* gap that hid it
+locally — the `responses` mocks matched URL+method only, never the
+request body shape — so the body-shape regression test added with the
+fix double-protects against future field-name regressions.
+
+Either way, the manual real-API runbook in `validation.md` was
+vindicated as a hard gate — this is exactly what it exists to catch,
+and it caught all three before merge. The fourth attempt produced a
+clean 137-line markdown with full diarization and an estimated-vs-actual
+cost match. PR #13 is the *prevention* layer for the vendor-drift class
+(SDD-template "Reference calls" section + body-shape mock guardrail);
+the `load_dotenv` call landed here is the structural fix for the
+test-bypass class.
 
 ## New Python idioms introduced
 

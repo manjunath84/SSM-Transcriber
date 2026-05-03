@@ -458,9 +458,11 @@ def config() -> None:
 restructuring modules — lazy imports hide the cycle but don't fix the
 architectural mistake. Code clarity beats micro-optimization for non-CLI code.
 
-**Where it shows up:** [`src/transcriber/cli.py:114`](../../src/transcriber/cli.py)
-imports `settings` inside the `config` command function for CLI-startup
-speed.
+**Where it shows up:** No live example yet — Slice 1's CLI rewrite (commit
+`1847a17`) imports `settings` at module top because the load is already
+cheap. The pattern returns when a heavy import (e.g. `faster-whisper`'s
+model files in Phase 1, or LangGraph in Phase 6b) needs to stay out of
+`--help` startup.
 
 ---
 
