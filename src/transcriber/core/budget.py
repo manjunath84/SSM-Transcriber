@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from transcriber.errors import TranscriberError
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +33,7 @@ ASSEMBLYAI_RATE_PER_MINUTE_USD: float = 0.009
 SOFT_CAP_USD: float = 5.0
 
 
-class BudgetError(RuntimeError):
+class BudgetError(TranscriberError):
     """Gate 1 or Gate 2 failed. CLI maps this to exit code 2 (config)."""
 
 

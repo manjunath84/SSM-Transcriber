@@ -48,3 +48,31 @@ def test_workspace_cleanup_on_exception() -> None:
         with ws:
             raise ValueError("boom")
     assert not captured_root.exists()
+
+
+def test_workspace_cleanup_failure_is_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Cleanup is best-effort, but every failure must be logged so a
+    permission error or held file handle is visible — silently leaking
+    the temp dir across runs is exactly the failure mode this test
+    locks down."""
+
+    def _boom_rmtree(_path: str, **kwargs: object) -> None:
+        # Simulate the onexc callback firing by invoking it directly.
+        onexc = kwargs.get("onexc")
+        if callable(onexc):
+            onexc(None, _path, OSError("permission denied"))
+
+    monkeypatch.setattr("shutil.rmtree", _boom_rmtree)
+
+    ws = RunWorkspace()
+    with caplog.at_level("WARNING", logger="transcriber.core.workspace"):
+        with ws:
+            pass
+
+    assert any(
+        "cleanup failed" in rec.message and "permission denied" in rec.message
+        for rec in caplog.records
+    )

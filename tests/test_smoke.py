@@ -53,10 +53,12 @@ def test_cli_transcribe_missing_file_exits_4() -> None:
     assert "not found" in result.stdout.lower()
 
 
-def test_cli_auth_stub_exits_nonzero() -> None:
+def test_cli_auth_stub_exits_with_config_code() -> None:
+    """Auth stub exits 2 (config/usage error) per the {0,2,3,4} matrix
+    documented in validation.md, not 1 (outside the matrix)."""
     runner = CliRunner()
     result = runner.invoke(app, ["auth", "google-drive"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
 
 
 def test_cache_dir_expands_tilde(monkeypatch: object) -> None:

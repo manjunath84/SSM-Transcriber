@@ -13,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from transcriber.errors import TranscriberError
+
 
 def _noop(_: str) -> None:
     """Default ``on_job_id`` callback when the caller doesn't care."""
@@ -28,6 +30,14 @@ class Segment:
     text: str
     speaker: str | None
 
+    def __post_init__(self) -> None:
+        if self.start_ms < 0:
+            raise ValueError(f"Segment.start_ms must be >= 0, got {self.start_ms}")
+        if self.end_ms < self.start_ms:
+            raise ValueError(
+                f"Segment.end_ms ({self.end_ms}) must be >= start_ms ({self.start_ms})"
+            )
+
 
 @dataclass(frozen=True)
 class TranscriptResult:
@@ -40,8 +50,15 @@ class TranscriptResult:
     model: str
     job_id: str
 
+    def __post_init__(self) -> None:
+        if self.duration_seconds < 0:
+            raise ValueError(
+                "TranscriptResult.duration_seconds must be >= 0, "
+                f"got {self.duration_seconds}"
+            )
 
-class ProviderError(RuntimeError):
+
+class ProviderError(TranscriberError):
     """Provider-side failure (auth, retries exhausted, polling timeout, job
     error). CLI maps this to exit code 3."""
 

@@ -50,6 +50,21 @@ class RunWorkspace:
         if self._keep:
             logger.info("RunWorkspace preserved at %s (keep_temp=True)", self.root)
             return
-        # ``ignore_errors=True`` keeps cleanup best-effort even when the
-        # workspace was already partially removed by another process.
-        shutil.rmtree(self.root, ignore_errors=True)
+        # Best-effort cleanup, but log every failure so a permission error or
+        # held file handle is visible rather than silently leaking the temp
+        # directory across runs. ``onexc`` is the 3.12+ replacement for the
+        # deprecated ``onerror`` callback.
+        shutil.rmtree(self.root, onexc=self._log_cleanup_failure)
+
+    def _log_cleanup_failure(
+        self,
+        _func: object,
+        path: str,
+        exc_info: BaseException,
+    ) -> None:
+        logger.warning(
+            "RunWorkspace cleanup failed for %s: %s. The workspace temp "
+            "directory may persist on disk and require manual removal.",
+            path,
+            exc_info,
+        )

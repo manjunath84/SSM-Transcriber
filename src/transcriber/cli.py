@@ -8,6 +8,7 @@ json) land in their own phases.
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from pathlib import Path
 from typing import Annotated
@@ -31,6 +32,15 @@ from transcriber.providers.assemblyai import AssemblyAIProvider
 from transcriber.providers.base import ProviderError
 from transcriber.sources.local import LocalSource
 
+# Library code uses ``logger.info`` / ``logger.warning`` everywhere (job IDs,
+# retry attempts, polling status, RunWorkspace cleanup failures). Without
+# ``basicConfig`` those records go nowhere by default — wire it once at the
+# CLI entry point so library logs reach stderr.
+logging.basicConfig(
+    level=settings.log_level,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
+
 app = typer.Typer(
     name="ssm-transcriber",
     help="Transcribe audio/video from local files, YouTube, or Google Drive.",
@@ -38,6 +48,15 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+def _confirm_or_decline(msg: str) -> bool:
+    """Wrap ``Confirm.ask`` so closed stdin (Ctrl-D, piped input ended) is
+    treated as a "no" instead of crashing with an uncaught ``EOFError``."""
+    try:
+        return Confirm.ask(msg, default=False, console=console)
+    except EOFError:
+        return False
 
 
 # ── transcriber transcribe ────────────────────────────────────────────────────
@@ -126,7 +145,7 @@ def transcribe(
                     key_configured=settings.assemblyai_configured,
                     cost_usd=cost_usd,
                     yes=yes,
-                    prompt=lambda msg: Confirm.ask(msg, default=False, console=console),
+                    prompt=_confirm_or_decline,
                     notify=lambda msg: console.print(msg),
                 )
             except BudgetError as exc:
@@ -204,7 +223,9 @@ def auth(
 ) -> None:
     """Authenticate with an external service (e.g. Google Drive OAuth)."""
     console.print(f"[yellow]Auth for '{service}' not yet implemented (Phase 4).[/yellow]")
-    raise typer.Exit(code=1)
+    # Exit 2 = config / usage error per validation.md exit-code matrix
+    # ({0,2,3,4}). Originally 1 (outside the documented matrix).
+    raise typer.Exit(code=2)
 
 
 # ── transcriber config ────────────────────────────────────────────────────────

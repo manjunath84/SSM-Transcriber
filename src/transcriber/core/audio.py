@@ -14,11 +14,12 @@ from pathlib import Path
 import ffmpeg
 
 from transcriber.core.workspace import RunWorkspace
+from transcriber.errors import TranscriberError
 
 logger = logging.getLogger(__name__)
 
 
-class AudioExtractError(RuntimeError):
+class AudioExtractError(TranscriberError):
     """Raised when ffmpeg/ffprobe is missing or the source has no audio."""
 
 
