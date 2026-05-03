@@ -62,8 +62,11 @@ def transcribe(
     ] = None,
     model: Annotated[
         str,
-        typer.Option("--model", help="AssemblyAI speech model: best | nano"),
-    ] = "best",
+        typer.Option(
+            "--model",
+            help="AssemblyAI speech model: universal-3-pro (default) | universal-2",
+        ),
+    ] = "universal-3-pro",
     no_speakers: Annotated[
         bool,
         typer.Option("--no-speakers", help="Disable speaker diarization (default: on)"),

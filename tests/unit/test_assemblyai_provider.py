@@ -58,7 +58,7 @@ def _completed_payload(job_id: str = "abc123") -> dict[str, object]:
         "text": "hello world",
         "audio_duration": 12.5,
         "language_code": "en",
-        "speech_model": "best",
+        "speech_model": "universal-3-pro",
         "utterances": [
             {"start": 0, "end": 12500, "text": "hello world", "speaker": "A"},
         ],
@@ -73,14 +73,14 @@ def test_happy_path(rsps: responses.RequestsMock, wav: Path) -> None:
 
     provider = AssemblyAIProvider(poll_interval_seconds=0.0)
     result = provider.transcribe(
-        wav, language="en", diarize=True, speech_model="best"
+        wav, language="en", diarize=True, speech_model="universal-3-pro"
     )
 
     assert result.text == "hello world"
     assert result.job_id == "abc123"
     assert result.duration_seconds == 12.5
     assert result.language == "en"
-    assert result.model == "best"
+    assert result.model == "universal-3-pro"
     assert len(result.segments) == 1
     assert result.segments[0].speaker == "A"
 
@@ -98,7 +98,7 @@ def test_create_transcript_body_uses_plural_speech_models(
             matchers.json_params_matcher(
                 {
                     "audio_url": "https://cdn/u/x",
-                    "speech_models": ["best"],
+                    "speech_models": ["universal-3-pro"],
                     "speaker_labels": True,
                 }
             ),
@@ -109,7 +109,7 @@ def test_create_transcript_body_uses_plural_speech_models(
     rsps.get(f"{API_BASE}/transcript/abc123", json=_completed_payload(), status=200)
 
     provider = AssemblyAIProvider(poll_interval_seconds=0.0)
-    provider.transcribe(wav, language=None, diarize=True, speech_model="best")
+    provider.transcribe(wav, language=None, diarize=True, speech_model="universal-3-pro")
 
 
 def test_upload_429_then_200_succeeds(rsps: responses.RequestsMock, wav: Path) -> None:
@@ -120,7 +120,7 @@ def test_upload_429_then_200_succeeds(rsps: responses.RequestsMock, wav: Path) -
     rsps.get(f"{API_BASE}/transcript/j", json=_completed_payload(job_id="j"), status=200)
 
     provider = AssemblyAIProvider(poll_interval_seconds=0.0)
-    result = provider.transcribe(wav, language=None, diarize=True, speech_model="best")
+    result = provider.transcribe(wav, language=None, diarize=True, speech_model="universal-3-pro")
     assert result.job_id == "j"
 
 
@@ -131,7 +131,7 @@ def test_upload_three_429s_fails(rsps: responses.RequestsMock, wav: Path) -> Non
 
     provider = AssemblyAIProvider(poll_interval_seconds=0.0)
     with pytest.raises(Exception):  # noqa: B017 — tenacity wraps the underlying transient
-        provider.transcribe(wav, language=None, diarize=False, speech_model="best")
+        provider.transcribe(wav, language=None, diarize=False, speech_model="universal-3-pro")
 
     # Exactly 3 upload calls were registered; if a 4th had been attempted, it
     # would raise ConnectionError because no mock matches it.
@@ -144,7 +144,7 @@ def test_upload_401_no_retry(rsps: responses.RequestsMock, wav: Path) -> None:
 
     provider = AssemblyAIProvider(poll_interval_seconds=0.0)
     with pytest.raises(ProviderError) as exc:
-        provider.transcribe(wav, language=None, diarize=False, speech_model="best")
+        provider.transcribe(wav, language=None, diarize=False, speech_model="universal-3-pro")
 
     assert "401" in str(exc.value)
     assert len(rsps.calls) == 1  # No retry on permanent 4xx.
@@ -156,7 +156,7 @@ def test_upload_422_no_retry(rsps: responses.RequestsMock, wav: Path) -> None:
 
     provider = AssemblyAIProvider(poll_interval_seconds=0.0)
     with pytest.raises(ProviderError) as exc:
-        provider.transcribe(wav, language=None, diarize=False, speech_model="best")
+        provider.transcribe(wav, language=None, diarize=False, speech_model="universal-3-pro")
 
     assert "422" in str(exc.value)
     assert len(rsps.calls) == 1
@@ -171,7 +171,7 @@ def test_polling_completes_after_n_polls(rsps: responses.RequestsMock, wav: Path
     rsps.get(f"{API_BASE}/transcript/j", json=_completed_payload(job_id="j"), status=200)
 
     provider = AssemblyAIProvider(poll_interval_seconds=0.0)
-    result = provider.transcribe(wav, language=None, diarize=True, speech_model="best")
+    result = provider.transcribe(wav, language=None, diarize=True, speech_model="universal-3-pro")
 
     # 1 upload + 1 create + 3 polls = 5 total calls.
     assert len(rsps.calls) == 5
@@ -192,7 +192,7 @@ def test_polling_status_error_surfaces_message(
 
     provider = AssemblyAIProvider(poll_interval_seconds=0.0)
     with pytest.raises(ProviderError) as exc:
-        provider.transcribe(wav, language=None, diarize=False, speech_model="best")
+        provider.transcribe(wav, language=None, diarize=False, speech_model="universal-3-pro")
 
     msg = str(exc.value)
     assert "Audio too short" in msg
@@ -232,7 +232,7 @@ def test_polling_timeout_with_job_id(rsps: responses.RequestsMock, wav: Path) ->
     )
 
     with pytest.raises(ProviderError) as exc:
-        provider.transcribe(wav, language=None, diarize=False, speech_model="best")
+        provider.transcribe(wav, language=None, diarize=False, speech_model="universal-3-pro")
 
     msg = str(exc.value)
     assert "stuck-job" in msg
@@ -259,7 +259,7 @@ def test_on_job_id_fires_once_after_create(rsps: responses.RequestsMock, wav: Pa
         wav,
         language=None,
         diarize=True,
-        speech_model="best",
+        speech_model="universal-3-pro",
         on_job_id=lambda jid: captured.append(jid),
     )
 
