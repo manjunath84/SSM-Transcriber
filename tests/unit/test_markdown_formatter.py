@@ -48,7 +48,7 @@ def _result_diarized() -> TranscriptResult:
         ],
         language="en",
         duration_seconds=28.5,
-        model="best",
+        model="universal-3-pro",
         job_id="job-abc",
     )
 

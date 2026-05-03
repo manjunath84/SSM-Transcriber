@@ -70,7 +70,7 @@ Per `specs/tech-stack.md` and `docs/PLAN.md`:
 | Filename collision | Suffix increment: `-2`, `-3`, etc. Never overwrites. |
 | Speaker diarization | ON by default (free or near-free on AssemblyAI; harder to add after the fact than to ignore). `--no-speakers` to disable. |
 | Per-utterance timestamps | ON by default (`[mm:ss]` prefix). `--no-timestamps` to strip. |
-| Speech model | `best` by default. `--model best\|nano` flag. |
+| Speech model | `universal-3-pro` by default. `--model universal-3-pro\|universal-2` flag. (Originally specced as `best`/`nano`; AssemblyAI retired those shorthands during implementation — see fix commit `46ccaa1`.) |
 | Soft cost cap | $5. Above this, print a louder warning before the standard confirmation prompt. `--yes` still bypasses the prompt (consistent with smaller jobs). |
 | AssemblyAI job ID | Print at start of polling AND embed in markdown frontmatter as `assemblyai_job_id`. Cheap insurance against Ctrl-C and crashes. |
 | Polling cap | 30 min wall clock. `--max-wait MINUTES` overrides. |
@@ -92,7 +92,7 @@ source_kind: local
 duration_seconds: <float, from ffprobe>
 language: <ISO code>
 provider: assemblyai
-model: <best|nano>
+model: <universal-3-pro|universal-2>
 diarized: <bool>
 speakers: <int or null>
 assemblyai_job_id: <string>

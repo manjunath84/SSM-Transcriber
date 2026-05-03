@@ -37,7 +37,8 @@ uv sync --extra dev
    ```
 
    **Expected**: error message naming AssemblyAI as paid + the
-   `--budget low|best` rerun hint, exit code `2`. No charge incurred.
+   `--budget low` (or `--budget best`) rerun hint, exit code `2`. No charge
+   incurred.
 
 3. Real run with `--budget low`:
 
@@ -56,7 +57,8 @@ uv sync --extra dev
 4. Open the output file and verify:
    - YAML frontmatter present, with all expected fields populated:
      `title`, `source_uri` (`file:///...` absolute), `source_kind: local`,
-     `duration_seconds`, `language`, `provider: assemblyai`, `model: best`,
+     `duration_seconds`, `language`, `provider: assemblyai`,
+     `model: universal-3-pro` (or whatever `--model` was passed),
      `diarized`, `speakers`, `assemblyai_job_id`, `created` (today).
    - `# {title}` H1 line.
    - Summary blockquote with duration / language / model.

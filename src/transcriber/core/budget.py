@@ -20,7 +20,9 @@ from collections.abc import Callable
 logger = logging.getLogger(__name__)
 
 
-# AssemblyAI's published rate for the ``best`` tier (per docs/PLAN.md §Phase 5).
+# AssemblyAI's published rate for the ``universal-3-pro`` / ``universal-2``
+# premium tier (per docs/PLAN.md §Phase 5). Replaces the retired ``best`` /
+# ``nano`` shorthand naming the API used to expose.
 ASSEMBLYAI_RATE_PER_MINUTE_USD: float = 0.009
 
 # Above this estimate, ``check`` emits a louder warning. ``--yes`` still
