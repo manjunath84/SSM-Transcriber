@@ -1,0 +1,238 @@
+"""Tests for ``providers/assemblyai.py`` via mocked HTTP (``responses``).
+
+Covers cases 1-9 in validation.md: happy path, transient retry success,
+retry exhaustion, immediate-fail on permanent 4xx, polling completion
+after N polls, polling-error response, polling wall-clock timeout, and
+``on_job_id`` callback fires exactly once after create-transcript.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+import responses
+
+from transcriber.providers.assemblyai import API_BASE, AssemblyAIProvider
+from transcriber.providers.base import ProviderError
+
+
+@pytest.fixture(autouse=True)
+def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tenacity ``wait_exponential`` would add seconds per retry; mute it
+    so retry tests don't actually wait."""
+    import time
+
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+
+@pytest.fixture(autouse=True)
+def _api_key_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The provider's ``_api_headers`` raises if no key is set; satisfy it
+    in every test."""
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "test-key")
+
+
+@pytest.fixture
+def rsps() -> Iterator[responses.RequestsMock]:
+    """``assert_all_requests_are_fired=False`` because some tests
+    deliberately short-circuit before all mocked routes are consumed
+    (timeout, retry-exhaustion)."""
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as r:
+        yield r
+
+
+@pytest.fixture
+def wav(tmp_path: Path) -> Path:
+    p = tmp_path / "audio.wav"
+    p.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    return p
+
+
+def _completed_payload(job_id: str = "abc123") -> dict[str, object]:
+    return {
+        "id": job_id,
+        "status": "completed",
+        "text": "hello world",
+        "audio_duration": 12.5,
+        "language_code": "en",
+        "speech_model": "best",
+        "utterances": [
+            {"start": 0, "end": 12500, "text": "hello world", "speaker": "A"},
+        ],
+    }
+
+
+def test_happy_path(rsps: responses.RequestsMock, wav: Path) -> None:
+    """Case 1: upload + create + poll-completed → populated TranscriptResult."""
+    rsps.post(f"{API_BASE}/upload", json={"upload_url": "https://cdn/u/x"}, status=200)
+    rsps.post(f"{API_BASE}/transcript", json={"id": "abc123", "status": "queued"}, status=200)
+    rsps.get(f"{API_BASE}/transcript/abc123", json=_completed_payload(), status=200)
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    result = provider.transcribe(
+        wav, language="en", diarize=True, speech_model="best"
+    )
+
+    assert result.text == "hello world"
+    assert result.job_id == "abc123"
+    assert result.duration_seconds == 12.5
+    assert result.language == "en"
+    assert result.model == "best"
+    assert len(result.segments) == 1
+    assert result.segments[0].speaker == "A"
+
+
+def test_upload_429_then_200_succeeds(rsps: responses.RequestsMock, wav: Path) -> None:
+    """Case 2: first call 429, second 200 → succeeds via tenacity retry."""
+    rsps.post(f"{API_BASE}/upload", json={"error": "rate limited"}, status=429)
+    rsps.post(f"{API_BASE}/upload", json={"upload_url": "https://cdn/u/x"}, status=200)
+    rsps.post(f"{API_BASE}/transcript", json={"id": "j", "status": "queued"}, status=200)
+    rsps.get(f"{API_BASE}/transcript/j", json=_completed_payload(job_id="j"), status=200)
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    result = provider.transcribe(wav, language=None, diarize=True, speech_model="best")
+    assert result.job_id == "j"
+
+
+def test_upload_three_429s_fails(rsps: responses.RequestsMock, wav: Path) -> None:
+    """Case 3: three consecutive 429s → fails after retry exhaustion (no 4th)."""
+    for _ in range(3):
+        rsps.post(f"{API_BASE}/upload", json={"error": "rate limited"}, status=429)
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    with pytest.raises(Exception):  # noqa: B017 — tenacity wraps the underlying transient
+        provider.transcribe(wav, language=None, diarize=False, speech_model="best")
+
+    # Exactly 3 upload calls were registered; if a 4th had been attempted, it
+    # would raise ConnectionError because no mock matches it.
+    assert len(rsps.calls) == 3
+
+
+def test_upload_401_no_retry(rsps: responses.RequestsMock, wav: Path) -> None:
+    """Case 4: 401 → fails immediately, NO retry."""
+    rsps.post(f"{API_BASE}/upload", json={"error": "auth failed"}, status=401)
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    with pytest.raises(ProviderError) as exc:
+        provider.transcribe(wav, language=None, diarize=False, speech_model="best")
+
+    assert "401" in str(exc.value)
+    assert len(rsps.calls) == 1  # No retry on permanent 4xx.
+
+
+def test_upload_422_no_retry(rsps: responses.RequestsMock, wav: Path) -> None:
+    """Case 5: other 4xx (validation) → fails immediately."""
+    rsps.post(f"{API_BASE}/upload", json={"error": "bad audio"}, status=422)
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    with pytest.raises(ProviderError) as exc:
+        provider.transcribe(wav, language=None, diarize=False, speech_model="best")
+
+    assert "422" in str(exc.value)
+    assert len(rsps.calls) == 1
+
+
+def test_polling_completes_after_n_polls(rsps: responses.RequestsMock, wav: Path) -> None:
+    """Case 6: poll returns 'completed' after N — assert poll count."""
+    rsps.post(f"{API_BASE}/upload", json={"upload_url": "u"}, status=200)
+    rsps.post(f"{API_BASE}/transcript", json={"id": "j", "status": "queued"}, status=200)
+    rsps.get(f"{API_BASE}/transcript/j", json={"id": "j", "status": "queued"}, status=200)
+    rsps.get(f"{API_BASE}/transcript/j", json={"id": "j", "status": "processing"}, status=200)
+    rsps.get(f"{API_BASE}/transcript/j", json=_completed_payload(job_id="j"), status=200)
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    result = provider.transcribe(wav, language=None, diarize=True, speech_model="best")
+
+    # 1 upload + 1 create + 3 polls = 5 total calls.
+    assert len(rsps.calls) == 5
+    assert result.job_id == "j"
+
+
+def test_polling_status_error_surfaces_message(
+    rsps: responses.RequestsMock, wav: Path
+) -> None:
+    """Case 7: poll returns status='error' → ProviderError carries message."""
+    rsps.post(f"{API_BASE}/upload", json={"upload_url": "u"}, status=200)
+    rsps.post(f"{API_BASE}/transcript", json={"id": "j", "status": "queued"}, status=200)
+    rsps.get(
+        f"{API_BASE}/transcript/j",
+        json={"id": "j", "status": "error", "error": "Audio too short to transcribe"},
+        status=200,
+    )
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    with pytest.raises(ProviderError) as exc:
+        provider.transcribe(wav, language=None, diarize=False, speech_model="best")
+
+    msg = str(exc.value)
+    assert "Audio too short" in msg
+    assert "j" in msg  # job ID surfaces for recovery
+
+
+def test_polling_timeout_with_job_id(rsps: responses.RequestsMock, wav: Path) -> None:
+    """Case 8: polling exceeds wall-clock cap → ProviderError with job ID.
+
+    Sleep is wired to advance the fake clock by more than ``max_wait_seconds``
+    so the deadline check fires deterministically without real waiting.
+    """
+    rsps.post(f"{API_BASE}/upload", json={"upload_url": "u"}, status=200)
+    rsps.post(f"{API_BASE}/transcript", json={"id": "stuck-job", "status": "queued"}, status=200)
+    # Multiple "queued" responses; only the first 1-2 will be consumed.
+    for _ in range(5):
+        rsps.get(
+            f"{API_BASE}/transcript/stuck-job",
+            json={"id": "stuck-job", "status": "queued"},
+            status=200,
+        )
+
+    fake_time = [0.0]
+
+    def fake_clock() -> float:
+        return fake_time[0]
+
+    def fake_sleep(_secs: float) -> None:
+        # Advance past the deadline so the next loop check fails.
+        fake_time[0] += 100.0
+
+    provider = AssemblyAIProvider(
+        max_wait_seconds=10.0,
+        poll_interval_seconds=1.0,
+        sleep=fake_sleep,
+        clock=fake_clock,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.transcribe(wav, language=None, diarize=False, speech_model="best")
+
+    msg = str(exc.value)
+    assert "stuck-job" in msg
+    assert "exceeded" in msg.lower()
+
+
+def test_on_job_id_fires_once_after_create(rsps: responses.RequestsMock, wav: Path) -> None:
+    """Case 9: ``on_job_id`` callback fires exactly once."""
+    rsps.post(f"{API_BASE}/upload", json={"upload_url": "u"}, status=200)
+    rsps.post(
+        f"{API_BASE}/transcript",
+        json={"id": "callback-job", "status": "queued"},
+        status=200,
+    )
+    rsps.get(
+        f"{API_BASE}/transcript/callback-job",
+        json=_completed_payload(job_id="callback-job"),
+        status=200,
+    )
+
+    captured: list[str] = []
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    provider.transcribe(
+        wav,
+        language=None,
+        diarize=True,
+        speech_model="best",
+        on_job_id=lambda jid: captured.append(jid),
+    )
+
+    assert captured == ["callback-job"]
