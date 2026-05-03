@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -32,7 +32,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # etc.). `pydantic-settings` reads `.env` for declared TRANSCRIBER_* fields
 # only, so this is the boundary where vendor keys actually become visible to
 # `os.getenv`. `override=False` means real env vars win over the file.
-load_dotenv(override=False)
+#
+# ``find_dotenv(usecwd=True)`` walks up from the *invocation cwd* rather
+# than from this source file. Matters for two reasons: (1) when the
+# package is installed (e.g. via `pip install`) the source lives in
+# site-packages and the default file-relative search would silently miss
+# the user's project `.env`; (2) test isolation — a test that ``chdir``s
+# into a tmp dir before reloading this module needs the tmp dir's `.env`
+# found, not whichever `.env` happens to sit next to the source tree.
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
 
 class TranscriberSettings(BaseSettings):
