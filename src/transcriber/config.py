@@ -67,13 +67,18 @@ class TranscriberSettings(BaseSettings):
 
     @property
     def assemblyai_configured(self) -> bool:
-        """Whether ``ASSEMBLYAI_API_KEY`` is set in the environment.
+        """Whether ``ASSEMBLYAI_API_KEY`` is set (and non-blank) in the environment.
 
-        The AssemblyAI SDK reads the unprefixed env var on its own. Callers
-        outside this module use this property for the budget gate's
-        "is the key configured?" check so they never need to import ``os``.
+        ``providers/assemblyai.py:_api_headers`` is the only other site that
+        reads this env var (at the HTTP boundary). Callers everywhere else
+        route through this property so the rest of the codebase honours the
+        "never read os.environ directly" rule from CLAUDE.md.
+
+        Stripping whitespace before the truthiness check matters: a key like
+        ``"   "`` would otherwise pass Gate 1, then fail with HTTP 401 only
+        after the user has waited for ffmpeg extraction and confirmed cost.
         """
-        return bool(os.getenv("ASSEMBLYAI_API_KEY"))
+        return bool((os.getenv("ASSEMBLYAI_API_KEY") or "").strip())
 
     def redacted_dump(self) -> dict[str, str]:
         """Return a dict of settings safe for logging and CLI output.

@@ -55,6 +55,16 @@ def extract(source_path: Path, workspace: RunWorkspace) -> tuple[Path, float]:
         stderr = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
         raise AudioExtractError(f"ffmpeg failed to extract audio: {stderr.strip()}") from exc
 
+    # ffmpeg can return success while producing a zero-byte output (e.g. when
+    # the input has a video stream but no audio, and -vn drops everything).
+    # Catching that here prevents a bogus "successful upload" of an empty WAV
+    # that AssemblyAI would silently accept and bill for.
+    if not wav_path.exists() or wav_path.stat().st_size == 0:
+        raise AudioExtractError(
+            f"ffmpeg produced an empty WAV from {source_path}; "
+            "the source likely has no audio stream."
+        )
+
     logger.info("Extracted %.2fs of audio to %s", duration, wav_path)
     return wav_path, duration
 
@@ -83,4 +93,13 @@ def _probe_duration(source_path: Path) -> float:
             f"No duration in ffprobe output for {source_path}; "
             "the file may be corrupt or have no media streams."
         )
-    return float(duration_str)
+    duration = float(duration_str)
+    # Zero or negative duration would estimate $0 cost downstream, silently
+    # bypassing the $5 soft cap and uploading anyway. Reject early so the
+    # user gets a clear local error (exit 4) instead of a phantom upload.
+    if duration <= 0:
+        raise AudioExtractError(
+            f"ffprobe reported zero/negative duration ({duration}s) for "
+            f"{source_path}; the file is likely corrupt or has no media streams."
+        )
+    return duration

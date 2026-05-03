@@ -43,6 +43,11 @@ API_BASE = "https://api.assemblyai.com/v2"
 DEFAULT_POLL_INTERVAL_SECONDS = 3.0
 DEFAULT_MAX_WAIT_SECONDS = 30 * 60  # 30 min wall clock
 
+# Statuses AssemblyAI returns while the job is still in flight. Anything
+# else (other than ``"completed"`` or ``"error"``) is unexpected — we log
+# at WARNING and keep polling so a future status doesn't silently spin.
+_KNOWN_PENDING_STATUSES = frozenset({"queued", "processing"})
+
 
 class _Transient(Exception):
     """Internal sentinel — wraps 429/503/504/timeout/connection errors so
@@ -192,6 +197,17 @@ def _segments_from_response(
 
     text = str(payload.get("text", ""))
     duration_ms = int(float(payload.get("audio_duration") or 0) * 1000)
+    # Reaching this fallback means AssemblyAI returned the raw transcript
+    # text without any utterance- or paragraph-level structure. The output
+    # collapses to a single full-duration segment, which looks valid but is
+    # effectively undiarized + unsegmented. Surface that loudly so the user
+    # doesn't quietly receive a degraded transcript.
+    logger.warning(
+        "AssemblyAI job %s returned no utterances or paragraphs; "
+        "falling back to single-segment transcript spanning the full duration. "
+        "Diarization and per-utterance timestamps are unavailable for this run.",
+        payload.get("id", "<unknown>"),
+    )
     return [Segment(start_ms=0, end_ms=duration_ms, text=text, speaker=None)]
 
 
@@ -239,6 +255,13 @@ class AssemblyAIProvider(TranscriptionProvider):
 
         deadline = self._clock() + self.max_wait_seconds
         while True:
+            # Check the deadline *before* the next GET so we never fire one
+            # extra HTTP call past the cap. Test 8 verifies this ordering.
+            if self._clock() >= deadline:
+                raise ProviderError(
+                    f"AssemblyAI polling exceeded {self.max_wait_seconds:.0f}s "
+                    f"for job {job_id}. Recover via the AssemblyAI dashboard."
+                )
             payload = _get_transcript(job_id)
             status = payload.get("status")
 
@@ -249,10 +272,14 @@ class AssemblyAIProvider(TranscriptionProvider):
                     f"AssemblyAI job {job_id} failed: "
                     f"{payload.get('error', '(no error message returned)')}"
                 )
-            if self._clock() >= deadline:
-                raise ProviderError(
-                    f"AssemblyAI polling exceeded {self.max_wait_seconds:.0f}s "
-                    f"for job {job_id}. Recover via the AssemblyAI dashboard."
+            if status not in _KNOWN_PENDING_STATUSES:
+                # Unknown / future status — keep polling but make it visible
+                # so a stuck job doesn't sit silent for the full max_wait.
+                logger.warning(
+                    "AssemblyAI job %s returned unknown status %r; "
+                    "continuing to poll until completion or deadline.",
+                    job_id,
+                    status,
                 )
 
             self._sleep(self.poll_interval_seconds)

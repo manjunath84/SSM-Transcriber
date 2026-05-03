@@ -264,3 +264,78 @@ def test_on_job_id_fires_once_after_create(rsps: responses.RequestsMock, wav: Pa
     )
 
     assert captured == ["callback-job"]
+
+
+def test_polling_unknown_status_logs_warning_and_continues(
+    rsps: responses.RequestsMock,
+    wav: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unknown / future statuses should not silently spin until deadline.
+    Log at WARNING and keep polling so a stuck or future-status job is
+    visible to the operator within the first few poll cycles."""
+    rsps.post(f"{API_BASE}/upload", json={"upload_url": "u"}, status=200)
+    rsps.post(f"{API_BASE}/transcript", json={"id": "unk-job", "status": "queued"}, status=200)
+    rsps.get(
+        f"{API_BASE}/transcript/unk-job",
+        json={"id": "unk-job", "status": "future-not-yet-known"},
+        status=200,
+    )
+    rsps.get(
+        f"{API_BASE}/transcript/unk-job",
+        json=_completed_payload(job_id="unk-job"),
+        status=200,
+    )
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    with caplog.at_level("WARNING", logger="transcriber.providers.assemblyai"):
+        result = provider.transcribe(
+            wav, language=None, diarize=False, speech_model="universal-3-pro"
+        )
+
+    assert result.job_id == "unk-job"
+    assert any(
+        "unknown status" in rec.message and "future-not-yet-known" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_segments_fallback_logs_warning_when_no_utterances_or_paragraphs(
+    rsps: responses.RequestsMock,
+    wav: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When AssemblyAI returns text but no utterance/paragraph structure,
+    the result is a single full-duration segment — looks valid but is
+    effectively undiarized and unsegmented. Log a WARNING so the user
+    doesn't quietly accept a degraded transcript."""
+    rsps.post(f"{API_BASE}/upload", json={"upload_url": "u"}, status=200)
+    rsps.post(
+        f"{API_BASE}/transcript",
+        json={"id": "fallback-job", "status": "queued"},
+        status=200,
+    )
+    rsps.get(
+        f"{API_BASE}/transcript/fallback-job",
+        json={
+            "id": "fallback-job",
+            "status": "completed",
+            "text": "lots of text here",
+            "audio_duration": 12.5,
+            "language_code": "en",
+        },
+        status=200,
+    )
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    with caplog.at_level("WARNING", logger="transcriber.providers.assemblyai"):
+        result = provider.transcribe(
+            wav, language=None, diarize=True, speech_model="universal-3-pro"
+        )
+
+    assert len(result.segments) == 1
+    assert result.segments[0].text == "lots of text here"
+    assert any(
+        "no utterances or paragraphs" in rec.message and "fallback-job" in rec.message
+        for rec in caplog.records
+    )
