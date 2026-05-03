@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import responses
+from responses import matchers
 
 from transcriber.providers.assemblyai import API_BASE, AssemblyAIProvider
 from transcriber.providers.base import ProviderError
@@ -82,6 +83,33 @@ def test_happy_path(rsps: responses.RequestsMock, wav: Path) -> None:
     assert result.model == "best"
     assert len(result.segments) == 1
     assert result.segments[0].speaker == "A"
+
+
+def test_create_transcript_body_uses_plural_speech_models(
+    rsps: responses.RequestsMock, wav: Path
+) -> None:
+    """Regression: AssemblyAI deprecated singular ``speech_model`` in favour
+    of plural ``speech_models`` (array). The provider must send the new
+    shape so the API doesn't reject the request with HTTP 400."""
+    rsps.post(f"{API_BASE}/upload", json={"upload_url": "https://cdn/u/x"}, status=200)
+    rsps.post(
+        f"{API_BASE}/transcript",
+        match=[
+            matchers.json_params_matcher(
+                {
+                    "audio_url": "https://cdn/u/x",
+                    "speech_models": ["best"],
+                    "speaker_labels": True,
+                }
+            ),
+        ],
+        json={"id": "abc123", "status": "queued"},
+        status=200,
+    )
+    rsps.get(f"{API_BASE}/transcript/abc123", json=_completed_payload(), status=200)
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    provider.transcribe(wav, language=None, diarize=True, speech_model="best")
 
 
 def test_upload_429_then_200_succeeds(rsps: responses.RequestsMock, wav: Path) -> None:

@@ -119,13 +119,16 @@ def _upload(wav_path: Path) -> str:
 def _create_transcript(
     upload_url: str,
     *,
-    speech_model: str,
+    speech_models: list[str],
     language_code: str | None,
     speaker_labels: bool,
 ) -> dict[str, Any]:
+    # AssemblyAI deprecated the singular `speech_model` field in favour of
+    # the plural `speech_models` array. We always send a single-element list
+    # in Slice 1; multi-model cascade is a Phase 5 concern.
     body: dict[str, Any] = {
         "audio_url": upload_url,
-        "speech_model": speech_model,
+        "speech_models": speech_models,
         "speaker_labels": speaker_labels,
     }
     if language_code:
@@ -226,7 +229,7 @@ class AssemblyAIProvider(TranscriptionProvider):
 
         create_payload = _create_transcript(
             upload_url,
-            speech_model=speech_model,
+            speech_models=[speech_model],
             language_code=language,
             speaker_labels=diarize,
         )
@@ -260,6 +263,6 @@ class AssemblyAIProvider(TranscriptionProvider):
             segments=segments,
             language=str(payload.get("language_code") or "auto"),
             duration_seconds=float(payload.get("audio_duration") or 0.0),
-            model=str(payload.get("speech_model", speech_model)),
+            model=speech_model,
             job_id=job_id,
         )
