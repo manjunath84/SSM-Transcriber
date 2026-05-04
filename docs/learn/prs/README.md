@@ -24,6 +24,8 @@
 | #11 | PLAN: tighten VAD framing and Phase 1 transcription boundary | docs | [`pr-011-plan-vad-and-transcription-boundary.md`](pr-011-plan-vad-and-transcription-boundary.md) |
 | #12 | Implementation: AssemblyAI MVP Slice 1 | feature (impl) | [`pr-012-assemblyai-mvp-slice-1-impl.md`](pr-012-assemblyai-mvp-slice-1-impl.md) |
 | #13 | Prevent vendor-API-shape regressions: SDD template + mock convention | infra | [`pr-013-prevent-vendor-api-shape-regressions.md`](pr-013-prevent-vendor-api-shape-regressions.md) |
+| #14 | Housekeeping: merge-date backfills + roadmap Phase 5 update + PR-7 explainer | docs | (no explainer — meta housekeeping bundle) |
+| #15 | Feature spec: Drive Source (URL passthrough) | feature (spec) | [`pr-015-drive-source-passthrough-spec.md`](pr-015-drive-source-passthrough-spec.md) |
 
 ## Conventions
 

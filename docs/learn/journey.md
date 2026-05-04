@@ -11,6 +11,49 @@
 
 ---
 
+## PR #15 — Feature spec: Drive Source (URL passthrough)
+
+**Merged:** TBD  |  **Branch:** `feature/drive-source-passthrough-spec`
+**Explainer:** [`prs/pr-015-drive-source-passthrough-spec.md`](prs/pr-015-drive-source-passthrough-spec.md)
+
+PR #15 is the spec for the second source — Google Drive videos the
+user has already shared as anyone-with-link. The straight-line answer
+from PLAN.md's Phase 4 was OAuth + `google-api-python-client`
+download, but the brainstorm surfaced a working `curl` early on that
+points at a fundamentally cheaper path: pass the public Drive
+download URL straight to AssemblyAI's `audio_url` field and let
+AssemblyAI fetch it server-to-server. No OAuth, no download, no
+upload, ~5–10× faster on hour-long files.
+
+The four user-facing decisions the brainstorm settled (auth model,
+URL forms accepted, frontmatter title source, cost pre-estimate
+strategy) all converged on "smallest thing that ships value today."
+OAuth and Drive folder traversal are deferred to a future Slice 3,
+explicitly documented rather than implicitly skipped. The single
+architectural change is additive: `PreparedMedia.local_path` becomes
+`Path | None` and a new `remote_url: str | None` field lands.
+Provider branches once on `if media.remote_url`. Polling, retry,
+formatter all reuse Slice 1's plumbing unchanged.
+
+The single most interesting thing about this PR for the SDD story:
+**it's the first feature spec to fill in PR #13's
+`## Reference calls (verbatim)` section.** PR #13's premise was
+"wrong vendor API shape because the implementation paraphrased
+rather than copied"; this spec proves the prevention pattern is
+followable in practice — the user's actual working `curl` is pasted
+at the top of `requirements.md` so the implementer copies from it
+byte-for-byte instead of paraphrasing from training data. The
+template + this dogfood test together close the loop the PR-12
+defects opened.
+
+The takeaway: cheapest-acceptable-architecture decisions become much
+easier to make under SDD when the brainstorm surfaces a working
+example early. The user's working curl wasn't a stray data point —
+it was the architectural argument. The spec just made that argument
+the documented record.
+
+---
+
 ## PR #13 — Prevent vendor-API-shape regressions: SDD template + mock convention
 
 **Merged:** 2026-05-04  |  **Branch:** `infra/prevent-vendor-api-shape-regressions`
