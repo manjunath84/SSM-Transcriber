@@ -11,6 +11,84 @@
 
 ---
 
+## PR #15 — Feature spec: Drive Source (URL passthrough)
+
+**Merged:** TBD  |  **Branch:** `feature/drive-source-passthrough-spec`
+**Explainer:** [`prs/pr-015-drive-source-passthrough-spec.md`](prs/pr-015-drive-source-passthrough-spec.md)
+
+PR #15 is the spec for the second source — Google Drive videos the
+user has already shared as anyone-with-link. The straight-line answer
+from PLAN.md's Phase 4 was OAuth + `google-api-python-client`
+download, but the brainstorm surfaced a working `curl` early on that
+points at a fundamentally cheaper path: pass the public Drive
+download URL straight to AssemblyAI's `audio_url` field and let
+AssemblyAI fetch it server-to-server. No OAuth, no download, no
+upload, ~5–10× faster on hour-long files.
+
+The four user-facing decisions the brainstorm settled (auth model,
+URL forms accepted, frontmatter title source, cost pre-estimate
+strategy) all converged on "smallest thing that ships value today."
+OAuth and Drive folder traversal are deferred to a future Slice 3,
+explicitly documented rather than implicitly skipped. The single
+architectural change is additive: `PreparedMedia.local_path` becomes
+`Path | None` and a new `remote_url: str | None` field lands.
+Provider branches once on `if media.remote_url`. Polling, retry,
+formatter all reuse Slice 1's plumbing unchanged.
+
+The single most interesting thing about this PR for the SDD story:
+**it's the first feature spec to fill in PR #13's
+`## Reference calls (verbatim)` section.** PR #13's premise was
+"wrong vendor API shape because the implementation paraphrased
+rather than copied"; this spec proves the prevention pattern is
+followable in practice — the user's actual working `curl` is pasted
+at the top of `requirements.md` so the implementer copies from it
+byte-for-byte instead of paraphrasing from training data. The
+template + this dogfood test together close the loop the PR-12
+defects opened.
+
+The takeaway: cheapest-acceptable-architecture decisions become much
+easier to make under SDD when the brainstorm surfaces a working
+example early. The user's working curl wasn't a stray data point —
+it was the architectural argument. The spec just made that argument
+the documented record.
+
+---
+
+## PR #14 — Housekeeping: merge-date backfills, roadmap Phase 5 update, PR #7 explainer
+
+**Merged:** 2026-05-04  |  **Branch:** `chore/housekeeping-merged-dates-pr7-explainer`
+**Explainer:** [`prs/pr-014-housekeeping-merge-dates-roadmap-pr7-explainer.md`](prs/pr-014-housekeeping-merge-dates-roadmap-pr7-explainer.md)
+
+PR #14 is the rare bundling exception — three small follow-ups too
+small to ship individually, packaged into one housekeeping PR. The
+contents: backfill `Merged: TBD` → actual dates on PR #12 and PR #13
+journey entries (extending the convention PR #7 itself established
+for PR #6); update `specs/roadmap.md` Phase 5 status to mention PR
+#13's structural defences alongside PR #12's implementation; finally
+write the long-pending PR #7 explainer (the gap had been flagged
+across PRs #6, #8, #10, #12, and #13).
+
+The interesting bit isn't the changes themselves but the bundling
+decision. The default is one PR per concern; this PR has three.
+Worth doing only when each concern would otherwise be ceremony-heavy
+and the bundle has a unifying frame (here: "housekeeping that
+accumulated since PR #13 merged"). The PR description was honest
+about the bundling — it called out exactly three items and
+explicitly documented one *deliberate* exclusion (Phase 1
+Foundations status update was flagged as a follow-up rather than
+expanded into).
+
+The takeaway: convention adherence isn't reflexive. The "every PR
+from #3 onward drafted before opening" rule has now been broken
+twice — once by PR #7 (a 2-line mechanical change with no
+brainstorm to draft from) and again by PR #14 itself (whose
+explainer was missed at merge and backfilled in PR #15's review
+cycle). Both backfills are themselves the documented pattern, not
+silent exceptions. The convention text in `prs/README.md` will keep
+catching up.
+
+---
+
 ## PR #13 — Prevent vendor-API-shape regressions: SDD template + mock convention
 
 **Merged:** 2026-05-04  |  **Branch:** `infra/prevent-vendor-api-shape-regressions`

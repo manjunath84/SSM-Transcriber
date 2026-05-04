@@ -24,17 +24,23 @@
 | #11 | PLAN: tighten VAD framing and Phase 1 transcription boundary | docs | [`pr-011-plan-vad-and-transcription-boundary.md`](pr-011-plan-vad-and-transcription-boundary.md) |
 | #12 | Implementation: AssemblyAI MVP Slice 1 | feature (impl) | [`pr-012-assemblyai-mvp-slice-1-impl.md`](pr-012-assemblyai-mvp-slice-1-impl.md) |
 | #13 | Prevent vendor-API-shape regressions: SDD template + mock convention | infra | [`pr-013-prevent-vendor-api-shape-regressions.md`](pr-013-prevent-vendor-api-shape-regressions.md) |
+| #14 | Housekeeping: merge-date backfills + roadmap Phase 5 update + PR-7 explainer | docs | [`pr-014-housekeeping-merge-dates-roadmap-pr7-explainer.md`](pr-014-housekeeping-merge-dates-roadmap-pr7-explainer.md) |
+| #15 | Feature spec: Drive Source (URL passthrough) | feature (spec) | [`pr-015-drive-source-passthrough-spec.md`](pr-015-drive-source-passthrough-spec.md) |
 
 ## Conventions
 
 - **Stubs vs. fresh entries.** PRs #1 and #2 predate this folder, so their
   explainers are short retrospective stubs. Every PR from #3 onward is
   drafted to template *before* the PR is opened and has its `Merged:` line
-  updated after merge — with one explicit exception: PR #7's explainer was
-  written retrospectively in PR #14 because PR #7 (a 2-line mechanical
-  merge-date backfill) shipped without one at the time. Future mechanical
-  PRs should still draft their explainer before opening; #7 is the
-  documented one-time exception, not a precedent.
+  updated after merge.
+- **Retrospective explainers are a documented pattern, not a silent
+  exception.** When an explainer is missed at merge time, it gets
+  backfilled in a later PR with a brief note about why (PR #7's was
+  backfilled in PR #14 because the original was 2 lines of mechanical
+  change; PR #14's own explainer was backfilled in PR #15's review
+  cycle because the housekeeping bundle's nature wasn't immediately
+  obvious as warranting one). The default is still draft-before-open;
+  retrospective backfill is the documented recovery, not a habit.
 - **"Explainer" is not "summary".** A summary tells you what changed. An
   explainer tells you what problem existed, why this approach, and what a
   Java dev new to Python should take away from it.

@@ -569,13 +569,63 @@ uv run ssm-transcriber transcribe "https://youtu.be/..." --format md --output no
 
 ### Phase 4 — Google Drive Source
 
-**Goal:** `uv run ssm-transcriber transcribe "drive://FILE_ID"` works after auth.
+Phase 4 split into two slices during the PR #15 brainstorm — the user's
+working `curl` proved AssemblyAI accepts public Drive URLs directly via
+`audio_url` ingestion, so the cheaper public-link path ships first as
+Slice 2 and OAuth + private-file support stays scoped for Slice 3 when
+the use case actually arrives. See
+[`specs/2026-05-04-drive-source-passthrough/requirements.md`](../specs/2026-05-04-drive-source-passthrough/requirements.md)
+for the full decision record.
+
+#### Phase 4 — Slice 2: Drive Source (URL Passthrough)
+
+**Goal:** `uv run ssm-transcriber transcribe "drive://FILE_ID" --title "Session N" --budget low -y`
+transcribes a Drive file the user has already shared as
+"anyone with link can view," **without** OAuth, without a local
+download, and without an upload — by passing the public Drive
+download URL straight to AssemblyAI's `audio_url` field.
 
 Files to create/modify:
-- `src/transcriber/sources/google_drive.py` — OAuth2 flow + `google-api-python-client` download
-- `src/transcriber/cli.py` — add `ssm-transcriber auth google-drive` command for OAuth setup
-- `src/transcriber/sources/__init__.py` — add `drive://` pattern to `resolve_source()`
-- Add to `pyproject.toml`: `google-api-python-client`, `google-auth-oauthlib`
+- `src/transcriber/sources/base.py` — extend `PreparedMedia`:
+  `local_path: Path | None`, new `remote_url: str | None = None`,
+  validation: exactly one set.
+- `src/transcriber/sources/google_drive.py` — `DriveSource.prepare(...)` —
+  parses the five accepted URL forms; returns
+  `PreparedMedia(remote_url=..., local_path=None, ...)`.
+- `src/transcriber/sources/__init__.py` (or `dispatch.py`) —
+  `resolve_source(uri)` with reject-not-swallow semantics for
+  unrecognised `://` URIs.
+- `src/transcriber/providers/assemblyai.py` — `transcribe()` branches
+  on `media.remote_url`; if set, POSTs `/transcript` with `audio_url=...`
+  (skips `_upload`).
+- `src/transcriber/cli.py` — `--title` flag (sanitised), Drive-variant
+  budget gate (skips pre-estimate; both hard gates still fire).
+
+**Dependencies added:** none. The Drive download URL is a string
+handed to AssemblyAI; we never download from Drive ourselves.
+
+**Verification:** transcribe a Drive video the user has shared as
+anyone-with-link, ~$0.60 against a 60-min source, single real run per
+the manual runbook.
+
+#### Phase 4 — Slice 3: Drive Source (OAuth + Private Files)
+
+**Goal:** support private Drive files (the original Phase 4 framing).
+This slice ships when private-file support becomes a concrete need
+that the public-link passthrough can't cover.
+
+Files to create/modify (deferred):
+- `src/transcriber/sources/google_drive.py` — extend with OAuth2 flow
+  + `google-api-python-client` download path; downloads private files
+  to the workspace, then takes the existing local-file path through
+  the rest of the pipeline.
+- `src/transcriber/cli.py` — `ssm-transcriber auth google-drive`
+  command for OAuth token setup.
+- Add to `pyproject.toml`: `google-api-python-client`,
+  `google-auth-oauthlib`.
+- `.env.example` — the `TRANSCRIBER_GOOGLE_CLIENT_SECRETS_FILE` and
+  `TRANSCRIBER_GOOGLE_TOKEN_FILE` slots are already reserved for
+  this slice.
 
 **Auth flow:**
 ```bash
@@ -583,7 +633,8 @@ uv run ssm-transcriber auth google-drive   # opens browser, saves token
 uv run ssm-transcriber transcribe "drive://1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs"
 ```
 
-**Verification:** Transcribe a video file stored in Google Drive.
+**Verification:** transcribe a private Drive file the current user
+owns; OAuth refresh-token round-trip works without re-prompting.
 
 ---
 
