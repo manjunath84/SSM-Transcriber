@@ -66,9 +66,16 @@ Each item below is explicitly out of scope for this slice and lands later:
    estimate, tool prints: "AssemblyAI is billing per-minute against URL
    passthrough; the exact cost will be visible in the AssemblyAI
    dashboard after the run." Confirmation prompt fires unless `-y`.
-7. **Invalid Drive URL** (`drive://`, no ID; `drive://invalid_id`;
-   `https://example.com/notfound`). Tool exits `2` with a clear "could
-   not extract a Drive file ID from `<input>`" message.
+7. **Invalid Drive URL** (`drive://`, no ID; `drive://invalid_id`).
+   Tool exits `2` with a clear "could not extract a Drive file ID from
+   `<input>`" message.
+7a. **Non-Drive URL** (`https://example.com/notfound`,
+    `https://youtube.com/...`). Tool exits `2` with: "URI scheme not
+    supported. Expected: a local file path, `drive://FILE_ID`, or a
+    Google Drive URL (`https://drive.google.com/...`)." This is a
+    *dispatch-layer* rejection (not a `LocalSource` "file not found"
+    fallthrough) — if the user typed `://`, they meant a URL, not a
+    file path.
 8. **AssemblyAI 4xx for the URL** (file isn't actually shared as
    anyone-with-link, or sharing was revoked). AssemblyAI returns a 4xx
    from `/transcript`; existing `ProviderError` handling surfaces it as

@@ -54,16 +54,21 @@ implementation detail.
 6. `drive://` (empty) → `ValueError`.
 7. `https://drive.google.com/file/d//view` (empty ID segment) →
    `ValueError`.
-8. `https://example.com/foo` (non-Drive host) → not picked up by
-   `resolve_source` (falls through to `LocalSource`, which then
-   raises `FileNotFoundError`); CLI maps to exit 4. (Documents that
-   the dispatcher is conservative about what it claims.)
+8. `https://example.com/foo` (non-Drive host) → `resolve_source`
+   raises `ValueError` at dispatch with the "URI scheme not supported"
+   message; CLI maps to exit 2. (The dispatcher actively rejects
+   non-Drive `://` URIs rather than silently treating them as file
+   paths — if the user typed `://`, they meant a URL.)
 
 ### Source dispatch
 
 9. `resolve_source("drive://...")` → `DriveSource`.
 10. `resolve_source("https://drive.google.com/...")` → `DriveSource`.
 11. `resolve_source("./video.mp4")` → `LocalSource`.
+11a. `resolve_source("https://youtube.com/watch?v=...")` →
+     `ValueError` with the "URI scheme not supported" message (until
+     YouTubeSource lands in Phase 2; current behavior is reject-not-
+     swallow so the failure mode is loud and correct).
 
 ### `PreparedMedia` validation
 
@@ -115,6 +120,18 @@ implementation detail.
     with provider mocked → identical output to case 23 (URL form
     doesn't matter for the produced artifact).
 26. Existing local-file CLI tests still pass — regression.
+26a. **`--title` sanitization (security-relevant).** Parametrised
+     test: each of `--title "../foo"`, `--title "a/b"`,
+     `--title "back\\slash"`, `--title ".hidden"`,
+     `--title "ok..bad"` → exit 2 with the documented "unsafe
+     filename characters" message. The CLI MUST NOT proceed to
+     write a file under those titles. (Without this, the existing
+     `atomic.write_text_atomic` will happily create parent dirs and
+     write outside `settings.output_dir`.)
+26b. `--title "Session 17"` (whitespace) → exits 0; output filename
+     contains `Session-17`, frontmatter `title` contains
+     `Session 17` (whitespace preserved in the YAML, replaced only
+     in the filename).
 
 ### Markdown formatter
 
@@ -142,10 +159,14 @@ the manual runbook or by inspection.
    `audio_url` (verified by the user's reference `curl` in
    `requirements.md` working against a file in this size range).
    Implementation does NOT need its own interstitial logic.
-4. **`--title` contains shell-unsafe characters** (`/`, `\0`, `..`,
-   leading `.`, etc.). Reject at the CLI layer with a clear
-   "title must not contain `/` or `\0`" message; exit 2. Whitespace
-   in `--title` → `-` in the filename is fine and intended.
+4. **`--title` contains shell-unsafe characters** (`/`, `\`, `\0`,
+   `..`, or leading `.`). Reject at the CLI layer with the documented
+   "unsafe filename characters" message; exit 2. **This is now a real
+   test case (26a above), not just an edge note** — the
+   `atomic.write_text_atomic` helper creates parent directories on
+   demand, so an unsanitized `--title "../foo"` would write outside
+   `settings.output_dir`. Whitespace in `--title` → `-` in the
+   filename is fine and intended (26b).
 5. **Output filename collision (existing `Session-17-2026-05-04.md`).**
    Existing `atomic.resolve_collision` behaviour applies — writes
    `-2`, `-3`, etc. No new logic needed.

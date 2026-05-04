@@ -50,13 +50,20 @@ New `src/transcriber/sources/google_drive.py`:
 Update `src/transcriber/sources/__init__.py` (or create
 `sources/dispatch.py`):
 
-- `resolve_source(uri: str)` — picks `LocalSource` or `DriveSource`
-  based on URI scheme:
-  - `drive://` or starts with `https://drive.google.com/` →
-    `DriveSource`.
-  - otherwise → `LocalSource`.
-- Future-proof: when YouTube / OAuth-Drive land, they slot in by
-  pattern.
+- `resolve_source(uri: str)` — pattern-match on the URI shape:
+  - `drive://` or `https?://drive.google.com/...` → `DriveSource`.
+  - URI containing `://` but not matching any known source pattern
+    (e.g. `https://example.com/...`, `https://youtube.com/watch?v=...`)
+    → raise `ValueError("URI scheme not supported. Expected: a local
+    file path, drive://FILE_ID, or a Google Drive URL
+    (https://drive.google.com/...).")`. The CLI catches and exits 2.
+  - No `://` → `LocalSource`.
+- This is a *reject-not-swallow* design: a URI-shaped input that
+  doesn't match a known source must fail loudly at dispatch, NOT be
+  silently routed to `LocalSource` where a "file not found" error
+  would mislead the user about the actual problem.
+- Future-proof: when YouTube / OAuth-Drive land, they slot in as new
+  pattern arms above the catch-all `ValueError`.
 
 ## 4. Provider passthrough branch
 
@@ -117,9 +124,18 @@ Update `src/transcriber/cli.py`:
   - If Drive AND no `--title`: `{file_id}-{date}.md` (file ID from
     `media.extra["drive_file_id"]`).
   - If Local: existing `media.local_path.stem` behaviour.
-- Whitespace in `--title` → `-` in the filename; other characters
-  round-trip. (Existing `atomic.resolve_collision` handles the
-  filename-collision suffix logic regardless of source.)
+- **`--title` sanitization (security-relevant — `atomic.write_text_atomic`
+  creates parent directories, so a `--title ../foo` could write
+  outside `settings.output_dir` if not rejected):**
+  - Replace whitespace with `-`.
+  - **Reject** any title containing `/`, `\`, `\0`, or `..`, or
+    starting with `.`. Reject with exit 2 and the message:
+    `--title contains unsafe filename characters: <title!r>`.
+  - All other printable characters round-trip into the filename.
+  - Sanitization happens at the CLI layer (where the flag is
+    parsed); the sources/formatter never see an unsanitized title.
+- (Existing `atomic.resolve_collision` handles the filename-collision
+  suffix logic regardless of source.)
 
 ## 7. Markdown formatter — handle `local_path=None`
 
