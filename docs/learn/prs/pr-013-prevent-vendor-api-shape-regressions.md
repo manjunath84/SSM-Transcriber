@@ -120,6 +120,6 @@ guessing from training data?).
 
 ## Further reading
 
-- PR #12 ([`pr-012-assemblyai-mvp-slice-1-impl.md`](pr-012-assemblyai-mvp-slice-1-impl.md), available on `main` once PR #12 merges) — the incident this PR is the structural follow-up to; "What the manual real-API run caught" section captures the three defects.
+- [`pr-012-assemblyai-mvp-slice-1-impl.md`](pr-012-assemblyai-mvp-slice-1-impl.md) — the incident this PR is the structural follow-up to; "What the manual real-API run caught" section captures the three defects.
 - [`../../../specs/REQUIREMENTS_TEMPLATE.md`](../../../specs/REQUIREMENTS_TEMPLATE.md) — the new template.
 - [`../../../CLAUDE.md`](../../../CLAUDE.md) — the two new guardrail bullets.
