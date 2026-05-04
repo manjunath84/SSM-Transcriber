@@ -17,6 +17,7 @@
 | #4 | `docs/learn/` + teaching register | — | [`pr-004-docs-learn-teaching-register.md`](pr-004-docs-learn-teaching-register.md) |
 | #5 | AI operator guide + workflow commands | infra | [`pr-005-ai-operator-guide-workflow-commands.md`](pr-005-ai-operator-guide-workflow-commands.md) |
 | #6 | Roadmap naming cleanup + hosted-provider strategy | docs | [`pr-006-roadmap-naming-and-hosted-provider-strategy.md`](pr-006-roadmap-naming-and-hosted-provider-strategy.md) |
+| #7 | Backfill PR #6 merge date | docs (mechanical) | [`pr-007-backfill-pr-6-merge-date.md`](pr-007-backfill-pr-6-merge-date.md) |
 | #8 | Adopt SDD: bootstrap project constitution under `specs/` | infra | [`pr-008-adopt-sdd-constitution.md`](pr-008-adopt-sdd-constitution.md) |
 | #9 | Mission: provider-agnostic framing with default-cheap | docs | [`pr-009-mission-provider-agnostic-framing.md`](pr-009-mission-provider-agnostic-framing.md) |
 | #10 | Feature spec: AssemblyAI MVP Slice 1 | feature (spec) | [`pr-010-assemblyai-mvp-slice-1-spec.md`](pr-010-assemblyai-mvp-slice-1-spec.md) |
@@ -29,7 +30,11 @@
 - **Stubs vs. fresh entries.** PRs #1 and #2 predate this folder, so their
   explainers are short retrospective stubs. Every PR from #3 onward is
   drafted to template *before* the PR is opened and has its `Merged:` line
-  updated after merge.
+  updated after merge — with one explicit exception: PR #7's explainer was
+  written retrospectively in PR #14 because PR #7 (a 2-line mechanical
+  merge-date backfill) shipped without one at the time. Future mechanical
+  PRs should still draft their explainer before opening; #7 is the
+  documented one-time exception, not a precedent.
 - **"Explainer" is not "summary".** A summary tells you what changed. An
   explainer tells you what problem existed, why this approach, and what a
   Java dev new to Python should take away from it.

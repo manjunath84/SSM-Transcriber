@@ -44,7 +44,7 @@
 
 ## [Phase 5 — Cloud Transcription Providers (provider abstraction)](../docs/PLAN.md#phase-5--cloud-transcription-providers-provider-abstraction)
 
-**Status:** partial — AssemblyAI only (PR #12). Provider-agnostic registry, per-provider rate hooks, and Deepgram / OpenAI Whisper / Hugging Face implementations still pending. Two-gate spend (F4) implemented in minimal form (hardcoded around AssemblyAI in the budget module).
+**Status:** partial — AssemblyAI implementation (PR #12) + structural defences against vendor-API-shape regressions for future provider PRs (PR #13: SDD `## Reference calls (verbatim)` template section + CLAUDE.md mock-fidelity / no-paraphrase guardrails). Provider-agnostic registry, per-provider rate hooks, and Deepgram / OpenAI Whisper / Hugging Face implementations still pending. Two-gate spend (F4) implemented in minimal form (hardcoded around AssemblyAI in the budget module).
 
 ## [Phase 6a — LLM Post-Processing (opt-in, cheapest-first)](../docs/PLAN.md#phase-6a--llm-post-processing-opt-in-cheapest-first)
 
