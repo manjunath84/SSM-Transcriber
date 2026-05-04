@@ -1,5 +1,13 @@
 # Validation — Drive Source (URL Passthrough)
 
+> **Reading note for spec-PR reviewers.** This file describes the
+> bar the *implementation PR* must clear, not this spec PR. The spec
+> PR's done bar is "the four brainstorm decisions are recorded, the
+> three files are internally consistent, the verbatim-call section
+> is filled in." The criteria below come into play when the
+> implementation PR opens — the implementer references this file
+> while building and the reviewer references it before merge.
+
 ## Success criteria
 
 Each item below requires **concrete evidence** (command output, file

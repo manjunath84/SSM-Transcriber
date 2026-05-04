@@ -44,6 +44,14 @@ New `src/transcriber/sources/google_drive.py`:
                          extra={"drive_file_id": file_id})`.
 - Unparseable input (no extractable ID, non-Drive host, malformed
   `drive://`) → `ValueError`.
+- **Defence-in-depth:** `DriveSource.prepare` validates the URL
+  shape itself even though `resolve_source` (Section 3) already
+  rejects non-Drive `://` URIs at dispatch. Reason: tests call
+  `DriveSource.prepare` directly without going through the
+  dispatcher, and a future caller (programmatic API, REPL) may
+  bypass dispatch too. Same boundary pattern as
+  `providers/assemblyai.py:_api_headers`, which re-checks for the
+  `ASSEMBLYAI_API_KEY` even though the budget gate already did.
 
 ## 3. Source dispatch
 
@@ -181,11 +189,27 @@ Drive fixtures to CI.
 Once implementation lands and before opening the PR:
 
 - Draft `docs/learn/prs/pr-NNN-drive-source-passthrough-impl.md` using
-  the repo's explainer template. Highlight: (a) why URL passthrough
-  beat OAuth+download for the user's workflow today; (b) the F2
-  contract extension as the smallest seam; (c) this is the first
-  feature spec to fill in PR #13's `## Reference calls (verbatim)`
-  template section.
+  the repo's explainer template. **Focus on implementation-phase
+  learnings**, NOT the spec-phase decisions — the latter are already
+  documented in [`pr-015-drive-source-passthrough-spec.md`](../../docs/learn/prs/pr-015-drive-source-passthrough-spec.md)
+  and re-stating them here is duplication. Worth highlighting:
+  - Friction (or lack of) extending F2 — did the
+    `local_path: Path | None` + `remote_url: str | None` shape
+    actually feel additive in practice, or did the dispatcher / CLI
+    branching push complexity that suggests F2 wants a different
+    refactor in Phase 5?
+  - Polling-status edge cases hit on the new `audio_url` branch —
+    did AssemblyAI's behaviour against URL passthrough differ
+    from upload-mode in any way the spec didn't predict?
+  - How the PR-13 body-shape mock guardrail was applied (or could
+    have caught any wire-shape regression) for the new
+    `audio_url`-bearing POST.
+  - Cost-vs-estimate gap from the manual real-API run — since this
+    slice deliberately skips pre-estimate, the manual runbook is
+    the only visibility into actual cost; capture the gap (or
+    confirm "matches the per-minute math" if predictable).
+  - Whether the dispatcher's reject-not-swallow rule felt right
+    in practice or surfaced any UX surprises.
 - Append the PR entry at the top of `docs/learn/journey.md`.
 - Append the PR row to `docs/learn/prs/README.md` index.
 - No new glossary or python-notes entries expected (the slice
