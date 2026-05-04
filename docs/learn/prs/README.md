@@ -30,7 +30,11 @@
 - **Stubs vs. fresh entries.** PRs #1 and #2 predate this folder, so their
   explainers are short retrospective stubs. Every PR from #3 onward is
   drafted to template *before* the PR is opened and has its `Merged:` line
-  updated after merge.
+  updated after merge — with one explicit exception: PR #7's explainer was
+  written retrospectively in PR #14 because PR #7 (a 2-line mechanical
+  merge-date backfill) shipped without one at the time. Future mechanical
+  PRs should still draft their explainer before opening; #7 is the
+  documented one-time exception, not a precedent.
 - **"Explainer" is not "summary".** A summary tells you what changed. An
   explainer tells you what problem existed, why this approach, and what a
   Java dev new to Python should take away from it.

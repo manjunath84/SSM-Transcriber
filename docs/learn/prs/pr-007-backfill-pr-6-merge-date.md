@@ -1,6 +1,6 @@
 # PR #7 — Backfill PR #6 merge date (TBD → 2026-05-01)
 
-**Merged:** 2026-05-01  |  **Branch:** `docs/backfill-pr-6-merge-date`  |  **Codex review:** n/a (mechanical)
+**Merged:** 2026-05-01  |  **Branch:** `chore/pr-6-merged-date-backfill`  |  **Codex review:** n/a (mechanical)
 **Journey entry:** [`../journey.md#pr-7--backfill-pr-6-merge-date`](../journey.md#pr-7--backfill-pr-6-merge-date)
 
 ## The problem in one paragraph

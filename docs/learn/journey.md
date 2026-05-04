@@ -301,7 +301,7 @@ AI workflow concepts introduced:
 
 ## PR #7 — Backfill PR #6 merge date
 
-**Merged:** 2026-05-01  |  **Branch:** `docs/backfill-pr-6-merge-date`
+**Merged:** 2026-05-01  |  **Branch:** `chore/pr-6-merged-date-backfill`
 **Explainer:** [`prs/pr-007-backfill-pr-6-merge-date.md`](prs/pr-007-backfill-pr-6-merge-date.md)
 
 PR #7 is the smallest possible follow-up to PR #6 and exists for one
