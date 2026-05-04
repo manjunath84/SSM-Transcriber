@@ -13,7 +13,7 @@
 
 ## PR #13 — Prevent vendor-API-shape regressions: SDD template + mock convention
 
-**Merged:** TBD  |  **Branch:** `infra/prevent-vendor-api-shape-regressions`
+**Merged:** 2026-05-04  |  **Branch:** `infra/prevent-vendor-api-shape-regressions`
 **Explainer:** [`prs/pr-013-prevent-vendor-api-shape-regressions.md`](prs/pr-013-prevent-vendor-api-shape-regressions.md)
 
 PR #13 is the structural follow-up to PR #12. The first end-to-end run
@@ -62,7 +62,7 @@ problems and want different tools.
 
 ## PR #12 — Implementation: AssemblyAI MVP Slice 1
 
-**Merged:** TBD  |  **Branch:** `impl/assemblyai-mvp-slice-1`
+**Merged:** 2026-05-03  |  **Branch:** `impl/assemblyai-mvp-slice-1`
 **Explainer:** [`prs/pr-012-assemblyai-mvp-slice-1-impl.md`](prs/pr-012-assemblyai-mvp-slice-1-impl.md)
 
 PR #12 is the first end-to-end feature loop the repo runs under SDD,
@@ -296,6 +296,27 @@ living somewhere else.
 
 AI workflow concepts introduced:
 [`Spec-driven development`](glossary.md#spec-driven-development).
+
+---
+
+## PR #7 — Backfill PR #6 merge date
+
+**Merged:** 2026-05-01  |  **Branch:** `docs/backfill-pr-6-merge-date`
+**Explainer:** [`prs/pr-007-backfill-pr-6-merge-date.md`](prs/pr-007-backfill-pr-6-merge-date.md)
+
+PR #7 is the smallest possible follow-up to PR #6 and exists for one
+reason: PR #6 introduced the convention of backfilling `Merged: TBD`
+placeholders with the actual merge date once a PR lands, but it
+couldn't apply that convention to itself (the date isn't known until
+after the merge). PR #7 is the 2-line backfill that applied the same
+pattern to PR #6's own journey entry and explainer header.
+
+The takeaway is small but real: post-merge backfills are the
+*documented* pattern, not a missed step at merge time. They land in a
+follow-up PR exactly like this one. (This explainer was drafted
+retroactively as part of the housekeeping bundle after PR #13 — the
+learning-artifact gap had been flagged across PRs #6, #8, #10, #12,
+and #13.)
 
 ---
 
