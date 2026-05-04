@@ -11,6 +11,55 @@
 
 ---
 
+## PR #13 — Prevent vendor-API-shape regressions: SDD template + mock convention
+
+**Merged:** TBD  |  **Branch:** `infra/prevent-vendor-api-shape-regressions`
+**Explainer:** [`prs/pr-013-prevent-vendor-api-shape-regressions.md`](prs/pr-013-prevent-vendor-api-shape-regressions.md)
+
+PR #13 is the structural follow-up to PR #12. The first end-to-end run
+in PR #12 surfaced three defects in a single attempt:
+`monkeypatch.setenv` masked the `.env` loading bug, AssemblyAI had
+deprecated the singular `speech_model` field for plural `speech_models`,
+and `best`/`nano` were retired in favour of `universal-3-pro` /
+`universal-2`. The fixes for each landed in PR #12. The defects split
+into two classes: the field-name and model-name defects (#2, #3) are
+*vendor API drift* — the implementation paraphrased shape information
+from training data instead of copying from a known-working source. The
+`.env` defect (#1) is a different class — a test-environment bypass
+where `monkeypatch.setenv` populated `os.environ` directly without ever
+exercising the `.env`-loading path. This PR closes the **vendor-shape
+class** (#2, #3) by codifying three layered defences:
+
+1. A new `specs/REQUIREMENTS_TEMPLATE.md` whose **`## Reference calls
+   (verbatim)`** section is required for any feature integrating with a
+   third-party API. The user's own working call goes here verbatim, with
+   a docs URL and retrieval date. The implementer copies from this
+   section into code and tests; paraphrase is explicitly disallowed.
+2. A CLAUDE.md guardrail mandating body-shape matchers for HTTP mocks
+   (`responses.matchers.json_params_matcher`), with PR #12's
+   regression test as the named exemplar. URL+method-only matching is
+   how PR #12's wrong-field-name defect slipped past 41 unit tests.
+3. A second CLAUDE.md guardrail mandating that vendor API calls must
+   reference a verbatim source — either the spec's Reference calls
+   section or a fresh ctx7 docs fetch with retrieval date — never
+   paraphrase from memory or training data. PR #12 named the cost.
+
+ctx7 is the *fallback*, not the primary defence. A guardrail that
+requires a separate MCP server install on every contributor's machine
+is harder to enforce than a guardrail that requires copying text into a
+doc. ctx7 fills the gap when no working call exists yet (new vendor,
+exploratory work). The combination catches the same class of bug at
+three different stages: spec review, unit-test write-time, and pre-
+implementation docs research.
+
+The takeaway: the manual real-API runbook in `validation.md` is a
+*detection* gate (it caught the defects), but it doesn't prevent them.
+PR #13 is the *prevention* layer — structural, doc-only, no code touched.
+That separation is deliberate: detection and prevention are different
+problems and want different tools.
+
+---
+
 ## PR #12 — Implementation: AssemblyAI MVP Slice 1
 
 **Merged:** TBD  |  **Branch:** `impl/assemblyai-mvp-slice-1`

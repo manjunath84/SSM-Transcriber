@@ -12,7 +12,10 @@ Project constitution and per-feature specs for SSM-Transcriber.
 
 Each feature lives in `specs/YYYY-MM-DD-<feature>/`:
 
-- `requirements.md` — goal, non-goals, scenarios, decisions.
+- `requirements.md` — goal, non-goals, scenarios, decisions. Use
+  [`REQUIREMENTS_TEMPLATE.md`](REQUIREMENTS_TEMPLATE.md) as the starting
+  shape; the **Reference calls (verbatim)** section is required for any
+  feature that integrates with a third-party API.
 - `plan.md` — numbered task groups.
 - `validation.md` — success criteria, test cases, edge cases.
 
