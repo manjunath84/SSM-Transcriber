@@ -9,6 +9,7 @@ json) land in their own phases.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
@@ -70,6 +71,60 @@ def _confirm_or_decline(msg: str) -> bool:
         return Confirm.ask(msg, default=False, console=console)
     except EOFError:
         return False
+
+
+# ── --title sanitization (Slice 2) ───────────────────────────────────────────
+#
+# atomic.write_text_atomic creates parent directories on demand. An
+# unsanitized --title "../foo" would let a user (or a misuse) write outside
+# settings.output_dir. _validate_title rejects path-traversal characters at
+# the CLI boundary so the source layer / formatter never see an unsafe value.
+#
+# The helpers are split:
+#   _validate_title -> the display form (whitespace stripped at the edges,
+#                      internal whitespace preserved). This lands in YAML
+#                      frontmatter as ``title:``.
+#   _title_to_stem  -> collapses internal whitespace to ``-`` for use in the
+#                      output filename. Caller is responsible for validating
+#                      first; this helper does no validation of its own.
+
+_TITLE_FORBIDDEN_SUBSTRINGS = ("/", "\\", "\0", "..")
+
+
+def _validate_title(title: str) -> str:
+    """Return the display form of a user-provided ``--title`` value.
+
+    Strips leading/trailing whitespace; preserves internal whitespace so
+    the YAML ``title:`` field round-trips what the user typed. Raises
+    ``ValueError`` with the documented "unsafe filename characters"
+    message on path-traversal characters (``/``, ``\\``, NUL, ``..``)
+    or a leading dot (would create a hidden file).
+    """
+    stripped = title.strip()
+    if not stripped:
+        raise ValueError(
+            f"--title contains unsafe filename characters: {title!r}"
+        )
+    if stripped.startswith("."):
+        raise ValueError(
+            f"--title contains unsafe filename characters: {title!r}"
+        )
+    for forbidden in _TITLE_FORBIDDEN_SUBSTRINGS:
+        if forbidden in stripped:
+            raise ValueError(
+                f"--title contains unsafe filename characters: {title!r}"
+            )
+    return stripped
+
+
+def _title_to_stem(title: str) -> str:
+    """Collapse internal whitespace runs to ``-`` for a filename stem.
+
+    Caller is responsible for validating the title with ``_validate_title``
+    first; this helper does no validation. Splitting the responsibilities
+    keeps the YAML display form separate from the filename-friendly form.
+    """
+    return re.sub(r"\s+", "-", title)
 
 
 # ── transcriber transcribe ────────────────────────────────────────────────────

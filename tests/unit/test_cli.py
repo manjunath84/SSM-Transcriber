@@ -217,3 +217,83 @@ def test_eof_on_prompt_treated_as_decline(
 
     monkeypatch.setattr("transcriber.cli.Confirm.ask", _eof_ask)
     assert _confirm_or_decline("Proceed?") is False
+
+
+# ---------------------------------------------------------------------------
+# Title sanitization helpers (Slice 2). _validate_title returns the display
+# form (whitespace stripped at edges, internal preserved). _title_to_stem
+# collapses internal whitespace to '-' for filenames.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title,expected",
+    [
+        ("Session 17", "Session 17"),
+        ("  trimmed  ", "trimmed"),
+        ("internal  whitespace  preserved", "internal  whitespace  preserved"),
+        ("v1.2 release notes", "v1.2 release notes"),
+    ],
+)
+def test_validate_title_accepts_safe_titles(title: str, expected: str) -> None:
+    from transcriber.cli import _validate_title
+
+    assert _validate_title(title) == expected
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "../foo",
+        "a/b",
+        "back\\slash",
+        ".hidden",
+        "ok..bad",
+        "with\0null",
+    ],
+)
+def test_validate_title_rejects_unsafe_characters(unsafe: str) -> None:
+    """Path-traversal protection — atomic.write_text_atomic creates parent
+    directories on demand, so an unsanitized --title '../foo' would write
+    outside settings.output_dir. Validation case 26a explicitly tests this.
+    """
+    from transcriber.cli import _validate_title
+
+    with pytest.raises(ValueError, match="unsafe filename"):
+        _validate_title(unsafe)
+
+
+def test_validate_title_rejects_empty_after_strip() -> None:
+    from transcriber.cli import _validate_title
+
+    with pytest.raises(ValueError, match="unsafe filename|empty"):
+        _validate_title("   ")
+
+
+@pytest.mark.parametrize(
+    "title,expected_stem",
+    [
+        ("Session 17", "Session-17"),
+        ("v1.2 release notes", "v1.2-release-notes"),
+        ("internal  whitespace", "internal-whitespace"),
+        ("trimmed", "trimmed"),
+    ],
+)
+def test_title_to_stem_collapses_whitespace_to_dashes(
+    title: str, expected_stem: str
+) -> None:
+    """Whitespace in --title becomes '-' in the filename; YAML title
+    preserves the original (validation case 26b)."""
+    from transcriber.cli import _title_to_stem
+
+    assert _title_to_stem(title) == expected_stem
+
+
+def test_title_to_stem_assumes_input_already_validated() -> None:
+    """_title_to_stem does no validation — it expects a string that has
+    already passed _validate_title. Tests document the order so a future
+    caller doesn't accidentally swap them."""
+    from transcriber.cli import _title_to_stem
+
+    # No validation happens here; the contract is "validate first, then collapse".
+    assert _title_to_stem("path with spaces") == "path-with-spaces"
