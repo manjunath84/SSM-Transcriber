@@ -132,6 +132,23 @@ if TYPE_CHECKING:
 SourceKind = Literal["local", "youtube", "google_drive"]
 
 
+class SourceInputError(ValueError):
+    """User-input error from a source layer.
+
+    Distinguishes user-actionable failures (malformed URI, missing file,
+    file path is a directory) from PreparedMedia invariant violations
+    (producer bug — both fields set or neither). The CLI catches this
+    specifically and maps to exit 2 ("user input error"); a plain
+    ``ValueError`` from ``PreparedMedia.__post_init__`` is left to bubble
+    with a traceback so a misbehaving Source implementation surfaces
+    loudly during development rather than as an opaque "exit 2" with the
+    invariant message shown to end users (review finding I7).
+
+    Subclassing ``ValueError`` keeps backward compatibility with any
+    existing ``pytest.raises(ValueError, match=...)`` tests.
+    """
+
+
 @dataclass(frozen=True)
 class PreparedMedia:
     """Everything downstream stages need to transcribe a piece of media.
@@ -306,6 +323,8 @@ from __future__ import annotations
 
 import re
 
+from transcriber.sources.base import SourceInputError
+
 # Drive file IDs are URL-safe base64 — alnum, dash, underscore. The
 # minimum length isn't documented but the shortest IDs we see in practice
 # are 25+ characters; we don't enforce a minimum to stay forward-compatible.
@@ -325,16 +344,18 @@ _ID_QUERY_RE = re.compile(r"[?&]id=([A-Za-z0-9_-]+)")
 def _extract_file_id(uri: str) -> str:
     """Extract the Drive file ID from any of the five accepted URL forms.
 
-    Raises ``ValueError`` if the URI doesn't match any form or yields an
-    empty / invalid file ID. Failure mode is loud-and-correct: a user who
-    pastes a Drive folder URL or a malformed link gets a clear error
-    rather than a silent fallthrough to AssemblyAI returning a 4xx.
+    Raises ``SourceInputError`` (subclass of ``ValueError`` for back-compat
+    with existing ``pytest.raises(ValueError, ...)`` tests) if the URI
+    doesn't match any form or yields an empty / invalid file ID. Failure
+    mode is loud-and-correct: a user who pastes a Drive folder URL or a
+    malformed link gets a clear error rather than a silent fallthrough to
+    AssemblyAI returning a 4xx.
     """
     if uri.startswith("drive://"):
         candidate = uri[len("drive://"):]
         if candidate and _FILE_ID_RE.fullmatch(candidate):
             return candidate
-        raise ValueError(
+        raise SourceInputError(
             f"could not extract a Drive file ID from {uri!r}: "
             "drive:// URIs must contain a non-empty alphanumeric ID."
         )
@@ -346,12 +367,12 @@ def _extract_file_id(uri: str) -> str:
         # /open?id=<ID>  or  /uc?...&id=<ID>
         if match := _ID_QUERY_RE.search(uri):
             return match.group(1)
-        raise ValueError(
+        raise SourceInputError(
             f"could not extract a Drive file ID from {uri!r}: "
             "Drive URL must include /file/d/<ID> or ?id=<ID>."
         )
 
-    raise ValueError(
+    raise SourceInputError(
         f"could not extract a Drive file ID from {uri!r}: "
         "expected drive://FILE_ID or https://drive.google.com/..."
     )
@@ -499,12 +520,19 @@ def prepare(
     ``title`` overrides the filename-stem default when set (the CLI
     passes the validated ``--title`` here). Otherwise the title is
     derived from the local file's stem.
+
+    Raises ``FileNotFoundError`` if the path doesn't exist (CLI exit 4)
+    or ``SourceInputError`` if the path is not a regular file
+    (CLI exit 2). The latter is a ``ValueError`` subclass, so any
+    existing ``except ValueError`` will continue to catch it.
     """
+    from transcriber.sources.base import SourceInputError
+
     path = Path(uri).expanduser()
     if not path.exists():
         raise FileNotFoundError(f"Source file not found: {path}")
     if not path.is_file():
-        raise ValueError(f"Source is not a file: {path}")
+        raise SourceInputError(f"Source is not a file: {path}")
 
     resolved = path.resolve()
     return PreparedMedia(
@@ -633,6 +661,7 @@ pattern arms above the catch-all ``ValueError``.
 
 from __future__ import annotations
 
+from transcriber.sources.base import SourceInputError
 from transcriber.sources.google_drive import DriveSource
 from transcriber.sources.local import LocalSource
 
@@ -640,15 +669,15 @@ from transcriber.sources.local import LocalSource
 def resolve_source(uri: str) -> type[DriveSource] | type[LocalSource]:
     """Return the ``Source`` class that handles ``uri``.
 
-    Raises ``ValueError`` if ``uri`` is URL-shaped but doesn't match any
-    known source pattern.
+    Raises ``SourceInputError`` (subclass of ``ValueError``) if ``uri``
+    is URL-shaped but doesn't match any known source pattern.
     """
     if uri.startswith("drive://") or uri.startswith(
         ("https://drive.google.com/", "http://drive.google.com/")
     ):
         return DriveSource
     if "://" in uri:
-        raise ValueError(
+        raise SourceInputError(
             f"URI scheme not supported: {uri!r}. "
             "Expected: a local file path, drive://FILE_ID, "
             "or a Google Drive URL (https://drive.google.com/...)."
@@ -784,7 +813,71 @@ def test_transcribe_local_path_still_uploads(
     assert result.job_id == "local-job"
     upload_calls = [c for c in rsps.calls if "/upload" in c.request.url]
     assert len(upload_calls) == 1
+
+
+def test_transcribe_passthrough_polling_error_surfaces_message(
+    rsps: responses.RequestsMock,
+) -> None:
+    """Validation case 18: when AssemblyAI's polling status returns
+    ``error`` on the URL-passthrough branch (e.g., Drive sharing was
+    revoked between command issue and AssemblyAI fetch, or the file
+    is video-only), the provider must raise ``ProviderError`` with
+    AssemblyAI's error message preserved. CLI maps to exit 3.
+
+    Also covers edge cases 1 (sharing revoked) and 2 (video-only file)
+    from validation.md §"Edge cases / what could break" — both reduce
+    to the same polling-error path. Without this test, a refactor
+    that, e.g., wraps the URL-passthrough branch in a try/except that
+    swallows ProviderError from polling would ship silent: the user
+    sees an empty result instead of a clear error message. (Review
+    finding I1.)
+    """
+    workspace = RunWorkspace()
+    media = PreparedMedia(
+        kind="google_drive",
+        original_uri="drive://X",
+        local_path=None,
+        remote_url="https://drive.google.com/uc?export=download&id=X",
+        title=None,
+        duration_seconds=None,
+        workspace=workspace,
+        extra={"drive_file_id": "X"},
+    )
+
+    # /upload mock that MUST NOT fire on the passthrough branch.
+    rsps.post(f"{API_BASE}/upload", json={"upload_url": "should-not-fire"}, status=200)
+    rsps.post(
+        f"{API_BASE}/transcript",
+        json={"id": "drive-job", "status": "queued"},
+        status=200,
+    )
+    # Polling returns AssemblyAI's documented error shape — a status
+    # field of "error" plus an error string the implementation surfaces.
+    rsps.get(
+        f"{API_BASE}/transcript/drive-job",
+        json={
+            "id": "drive-job",
+            "status": "error",
+            "error": "Unable to fetch audio_url: 403 Forbidden",
+        },
+        status=200,
+    )
+
+    provider = AssemblyAIProvider(poll_interval_seconds=0.0)
+    with pytest.raises(ProviderError) as excinfo:
+        provider.transcribe(
+            media, language=None, diarize=True, speech_model="universal-3-pro"
+        )
+    # AssemblyAI's error message must reach the user — that's how they
+    # know whether to re-share the Drive file vs. check the audio
+    # encoding vs. anything else.
+    assert "Unable to fetch audio_url" in str(excinfo.value)
+    # /upload was never called (passthrough branch took over).
+    upload_calls = [c for c in rsps.calls if "/upload" in c.request.url]
+    assert len(upload_calls) == 0
 ```
+
+(The `ProviderError` import goes alongside the other top-of-file `from transcriber.providers.base import ...` line, and `pytest` is already imported.)
 
 - [ ] **Step 2: Update existing provider tests to use the new signature** (every call to `provider.transcribe(wav, ...)` becomes `provider.transcribe(media, ...)` where `media` is built from `wav`)
 
@@ -1250,7 +1343,12 @@ elif media.local_path is not None:
     title = media.local_path.stem
 else:
     # Drive-source path, no --title given: fall back to the file ID.
-    title = media.extra.get("drive_file_id", "untitled")
+    # extra['drive_file_id'] is set by DriveSource.prepare; missing
+    # key is a producer-side bug (a Source implementation that returns
+    # kind='google_drive' without populating extra), not a user error.
+    # Let KeyError propagate rather than silently emitting an
+    # 'untitled-DATE.md' file (review finding I4).
+    title = media.extra["drive_file_id"]
 ```
 
 Find `_source_uri`:
@@ -1273,7 +1371,20 @@ def _source_uri(media: PreparedMedia) -> str:
     For URL-passthrough sources (Drive in Slice 2), the canonical
     ``drive://FILE_ID`` form already stored in ``original_uri``.
     """
-    if media.kind == "local" and media.local_path is not None:
+    if media.kind == "local":
+        if media.local_path is None:
+            # PreparedMedia.__post_init__ guarantees a local-kind media
+            # has local_path set; reaching this branch means a Source
+            # implementation produced an inconsistent shape. Fail loud
+            # instead of returning ``original_uri`` (raw user input
+            # like ``./video.mp4``) — that string is not a file:// URI
+            # and would silently break the frontmatter contract
+            # (review finding I6).
+            raise ValueError(
+                f"PreparedMedia(kind='local') has local_path=None "
+                f"(original_uri={media.original_uri!r}); "
+                "this is a source-implementation bug, not user input."
+            )
         return media.local_path.as_uri()
     return media.original_uri
 ```
@@ -1392,6 +1503,13 @@ def test_drive_happy_path_with_title(
     # URL form was passed — validation case 25's central assertion.
     assert "source_uri: drive://1Zdp9aYV" in content
     assert "source_kind: google_drive" in content
+    # Validation case 20: the Drive notify message must signal that
+    # AssemblyAI is billing per-minute and that exact cost lands in the
+    # dashboard. Lock the production wording so a future "improvement"
+    # that drops "per-minute" or "dashboard" surfaces as a test failure
+    # rather than a silent UX regression (review finding I2).
+    assert "per-minute" in result.output
+    assert "dashboard" in result.output.lower()
 
 
 def test_drive_happy_path_no_title_uses_file_id(
@@ -1453,6 +1571,32 @@ def test_drive_budget_free_still_blocks(
     assert "paid provider" in result.output.lower()
 
 
+def test_drive_no_api_key_still_blocks_at_gate_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validation case 21: Drive sources don't bypass Gate 1.
+
+    Without ASSEMBLYAI_API_KEY, a Drive transcription must reject at
+    the gate (exit 2 with the existing Gate 1 message), NOT proceed to
+    AssemblyAI and surface a wire-level 401. The cost_summary plumbing
+    in Step 3a is easy to refactor in a way that accidentally short-
+    circuits Gate 1 (e.g., passing key_configured=True unconditionally
+    or skipping budget_check entirely when cost_summary is set); this
+    test locks down the contract so that refactor breaks the suite
+    instead of shipping a silent regression. (Review finding I3.)
+    """
+    monkeypatch.delenv("ASSEMBLYAI_API_KEY", raising=False)
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["transcribe", "drive://1Zdp9aYV", "--budget", "low", "-y"],
+    )
+    assert result.exit_code == 2
+    # Reuses the Slice 1 Gate 1 wording — match the same substring as
+    # tests/unit/test_cli.py::test_missing_key_with_low_budget_exits_2.
+    assert "ASSEMBLYAI_API_KEY" in result.output
+
+
 def test_drive_unsanitized_title_exits_2(tmp_path: Path) -> None:
     """transcribe drive://X --title '../foo' → exit 2 (sanitization)."""
     runner = CliRunner()
@@ -1462,6 +1606,70 @@ def test_drive_unsanitized_title_exits_2(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "unsafe filename" in result.output
+
+
+def test_local_path_uploads_extracted_wav_not_source_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1 regression: after extract_audio, the provider must receive
+    the canonical 16 kHz mono WAV path — NOT the original source file.
+
+    Without the ``dataclasses.replace(media, local_path=wav_path)``
+    swap in the CLI's local-path branch, the provider uploads
+    ``media.local_path`` (the .mp4 / .m4a the user passed) instead of
+    the WAV ``extract_audio`` produced. AssemblyAI accepts any audio
+    container, so the regression is invisible at runtime past mocks
+    but breaks Slice 1's "extract → normalised WAV → upload" contract
+    silently. This test makes that swap a non-negotiable invariant by
+    asserting on what reaches the provider's transcribe() call.
+    """
+    from transcriber.providers.base import Segment, TranscriptResult
+    from transcriber.sources.base import PreparedMedia
+
+    src = tmp_path / "video.mp4"
+    src.write_bytes(b"")
+    wav_in_workspace = tmp_path / "workspace" / "extracted.wav"
+    wav_in_workspace.parent.mkdir()
+    wav_in_workspace.write_bytes(b"")
+
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr(
+        "transcriber.cli.extract_audio",
+        lambda _path, _ws: (wav_in_workspace, 60.0),
+    )
+
+    received_media: list[PreparedMedia] = []
+
+    class _RecordingProvider:
+        def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def transcribe(
+            self, media: PreparedMedia, *_args: object, **_kwargs: object
+        ) -> TranscriptResult:
+            received_media.append(media)
+            return TranscriptResult(
+                text="hi",
+                segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
+                language="en",
+                duration_seconds=1.0,
+                model="universal-3-pro",
+                job_id="local-job",
+            )
+
+    monkeypatch.setattr("transcriber.cli.AssemblyAIProvider", _RecordingProvider)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["transcribe", str(src), "--budget", "low", "-y"]
+    )
+    assert result.exit_code == 0, result.output
+    assert len(received_media) == 1
+    # The provider must have seen the EXTRACTED WAV in the workspace,
+    # not the original .mp4 the user passed on the command line. This is
+    # the C1 invariant.
+    assert received_media[0].local_path == wav_in_workspace
+    assert received_media[0].local_path != src
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1546,10 +1754,17 @@ Expected: all existing budget tests pass + new test.
 Add the new imports at the top:
 
 ```python
+import dataclasses
+
 from transcriber.sources import resolve_source
+from transcriber.sources.base import SourceInputError
 ```
 
-Drop `from transcriber.sources.local import LocalSource` (no longer directly used; goes through `resolve_source`). **No `dataclass_replace` import** — the title is passed to `source.prepare(title=...)` per Tasks 3 + 3b, no post-construction mutation.
+Drop `from transcriber.sources.local import LocalSource` (no longer directly used; goes through `resolve_source`).
+
+The `dataclasses` import is needed by C1's WAV-path swap (see review finding C1 below): after `extract_audio` produces the canonical 16 kHz mono WAV inside the workspace, the CLI must rebuild ``media`` so the provider uploads the WAV — not the original `.mp4`/`.m4a` source. We use `dataclasses.replace` for *this specific intra-pipeline transform* even though the title-injection use of it was removed in review fix #6: the conceptual difference is that the source layer cannot know the WAV path at `prepare()` time (it's produced downstream by `extract_audio`), whereas title was something the CLI knew at prepare-time and the source layer should have received as a kwarg.
+
+The `SourceInputError` import is needed by the I7 fix to the catch block: distinguishes user-input ValueError (bad URI, bad path, bad title) from `PreparedMedia.__post_init__` invariant violations (producer bug). The latter should bubble with a traceback rather than being silently shown to the user as an opaque exit-2 error.
 
 Add `--title` to `transcribe()` parameters (between `--language` and `--model` for alphabetical-ish grouping):
 
@@ -1609,7 +1824,7 @@ Replace with:
             # LocalSource fallthrough.
             try:
                 source_cls = resolve_source(source)
-            except ValueError as exc:
+            except SourceInputError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
 
@@ -1629,12 +1844,20 @@ Replace with:
             # Prepare the source with the validated title. Each source
             # decides how to use it: LocalSource overrides the filename-
             # stem default; DriveSource stores it for the formatter.
+            #
+            # Catch SourceInputError specifically (NOT bare ValueError):
+            # PreparedMedia.__post_init__ raises plain ValueError for
+            # invariant violations (producer bug — both fields set, or
+            # neither). Letting that bubble with a traceback surfaces the
+            # bug to the developer instead of showing the dataclass
+            # invariant message to the end user as exit 2 (review
+            # finding I7).
             try:
                 media = source_cls.prepare(source, workspace, title=display_title)
             except FileNotFoundError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=4) from exc
-            except ValueError as exc:
+            except SourceInputError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
 
@@ -1679,6 +1902,26 @@ Replace with:
                 except AudioExtractError as exc:
                     console.print(f"[red]error:[/red] {exc}")
                     raise typer.Exit(code=4) from exc
+
+                # C1 fix: thread the canonical 16 kHz mono WAV back into
+                # ``media`` so the provider uploads the extracted audio,
+                # NOT the original .mp4 / .m4a / etc. Without this swap
+                # the AssemblyAI upload path silently regresses Slice 1's
+                # "extract → normalised WAV → upload" contract: the
+                # provider receives ``media.local_path`` (= original
+                # source) and uploads it. AssemblyAI accepts any audio
+                # container, so the regression is invisible at runtime
+                # past mocks but degrades transcription quality on any
+                # local source whose container isn't already AssemblyAI's
+                # preferred shape. (Review finding C1.)
+                #
+                # ``dataclasses.replace`` is the right tool here even
+                # though it was removed from the title-injection path in
+                # review fix #6: this is an intra-pipeline transform
+                # (CLI owns the canonical media transform after audio
+                # extraction), not a cross-cutting concern that should
+                # have been a kwarg on ``Source.prepare``.
+                media = dataclasses.replace(media, local_path=wav_path)
 
                 cost_usd = estimate_assemblyai_cost(duration_seconds)
                 try:
@@ -1764,11 +2007,17 @@ Replace with:
                     stem = media.local_path.stem
                 else:
                     # Drive source, no --title: fall back to the file ID.
-                    stem = media.extra.get("drive_file_id", "untitled")
+                    # extra['drive_file_id'] is set by DriveSource.prepare;
+                    # missing key is a producer-side bug, not user input.
+                    # Let KeyError bubble with traceback rather than
+                    # silently writing 'untitled-DATE.md' (review I5).
+                    stem = media.extra["drive_file_id"]
                 date_str = date.today().isoformat()
                 output = settings.output_dir / f"{stem}-{date_str}.md"
             output = atomic.resolve_collision(output)
 ```
+
+(The same `extra['drive_file_id']` invariant lives in two places — here in the CLI's filename derivation and in `markdown.py`'s `render()` title fallback. Both were silent `.get(..., "untitled")` calls before review findings I4+I5; both now `[]`-access for fail-loud behaviour. A single `_drive_file_id(media)` helper would deduplicate the invariant check; deferred to a follow-up so this PR's diff stays focused on the silent-failure fix.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
