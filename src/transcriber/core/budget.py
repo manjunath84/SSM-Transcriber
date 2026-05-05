@@ -22,10 +22,27 @@ from transcriber.errors import TranscriberError
 logger = logging.getLogger(__name__)
 
 
-# AssemblyAI's published rate for the ``universal-3-pro`` / ``universal-2``
-# premium tier (per docs/PLAN.md §Phase 5). Replaces the retired ``best`` /
-# ``nano`` shorthand naming the API used to expose.
-ASSEMBLYAI_RATE_PER_MINUTE_USD: float = 0.009
+# AssemblyAI rates per `model.units * unit-cost` shape from the AssemblyAI
+# Cost dashboard. Verified empirically across two independent days
+# (2026-05-03: 132m 43s of audio billed $0.508747; 2026-05-05: 63m audio
+# billed $0.2415) — both yield the same per-minute math:
+#   Universal-3 Pro:     $0.003500/min   (the speech-to-text base rate)
+#   Speaker Diarization: $0.000333/min   (add-on, billed only when on)
+#   Combined:            $0.003833/min
+#
+# These replace the prior ASSEMBLYAI_RATE_PER_MINUTE_USD = 0.009 constant
+# from PR #12 which over-quoted by 2.35x. The bug was caught when the
+# Slice 2 manual runbook compared the dashboard cost ($0.2415) against
+# the CLI's pre-run estimate ($0.567) — see PR #17's explainer for the
+# full cost-vs-estimate gap finding.
+UNIVERSAL_3_PRO_RATE_PER_MINUTE_USD: float = 0.0035
+SPEAKER_DIARIZATION_RATE_PER_MINUTE_USD: float = 0.000333
+
+# Back-compat alias retained for any external callers (none in-tree); the
+# combined rate matches the default --speakers (diarization on) flow.
+ASSEMBLYAI_RATE_PER_MINUTE_USD: float = (
+    UNIVERSAL_3_PRO_RATE_PER_MINUTE_USD + SPEAKER_DIARIZATION_RATE_PER_MINUTE_USD
+)
 
 # Above this estimate, ``check`` emits a louder warning. ``--yes`` still
 # bypasses the confirmation prompt; the warning is informational, not a hard
@@ -45,14 +62,25 @@ class BudgetError(TranscriberError):
     """Gate 1 or Gate 2 failed. CLI maps this to exit code 2 (config)."""
 
 
-def estimate_assemblyai_cost(duration_seconds: float) -> float:
+def estimate_assemblyai_cost(
+    duration_seconds: float, *, diarize: bool = True
+) -> float:
     """Estimated USD cost to transcribe ``duration_seconds`` via AssemblyAI.
 
     Based on raw media duration, NOT VAD-derived speech duration. The spec
     documents this as an upper bound until the F3 cache + VAD sidecar
     land later.
+
+    ``diarize`` defaults to ``True`` because the CLI's default is
+    diarization-on (``--no-speakers`` flips it off). Pass ``False`` to
+    drop the Speaker Diarization add-on charge from the estimate so the
+    user sees an accurate quote when they intend to disable diarization.
     """
-    return (duration_seconds / 60.0) * ASSEMBLYAI_RATE_PER_MINUTE_USD
+    minutes = duration_seconds / 60.0
+    cost = minutes * UNIVERSAL_3_PRO_RATE_PER_MINUTE_USD
+    if diarize:
+        cost += minutes * SPEAKER_DIARIZATION_RATE_PER_MINUTE_USD
+    return cost
 
 
 def check(

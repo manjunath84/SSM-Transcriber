@@ -11,6 +11,42 @@
 
 ---
 
+## PR #18 — Fix AssemblyAI rate constant + factor in diarization
+
+**Merged:** TBD  |  **Branch:** `fix/assemblyai-rate-constant`
+**Explainer:** [`prs/pr-018-assemblyai-rate-constant-fix.md`](prs/pr-018-assemblyai-rate-constant-fix.md)
+
+PR #18 fixes a Slice 1 (PR #12) bug that PR #17's manual runbook
+caught: `ASSEMBLYAI_RATE_PER_MINUTE_USD = 0.009` was 2.35x too high.
+Empirical AssemblyAI dashboard data across two independent days
+showed the actual rate is **$0.0035/min for Universal-3 Pro +
+$0.000333/min for Speaker Diarization** — split into two constants
+because diarization is optional (`--no-speakers` flips it off) and
+AssemblyAI bills it separately. `estimate_assemblyai_cost` gains a
+`diarize: bool = True` keyword so both `--speakers` and
+`--no-speakers` flows quote accurately. Test
+`test_estimate_cost_matches_real_pr17_run` locks the rate against
+the empirical PR #17 figure ($0.2415 for 63 min, diarization on); a
+future rate change will fail this assertion and force re-verification
+against fresh dashboard data.
+
+Slice 2 (Drive) sources are unaffected — they use the `cost_summary`
+override and skip the per-minute estimate entirely, structurally
+insulating themselves from this bug class. The "skip pre-estimate
+for URL-passthrough sources" decision (PR #15 brainstorm #4) thus
+proved more valuable than its original "we have no local duration"
+rationale: it also dodged a wrong-constant landmine the local-file
+path stepped on.
+
+The structural lesson the manual runbook surfaced: 12 weeks of unit
+tests missed this because the bug was in a constant, not a code
+path. Tests of cost math against the constant still passed; only
+runtime comparison against authoritative billing data caught it.
+Manual runbooks aren't ceremony — they're the only place wire-rate
+truths land.
+
+---
+
 ## PR #17 — Implementation: Drive Source (URL passthrough)
 
 **Merged:** TBD  |  **Branch:** `feat/drive-source-impl`

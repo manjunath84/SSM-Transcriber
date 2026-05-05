@@ -322,7 +322,9 @@ def transcribe(
                 # PR — the contract violation and filename regression are.
                 media = dataclasses.replace(media, local_path=wav_path)
 
-                cost_usd = estimate_assemblyai_cost(duration_seconds)
+                cost_usd = estimate_assemblyai_cost(
+                    duration_seconds, diarize=not no_speakers
+                )
                 try:
                     proceed = budget_check(
                         provider_name="AssemblyAI",
