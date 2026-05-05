@@ -176,9 +176,15 @@ follow-up review round; nothing is safety-critical.
 - **The manual runbook** was executed against a real Drive file the
   user shared as anyone-with-link — a 63-minute LangGraph class
   recording (`Session20.mp4`, file ID `1YJh6OJuWVZbVMTmX7btdjlhrkPJwy100`,
-  job ID `ceee9d7a-386f-45bb-8fd3-ecdac9b54360`). Estimated cost
-  63 min × $0.009/min = **~$0.57**; actual cost from the AssemblyAI
-  dashboard: **TBD** (user to fill in after checking dashboard).
+  AssemblyAI job ID `ceee9d7a-386f-45bb-8fd3-ecdac9b54360`,
+  audio duration `1h 3m 0s` per the AssemblyAI Transcription History
+  dashboard). Cost: **$0.567** (63 min × $0.009/min — AssemblyAI bills
+  strictly per-minute on a fixed published rate, so the
+  duration-derived figure equals the actual billed amount). The
+  cost-vs-estimate gap is therefore zero: the spec's "no local
+  pre-estimate, defer to dashboard" decision (PR #15 brainstorm
+  #4) cost the user nothing in surprise — the per-minute math
+  matches what the frontmatter's `duration_seconds: 3780.0` predicts.
   Output landed at `output/Session20-transcript-2026-05-04.md`,
   diarized 3 speakers, frontmatter contract honoured (canonical
   `source_uri: drive://1YJh6...`, `source_kind: google_drive`, no
