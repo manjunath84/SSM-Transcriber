@@ -11,9 +11,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
 from transcriber.errors import TranscriberError
+from transcriber.sources.base import PreparedMedia
 
 
 def _noop(_: str) -> None:
@@ -69,14 +69,18 @@ class TranscriptionProvider(ABC):
     @abstractmethod
     def transcribe(
         self,
-        wav_path: Path,
+        media: PreparedMedia,
         *,
         language: str | None,
         diarize: bool,
         speech_model: str,
         on_job_id: Callable[[str], None] = _noop,
     ) -> TranscriptResult:
-        """Transcribe the WAV at ``wav_path`` and return the result.
+        """Transcribe ``media`` and return the result.
+
+        If ``media.remote_url`` is set, the implementation should pass
+        that URL to the provider's URL-ingestion endpoint (no upload).
+        Otherwise it uploads ``media.local_path`` and transcribes that.
 
         ``on_job_id`` fires once, immediately after the provider has a
         durable identifier for the job, so the CLI can surface it for

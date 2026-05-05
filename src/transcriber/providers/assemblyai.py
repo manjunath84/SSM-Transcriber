@@ -37,6 +37,7 @@ from transcriber.providers.base import (
     TranscriptResult,
     _noop,
 )
+from transcriber.sources.base import PreparedMedia
 
 logger = logging.getLogger(__name__)
 
@@ -253,18 +254,40 @@ class AssemblyAIProvider(TranscriptionProvider):
 
     def transcribe(
         self,
-        wav_path: Path,
+        media: PreparedMedia,
         *,
         language: str | None,
         diarize: bool,
         speech_model: str,
         on_job_id: Callable[[str], None] = _noop,
     ) -> TranscriptResult:
-        logger.info("Uploading %s to AssemblyAI", wav_path)
-        upload_url = _upload(wav_path)
+        if media.remote_url is not None:
+            # URL-passthrough mode: AssemblyAI fetches the URL itself, no
+            # upload from us. Saves the download+upload round-trip for
+            # public Drive files (Slice 2). The audio_url field is
+            # documented byte-for-byte in the spec's Reference calls
+            # section.
+            logger.info(
+                "Submitting AssemblyAI transcript for audio_url %s", media.remote_url
+            )
+            audio_url = media.remote_url
+        else:
+            # Upload mode (Slice 1 path): stream the local WAV to /upload
+            # and use the returned upload_url as audio_url.
+            if media.local_path is None:
+                # Defence-in-depth: PreparedMedia.__post_init__ guarantees
+                # exactly-one-of (local_path, remote_url) is set, so this
+                # branch is unreachable. Raise anyway with a domain-specific
+                # exception class — never an AssertionError.
+                raise ProviderError(
+                    "PreparedMedia invariant violated: "
+                    "neither remote_url nor local_path is set."
+                )
+            logger.info("Uploading %s to AssemblyAI", media.local_path)
+            audio_url = _upload(media.local_path)
 
         create_payload = _create_transcript(
-            upload_url,
+            audio_url,
             speech_models=[speech_model],
             language_code=language,
             speaker_labels=diarize,

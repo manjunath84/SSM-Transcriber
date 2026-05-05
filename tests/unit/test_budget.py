@@ -184,3 +184,28 @@ def test_user_declines_returns_false() -> None:
         notify=notify,
     )
     assert proceed is False
+
+
+def test_check_uses_cost_summary_override_when_set() -> None:
+    """Slice 2: URL-passthrough sources (Drive) have no local duration to
+    estimate against. They pass cost_summary=... to override the standard
+    notify line. The soft-cap line is also silenced since there's no real
+    cost number to compare. Both Gate 1 and Gate 2 still fire normally."""
+    msgs, notify = _capture_notify()
+    proceed = check(
+        provider_name="AssemblyAI",
+        budget="low",
+        key_configured=True,
+        cost_usd=999.0,  # would normally trigger soft cap
+        yes=True,
+        prompt=_noop_prompt,
+        notify=notify,
+        cost_summary="custom message — see dashboard",
+    )
+    assert proceed is True
+    assert any("custom message — see dashboard" in m for m in msgs)
+    # The standard "Estimated cost" line is replaced, not duplicated.
+    assert not any("Estimated cost" in m for m in msgs)
+    # The soft cap is silenced when cost_summary is set (no comparable
+    # cost_usd to trigger it).
+    assert not any("soft cap" in m for m in msgs)

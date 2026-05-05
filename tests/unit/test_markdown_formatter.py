@@ -153,3 +153,96 @@ def test_yaml_frontmatter_quotes_unsafe_titles(
     # round-trip-safe way to express any of the unsafe scalars above.
     expected_line = f'title: "{title}"'
     assert expected_line in output, f"expected {expected_line!r} in:\n{output}"
+
+
+# ---------------------------------------------------------------------------
+# Slice 2: Drive-shaped PreparedMedia (local_path=None, remote_url set).
+# ---------------------------------------------------------------------------
+
+
+def _drive_media(workspace: RunWorkspace, *, title: str | None) -> PreparedMedia:
+    return PreparedMedia(
+        kind="google_drive",
+        original_uri="drive://1Zdp9aYV",
+        local_path=None,
+        remote_url="https://drive.google.com/uc?export=download&id=1Zdp9aYV",
+        title=title,
+        duration_seconds=None,
+        workspace=workspace,
+        extra={"drive_file_id": "1Zdp9aYV"},
+    )
+
+
+def test_render_drive_media_uses_drive_source_uri(workspace: RunWorkspace) -> None:
+    """Case 27: Drive-shaped media renders source_uri as drive://FILE_ID
+    (NOT file:///), source_kind google_drive, and uses the title."""
+    media = _drive_media(workspace, title="Session 17")
+    output = render(_result_diarized(), media, created=date(2026, 5, 3))
+
+    assert "source_uri: drive://1Zdp9aYV" in output
+    assert "source_kind: google_drive" in output
+    assert "title: Session 17" in output
+    # No file:// URL should appear anywhere in the output.
+    assert "file://" not in output
+
+
+def test_render_drive_media_falls_back_to_file_id_when_no_title(
+    workspace: RunWorkspace,
+) -> None:
+    """No --title on a Drive source → render() falls back to extra['drive_file_id'].
+    Per review I4: that lookup uses [] not .get(default), so a producer-side
+    bug (Source returning kind='google_drive' without populating extra) raises
+    KeyError loudly instead of silently producing 'untitled'."""
+    media = _drive_media(workspace, title=None)
+    output = render(_result_diarized(), media, created=date(2026, 5, 3))
+
+    assert "title: 1Zdp9aYV" in output
+    assert "# 1Zdp9aYV" in output
+
+
+def test_render_drive_media_missing_file_id_raises_loud(
+    workspace: RunWorkspace,
+) -> None:
+    """Review I4 invariant: if a producer (e.g., a future Drive variant)
+    constructs PreparedMedia(kind='google_drive') without populating
+    extra['drive_file_id'], the formatter must fail loud — not silently
+    write 'untitled-DATE.md'."""
+    media = PreparedMedia(
+        kind="google_drive",
+        original_uri="drive://X",
+        local_path=None,
+        remote_url="https://drive.google.com/uc?export=download&id=X",
+        title=None,
+        duration_seconds=None,
+        workspace=workspace,
+        extra={},  # missing drive_file_id — producer bug
+    )
+    with pytest.raises(KeyError, match="drive_file_id"):
+        render(_result_diarized(), media, created=date(2026, 5, 3))
+
+
+def test_source_uri_raises_for_local_kind_with_none_local_path(
+    workspace: RunWorkspace,
+) -> None:
+    """Review I6 invariant: PreparedMedia(kind='local', local_path=None) is
+    impossible per __post_init__, but if a buggy Source ever constructed it,
+    the formatter must raise — not silently return original_uri (which is
+    raw user input, not a file:// URI)."""
+    from transcriber.formatters.markdown import _source_uri
+
+    # Bypass __post_init__ via dataclasses.replace on a valid instance —
+    # this is the only way to reach the unreachable state for testing.
+    valid = PreparedMedia(
+        kind="local",
+        original_uri="./video.mp4",
+        local_path=Path("/abs/path/video.mp4"),
+        title=None,
+        duration_seconds=None,
+        workspace=workspace,
+        extra={},
+    )
+    # Build an invariant-violating instance by going around __post_init__:
+    # use object.__setattr__ on the frozen dataclass to simulate a bug.
+    object.__setattr__(valid, "local_path", None)
+    with pytest.raises(ValueError, match="source-implementation bug"):
+        _source_uri(valid)
