@@ -263,6 +263,28 @@ def test_validate_title_rejects_unsafe_characters(unsafe: str) -> None:
         _validate_title(unsafe)
 
 
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "line1\nline2",   # newline corrupts YAML title flow scalar
+        "tab\there",       # tab control char
+        "ret\rurn",        # carriage return
+        "bell\x07",        # bell
+        "del\x7f",         # DEL (0x7f) — outside the printable ASCII range
+    ],
+)
+def test_validate_title_rejects_control_characters(unsafe: str) -> None:
+    """Control characters (\\x00-\\x1f, \\x7f) corrupt YAML frontmatter
+    when written to ``title:`` as a flow scalar — a literal newline
+    splits the value mid-scalar, a carriage return swaps in unicode
+    direction, etc. NUL was already covered by the unsafe-substring
+    check; widen to all C0 controls + DEL."""
+    from transcriber.cli import _validate_title
+
+    with pytest.raises(ValueError, match="unsafe filename"):
+        _validate_title(unsafe)
+
+
 def test_validate_title_rejects_empty_after_strip() -> None:
     from transcriber.cli import _validate_title
 

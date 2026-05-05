@@ -99,8 +99,15 @@ def _validate_title(title: str) -> str:
     Strips leading/trailing whitespace; preserves internal whitespace so
     the YAML ``title:`` field round-trips what the user typed. Raises
     ``ValueError`` with the documented "unsafe filename characters"
-    message on path-traversal characters (``/``, ``\\``, NUL, ``..``)
-    or a leading dot (would create a hidden file).
+    message on path-traversal characters (``/``, ``\\``, NUL, ``..``),
+    a leading dot (would create a hidden file), or any C0 control
+    character or DEL — those would corrupt YAML frontmatter when written
+    as a ``title:`` flow scalar.
+
+    The ``..`` substring rejection is intentionally conservative
+    (validation case 26a explicitly tests ``"ok..bad"`` as rejected,
+    even though it isn't path traversal alone). Spec policy decision —
+    don't relax without re-opening the spec.
     """
     stripped = title.strip()
     if not stripped:
@@ -116,6 +123,17 @@ def _validate_title(title: str) -> str:
             raise ValueError(
                 f"--title contains unsafe filename characters: {title!r}"
             )
+    # C0 control characters (0x00-0x1f) corrupt YAML flow scalars when
+    # written as ``title: ...``: a literal newline splits the value
+    # mid-scalar, a carriage return + line feed pair swaps in unicode
+    # bidi marks. DEL (0x7f) is outside printable ASCII. NUL is already
+    # caught above via _TITLE_FORBIDDEN_SUBSTRINGS, but listing the
+    # complete C0 + DEL range here is the clean way to express the
+    # invariant rather than relying on two overlapping checks.
+    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in stripped):
+        raise ValueError(
+            f"--title contains unsafe filename characters: {title!r}"
+        )
     return stripped
 
 
@@ -291,13 +309,17 @@ def transcribe(
                 # C1 fix: thread the canonical 16 kHz mono WAV back into
                 # ``media`` so the provider uploads the extracted audio,
                 # NOT the original .mp4 / .m4a / etc. Without this swap the
-                # AssemblyAI upload path silently regresses Slice 1's
+                # AssemblyAI upload path silently breaks Slice 1's
                 # "extract → normalised WAV → upload" contract: the provider
                 # would receive ``media.local_path`` (= original source) and
-                # upload it. AssemblyAI accepts any audio container, so the
-                # regression is invisible at runtime past mocks but degrades
-                # transcription quality on any local source whose container
-                # isn't already AssemblyAI's preferred shape.
+                # upload it. The follow-up advisor pass caught a second
+                # concrete cost: ``media.local_path.stem`` in the output-
+                # filename derivation would land on ``audio`` (the workspace
+                # WAV's stem) instead of the source's stem. AssemblyAI
+                # accepts most audio containers, so quality differences
+                # between original and canonical WAV depend on AssemblyAI's
+                # internal pipeline and aren't directly verifiable from this
+                # PR — the contract violation and filename regression are.
                 media = dataclasses.replace(media, local_path=wav_path)
 
                 cost_usd = estimate_assemblyai_cost(duration_seconds)

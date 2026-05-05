@@ -113,8 +113,10 @@ something the CLI knew at prepare-time.
 
 Five `pr-review-toolkit` agents reviewed the plan in parallel:
 `code-reviewer`, `pr-test-analyzer`, `silent-failure-hunter`,
-`type-design-analyzer`, `comment-analyzer`. They surfaced 18 findings;
-the safety-critical 8 were applied to the plan before this PR opened:
+`type-design-analyzer`, `comment-analyzer`. They surfaced 14 findings
+(1 critical + 8 important + 5 suggestions); the 8 safety-critical
+ones (the critical + 7 of the important) were applied to the plan
+before this PR opened:
 
 - **C1 (code-reviewer):** the WAV-vs-source upload regression
   described above.
@@ -135,7 +137,7 @@ the safety-critical 8 were applied to the plan before this PR opened:
   `SourceInputError(ValueError)` subclass and changed the catch to
   the more specific type.
 
-The **8 deferred** findings (I8 + S1 + S2 type-design refactors,
+The **6 deferred** findings (I8 + S1 + S2 type-design refactors,
 S3 + S4 + S5 polish) are documented in PR #16 and queued for a
 follow-up review round; nothing is safety-critical.
 

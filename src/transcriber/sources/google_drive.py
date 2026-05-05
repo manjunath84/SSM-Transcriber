@@ -20,10 +20,11 @@ from transcriber.sources.base import PreparedMedia, SourceInputError
 # Drive file IDs are URL-safe base64 — alnum, dash, underscore. The minimum
 # length isn't documented but the shortest IDs we see in practice are 25+
 # characters; we don't enforce a minimum to stay forward-compatible.
-# Use ``fullmatch`` (not ``match`` + ``$``) — without re.MULTILINE the ``$``
-# anchor would also match before a trailing ``\n``, letting ``"abc\n"``
-# validate as a clean file ID. ``fullmatch`` requires the entire candidate
-# string to match, no newline edge case.
+# Use ``fullmatch`` (not ``match`` + ``$``) — by default ``$`` matches
+# end-of-string OR before a trailing ``\n``, so ``re.match("[A-Za-z]+$",
+# "abc\n")`` succeeds and lets a pasted-with-newline ID validate as clean.
+# ``fullmatch`` requires the entire candidate string to match the pattern
+# exactly, eliminating the trailing-newline edge case.
 _FILE_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 # `/file/d/<ID>/...` — extract the ID segment regardless of trailing path.
@@ -53,6 +54,23 @@ def _extract_file_id(uri: str) -> str:
         )
 
     if uri.startswith(("https://drive.google.com/", "http://drive.google.com/")):
+        # Reject folder URLs explicitly with a folder-specific message.
+        # /drive/folders/<ID> and /drive/u/N/folders/<ID> are the forms
+        # Drive's "Get link" emits for folders. They'd also fail at the
+        # generic raise below, but a folder-specific message helps the
+        # user notice they pasted the wrong type of link rather than
+        # debugging URL form requirements.
+        #
+        # Note: open?id=<FOLDER_ID> is indistinguishable from
+        # open?id=<FILE_ID> via the URL alone — both are URL-safe-base64
+        # strings. Detecting that case needs an OAuth metadata fetch
+        # (Slice 3) to disambiguate.
+        if "/folders/" in uri:
+            raise SourceInputError(
+                f"could not extract a Drive file ID from {uri!r}: "
+                "URL appears to point to a folder, not a file. "
+                "Slice 2 only supports file URLs."
+            )
         if match := _FILE_D_RE.search(uri):
             return match.group(1)
         if match := _ID_QUERY_RE.search(uri):

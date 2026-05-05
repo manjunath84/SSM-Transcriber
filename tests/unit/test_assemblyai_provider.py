@@ -507,8 +507,22 @@ def test_transcribe_passthrough_polling_error_surfaces_message(
     )
 
     rsps.post(f"{API_BASE}/upload", json={"upload_url": "should-not-fire"}, status=200)
+    # CLAUDE.md guardrail (PR #13): every body-bearing mock must use
+    # json_params_matcher so a wire-shape regression in the passthrough
+    # branch surfaces here. Without this, a refactor that drops audio_url
+    # in the polling-error code path would only be caught by the happy-
+    # path test — guardrail intent is per-mock body locking.
     rsps.post(
         f"{API_BASE}/transcript",
+        match=[
+            matchers.json_params_matcher(
+                {
+                    "audio_url": "https://drive.google.com/uc?export=download&id=X",
+                    "speech_models": ["universal-3-pro"],
+                    "speaker_labels": True,
+                }
+            )
+        ],
         json={"id": "drive-job", "status": "queued"},
         status=200,
     )

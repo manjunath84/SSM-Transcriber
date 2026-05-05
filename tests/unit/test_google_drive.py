@@ -70,6 +70,37 @@ def test_extract_file_id_rejects_drive_url_with_unrecognised_path() -> None:
         _extract_file_id("https://drive.google.com/folders/abc")
 
 
+@pytest.mark.parametrize(
+    "folder_uri",
+    [
+        # Direct folder URL forms that Drive's "Get link" emits.
+        "https://drive.google.com/drive/folders/1ABC123",
+        "https://drive.google.com/drive/u/0/folders/1ABC123",
+        "https://drive.google.com/drive/u/1/folders/1ABC123?usp=sharing",
+    ],
+)
+def test_extract_file_id_rejects_folder_urls_with_clearer_message(
+    folder_uri: str,
+) -> None:
+    """Drive folder URLs (containing /folders/) reject with a folder-specific
+    message rather than the generic "must include /file/d/<ID> or ?id=<ID>".
+    A user who pastes a folder URL should see they pasted the wrong type of
+    link, not be confused about URL form requirements.
+
+    Note: open?id=<FOLDER_ID> is indistinguishable from open?id=<FILE_ID>
+    via the URL alone (both are URL-safe-base64 strings); that case
+    requires an OAuth metadata fetch (Slice 3) to detect."""
+    with pytest.raises(ValueError) as excinfo:
+        _extract_file_id(folder_uri)
+    # Match "folder" as a word in the error message (not just the URI),
+    # i.e. require some phrase like "appears to point to a folder" or
+    # "folder URL". Using re.search on str(exc.value) without this
+    # constraint would match the URI itself which contains "folders/".
+    assert "appears to point to a folder" in str(excinfo.value), (
+        f"expected folder-specific message, got: {excinfo.value}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # DriveSource.prepare — wraps the parser into a PreparedMedia.
 # ---------------------------------------------------------------------------

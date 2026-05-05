@@ -56,12 +56,17 @@ PR #16 is the execution plan that bridged spec (PR #15) and
 implementation (PR #17). The PR was deliberately kept doc-only so
 two review rounds could fire against the proposed code snippets
 *before* any runtime code landed: an inline review caught 10 plan-
-level findings, then a formal `pr-review-toolkit` parallel review
-caught 8 more (one critical: the WAV-vs-source upload regression
-described under PR #17). All 18 safety-critical findings were
-applied to the plan before the implementation PR opened. This PR
-established the plan-PR-sandwich cadence (spec → plan → impl) the
-repo will use for future feature loops.
+level findings (all 10 applied), then a formal `pr-review-toolkit`
+parallel review surfaced 14 more — 1 critical, 8 important, 5
+suggestions. The 8 safety-critical from the formal round (1 critical
++ 7 important) were applied to the plan; the remaining 6 (1 important
++ 5 suggestions) were deferred as type-design refactors and polish
+warranting their own follow-up review. Total applied across both
+rounds: 18 findings, including the WAV-vs-source upload regression
+(C1) that would have shipped silently through 135 unit tests had the
+formal review not fired. This PR established the plan-PR-sandwich
+cadence (spec → plan → impl) the repo will use for future feature
+loops.
 
 ---
 
