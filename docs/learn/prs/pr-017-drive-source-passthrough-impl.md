@@ -178,18 +178,34 @@ follow-up review round; nothing is safety-critical.
   recording (`Session20.mp4`, file ID `1YJh6OJuWVZbVMTmX7btdjlhrkPJwy100`,
   AssemblyAI job ID `ceee9d7a-386f-45bb-8fd3-ecdac9b54360`,
   audio duration `1h 3m 0s` per the AssemblyAI Transcription History
-  dashboard). Cost: **$0.567** (63 min × $0.009/min — AssemblyAI bills
-  strictly per-minute on a fixed published rate, so the
-  duration-derived figure equals the actual billed amount). The
-  cost-vs-estimate gap is therefore zero: the spec's "no local
-  pre-estimate, defer to dashboard" decision (PR #15 brainstorm
-  #4) cost the user nothing in surprise — the per-minute math
-  matches what the frontmatter's `duration_seconds: 3780.0` predicts.
-  Output landed at `output/Session20-transcript-2026-05-04.md`,
+  dashboard). **Actual billed cost: $0.2415** ($0.2205 Universal-3 Pro
+  + $0.021 Speaker Diarization), pulled from the AssemblyAI Cost
+  page. Output landed at `output/Session20-transcript-2026-05-04.md`,
   diarized 3 speakers, frontmatter contract honoured (canonical
   `source_uri: drive://1YJh6...`, `source_kind: google_drive`, no
   `file://` URL anywhere). Drive sharing setting must be "anyone with
   link" — Slice 3's OAuth + private files is explicitly deferred.
+
+- **Cost-vs-estimate gap surfaces a Slice 1 rate-constant bug.**
+  The PR initially stamped the manual-run cost at ~$0.567 (63 min ×
+  $0.009/min, the rate hardcoded in `core/budget.py` as
+  `ASSEMBLYAI_RATE_PER_MINUTE_USD = 0.009` since PR #12). The actual
+  AssemblyAI billing data shows **$0.0035/min for Universal-3 Pro +
+  $0.000333/min for Speaker Diarization = $0.003833/min combined** —
+  the same per-minute math holds across two independent days
+  (2026-05-03 with 132m 43s of audio billed $0.508747, 2026-05-05
+  with 63m audio billed $0.2415). The `0.009` constant is **2.35x
+  too high**. Affects the local-file path's `--budget low`
+  cost-estimate display (Drive sources use `cost_summary` and skip
+  the estimate, so they're unaffected) and would push the
+  `SOFT_CAP_USD = 5.0` warning to fire ~2.3x earlier than it should
+  on long local files. Filed as a follow-up — out-of-scope for this
+  PR's stated Slice-2 goal but a real cost-display correctness bug
+  the manual runbook caught. The spec's "Drive: no pre-estimate,
+  defer to dashboard" decision (PR #15 brainstorm #4) inadvertently
+  insulated Slice 2 from this bug class — a structural argument for
+  the same approach in Slice 3 unless we land a per-model rate
+  registry first.
 
 - **Runbook bug surfaced during the manual run** — step 2's example
   used `drive://invalid-malformed`, which actually parses (hyphens
