@@ -115,12 +115,18 @@ public Drive URL directly.
 2. Test the validation error path first (no real call, no charge):
 
    ```bash
-   uv run ssm-transcriber transcribe "drive://invalid-malformed" --budget low -y
+   uv run ssm-transcriber transcribe "drive://" --budget low -y
    echo "exit: $?"
    ```
 
    **Expected**: error message containing "could not extract a Drive
    file ID", exit code `2`. No charge.
+
+   *Note: don't use `drive://invalid-malformed` here — hyphens are valid
+   characters in Drive file IDs (URL-safe base64), so that string parses
+   successfully and the run reaches AssemblyAI before the URL fetch
+   fails (exit 3, no transcription cost). Use `drive://` (empty)
+   to verify the parser rejection path properly.*
 
 3. Test the budget gate (default `--budget free` blocks Drive too):
 

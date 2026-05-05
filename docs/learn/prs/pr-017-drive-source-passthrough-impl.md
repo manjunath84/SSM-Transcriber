@@ -172,10 +172,24 @@ follow-up review round; nothing is safety-critical.
 - **Reject-not-swallow at dispatch is enforced and tested** for
   YouTube, generic-https, and `s3://` URIs.
 - **The manual runbook** was executed against a real Drive file the
-  user shared as anyone-with-link (~$X.XX, fill in actual cost from
-  the AssemblyAI dashboard at PR finalisation time). Drive sharing
-  setting must be "anyone with link" — Slice 3's OAuth + private
-  files is explicitly deferred.
+  user shared as anyone-with-link — a 63-minute LangGraph class
+  recording (`Session20.mp4`, file ID `1YJh6OJuWVZbVMTmX7btdjlhrkPJwy100`,
+  job ID `ceee9d7a-386f-45bb-8fd3-ecdac9b54360`). Estimated cost
+  63 min × $0.009/min = **~$0.57**; actual cost from the AssemblyAI
+  dashboard: **TBD** (user to fill in after checking dashboard).
+  Output landed at `output/Session20-transcript-2026-05-04.md`,
+  diarized 3 speakers, frontmatter contract honoured (canonical
+  `source_uri: drive://1YJh6...`, `source_kind: google_drive`, no
+  `file://` URL anywhere). Drive sharing setting must be "anyone with
+  link" — Slice 3's OAuth + private files is explicitly deferred.
+
+- **Runbook bug surfaced during the manual run** — step 2's example
+  used `drive://invalid-malformed`, which actually parses (hyphens
+  are valid in Drive file IDs) and reached AssemblyAI before the URL
+  fetch failed. Fixed in the same docs commit: step 2 now uses
+  `drive://` (empty) which truly fails at parse-time with exit 2 and
+  no API call. The implementation behaves correctly; the runbook's
+  example was wrong.
 
 ## Interview angle
 
