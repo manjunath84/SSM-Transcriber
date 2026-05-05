@@ -27,15 +27,12 @@ from transcriber.core.workspace import RunWorkspace
 from transcriber.sources.base import PreparedMedia
 
 
-def _ws(tmp_path: Path) -> RunWorkspace:
-    """Build a workspace whose root sits inside the test's tmp_path so the
-    fixture cleanup leaves nothing behind."""
-    import tempfile
-
-    # tempfile.mkdtemp normally lands in /tmp. Redirecting via tempdir is
-    # the simplest way to keep a workspace's root under tmp_path without
-    # poking RunWorkspace internals.
-    return RunWorkspace(prefix=str(tmp_path) + "/")
+def _ws(_tmp_path: Path) -> RunWorkspace:
+    """Build a workspace for a test. The workspace's own ``__exit__``
+    cleans up its root; the tmp_path argument is unused but kept for
+    parity with other fixture signatures so callers don't need to know
+    which fixtures take it."""
+    return RunWorkspace()
 
 
 def test_prepared_media_rejects_both_local_path_and_remote_url(tmp_path: Path) -> None:
@@ -258,6 +255,15 @@ def test_extract_file_id_rejects_drive_uri_with_invalid_chars() -> None:
         _extract_file_id("drive://has spaces")
 
 
+def test_extract_file_id_rejects_drive_uri_with_trailing_newline() -> None:
+    """Without using ``fullmatch`` instead of ``match`` + ``$``, a
+    trailing ``\\n`` would slip past validation (the ``$`` anchor matches
+    before-final-newline by default). Lock that down — pasted IDs from
+    text with trailing newlines must reject loudly."""
+    with pytest.raises(ValueError, match="could not extract"):
+        _extract_file_id("drive://abc\n")
+
+
 def test_extract_file_id_rejects_file_d_with_empty_segment() -> None:
     with pytest.raises(ValueError, match="could not extract"):
         _extract_file_id("https://drive.google.com/file/d//view")
@@ -303,7 +309,11 @@ import re
 # Drive file IDs are URL-safe base64 — alnum, dash, underscore. The
 # minimum length isn't documented but the shortest IDs we see in practice
 # are 25+ characters; we don't enforce a minimum to stay forward-compatible.
-_FILE_ID_RE = re.compile(r"[A-Za-z0-9_-]+$")
+# Use ``fullmatch`` (not ``match`` + ``$``) — without re.MULTILINE the
+# ``$`` anchor would also match before a trailing ``\n``, letting
+# ``"abc\n"`` validate as a clean file ID. ``fullmatch`` requires the
+# entire candidate string to match, no newline edge case.
+_FILE_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 # `/file/d/<ID>/...` — extract the ID segment regardless of trailing path.
 _FILE_D_RE = re.compile(r"/file/d/([A-Za-z0-9_-]+)(?:/|$)")
@@ -322,7 +332,7 @@ def _extract_file_id(uri: str) -> str:
     """
     if uri.startswith("drive://"):
         candidate = uri[len("drive://"):]
-        if candidate and _FILE_ID_RE.match(candidate):
+        if candidate and _FILE_ID_RE.fullmatch(candidate):
             return candidate
         raise ValueError(
             f"could not extract a Drive file ID from {uri!r}: "
@@ -387,7 +397,7 @@ from transcriber.sources.google_drive import DriveSource
 
 
 def test_drive_source_prepare_returns_correct_prepared_media(tmp_path: Path) -> None:
-    workspace = RunWorkspace(prefix=str(tmp_path) + "/")
+    workspace = RunWorkspace()
     media = DriveSource.prepare(f"drive://{_VALID_ID}", workspace)
 
     assert isinstance(media, PreparedMedia)
@@ -405,7 +415,7 @@ def test_drive_source_prepare_returns_correct_prepared_media(tmp_path: Path) -> 
 def test_drive_source_prepare_canonicalises_full_drive_url(tmp_path: Path) -> None:
     """Whatever URL form the user passes, original_uri normalises to
     drive://FILE_ID and remote_url to the public-download canonical form."""
-    workspace = RunWorkspace(prefix=str(tmp_path) + "/")
+    workspace = RunWorkspace()
     media = DriveSource.prepare(
         f"https://drive.google.com/file/d/{_VALID_ID}/view?usp=sharing",
         workspace,
@@ -421,13 +431,13 @@ def test_drive_source_prepare_raises_on_unparseable_uri(tmp_path: Path) -> None:
     """Defence-in-depth: DriveSource.prepare validates even though
     resolve_source already filters at dispatch (see Task 4). Tests call
     DriveSource directly without going through dispatch."""
-    workspace = RunWorkspace(prefix=str(tmp_path) + "/")
+    workspace = RunWorkspace()
     with pytest.raises(ValueError, match="could not extract"):
         DriveSource.prepare("drive://", workspace)
 
 
 def test_drive_source_prepare_raises_on_non_drive_host(tmp_path: Path) -> None:
-    workspace = RunWorkspace(prefix=str(tmp_path) + "/")
+    workspace = RunWorkspace()
     with pytest.raises(ValueError, match="could not extract"):
         DriveSource.prepare("https://example.com/foo", workspace)
 ```
@@ -456,7 +466,9 @@ class DriveSource:
     """
 
     @staticmethod
-    def prepare(uri: str, workspace: RunWorkspace) -> PreparedMedia:
+    def prepare(
+        uri: str, workspace: RunWorkspace, *, title: str | None = None
+    ) -> PreparedMedia:
         file_id = _extract_file_id(uri)
         remote_url = f"https://drive.google.com/uc?export=download&id={file_id}"
         return PreparedMedia(
@@ -464,7 +476,7 @@ class DriveSource:
             original_uri=f"drive://{file_id}",
             local_path=None,
             remote_url=remote_url,
-            title=None,
+            title=title,  # CLI passes the validated --title; None falls back to file_id at render
             duration_seconds=None,
             workspace=workspace,
             extra={"drive_file_id": file_id},
@@ -472,6 +484,41 @@ class DriveSource:
 ```
 
 (Add the new imports at the top of the file alongside the existing `import re`.)
+
+- [ ] **Step 3b: Mirror the `title` kwarg on `LocalSource.prepare`** (parallel pattern across all sources — avoids the smell of post-construction `dataclass_replace` mutation in the CLI when `--title` is passed for a local file)
+
+Modify `src/transcriber/sources/local.py`:
+
+```python
+@staticmethod
+def prepare(
+    uri: str, workspace: RunWorkspace, *, title: str | None = None
+) -> PreparedMedia:
+    """Validate the path and wrap it in ``PreparedMedia``.
+
+    ``title`` overrides the filename-stem default when set (the CLI
+    passes the validated ``--title`` here). Otherwise the title is
+    derived from the local file's stem.
+    """
+    path = Path(uri).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"Source file not found: {path}")
+    if not path.is_file():
+        raise ValueError(f"Source is not a file: {path}")
+
+    resolved = path.resolve()
+    return PreparedMedia(
+        kind="local",
+        original_uri=uri,
+        local_path=resolved,
+        title=title if title is not None else resolved.stem,
+        duration_seconds=None,
+        workspace=workspace,
+        extra={},
+    )
+```
+
+Add a quick test of the override in `tests/unit/test_cli.py` (already covers happy local-file paths) — verify by inspection that existing `LocalSource.prepare(source, workspace)` callers without `title=` still work because `title` is keyword-only with a default.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -650,15 +697,12 @@ The existing `transcribe()` takes `(self, wav_path, *, language, diarize, speech
 
 ```python
 def test_transcribe_passthrough_uses_audio_url_and_skips_upload(
-    rsps: responses.RequestsMock, tmp_path: Path
+    rsps: responses.RequestsMock,
 ) -> None:
     """Passthrough path: media.remote_url set → POST /transcript with
     audio_url=..., NO call to /upload. Body shape asserted via
     json_params_matcher per CLAUDE.md guardrail."""
-    from transcriber.core.workspace import RunWorkspace
-    from transcriber.sources.base import PreparedMedia
-
-    workspace = RunWorkspace(prefix=str(tmp_path) + "/")
+    workspace = RunWorkspace()
     media = PreparedMedia(
         kind="google_drive",
         original_uri="drive://X",
@@ -705,15 +749,12 @@ def test_transcribe_passthrough_uses_audio_url_and_skips_upload(
 
 
 def test_transcribe_local_path_still_uploads(
-    rsps: responses.RequestsMock, wav: Path, tmp_path: Path
+    rsps: responses.RequestsMock, wav: Path
 ) -> None:
     """Regression: existing upload flow still works after the
     transcribe() signature change. media.remote_url is None → upload
     runs as before."""
-    from transcriber.core.workspace import RunWorkspace
-    from transcriber.sources.base import PreparedMedia
-
-    workspace = RunWorkspace(prefix=str(tmp_path) + "/")
+    workspace = RunWorkspace()
     media = PreparedMedia(
         kind="local",
         original_uri=str(wav),
@@ -762,13 +803,19 @@ provider.transcribe(media, language=..., diarize=..., speech_model="universal-3-
 
 To avoid repetition: add a fixture at the top of the test file:
 
+First, add the imports to the top-of-file imports block (alongside the existing `import requests`, `import responses`, etc.):
+
+```python
+from transcriber.core.workspace import RunWorkspace
+from transcriber.sources.base import PreparedMedia
+```
+
+Then add the fixture (no inline imports — keep dependencies visible at file top so a casual reader sees the test's full dependency graph without scanning fixture bodies):
+
 ```python
 @pytest.fixture
-def local_media(wav: Path, tmp_path: Path) -> "PreparedMedia":
-    from transcriber.core.workspace import RunWorkspace
-    from transcriber.sources.base import PreparedMedia
-
-    workspace = RunWorkspace(prefix=str(tmp_path) + "/")
+def local_media(wav: Path) -> PreparedMedia:
+    workspace = RunWorkspace()
     return PreparedMedia(
         kind="local",
         original_uri=str(wav),
@@ -781,6 +828,8 @@ def local_media(wav: Path, tmp_path: Path) -> "PreparedMedia":
 ```
 
 Then sweep the file: every `provider.transcribe(wav, ...)` → `provider.transcribe(local_media, ...)` and add `local_media` to the function signature. Search-replace by hand to keep the diff reviewable; ~10 occurrences.
+
+**While sweeping, also upgrade body-shape coverage** (PR #13 guardrail dogfood): every existing test whose POST mock currently matches URL+method only should now use `responses.matchers.json_params_matcher` to lock the request body shape. The new passthrough test in this task already does this; rolling the same matcher into the existing tests catches a wider class of regression. Reference body shape per the spec's `## Reference calls (verbatim)` section: `{"audio_url": <url>, "speech_models": ["universal-3-pro"], "speaker_labels": <bool>}`. Where a test sends `language="en"`, the body also includes `"language_code": "en"`; where `language=None`, the field is absent.
 
 - [ ] **Step 3: Run tests to verify they fail**
 
@@ -883,7 +932,15 @@ def transcribe(
     else:
         # Upload mode (Slice 1 path): stream the local WAV to /upload
         # and use the returned upload_url as audio_url.
-        assert media.local_path is not None  # PreparedMedia invariant
+        if media.local_path is None:
+            # Defence-in-depth: PreparedMedia.__post_init__ guarantees
+            # exactly-one-of (local_path, remote_url) is set, so this
+            # branch is unreachable. Raise anyway, with a domain-specific
+            # exception class — never an AssertionError.
+            raise ProviderError(
+                "PreparedMedia invariant violated: "
+                "neither remote_url nor local_path is set."
+            )
         logger.info("Uploading %s to AssemblyAI", media.local_path)
         audio_url = _upload(media.local_path)
 
@@ -930,17 +987,34 @@ CLI integration lands in Task 8."
 
 ---
 
-## Task 6: Title sanitization helper (CLI-layer)
+## Task 6: Title validation + filename-stem helpers (CLI-layer)
 
 **Files:**
-- Modify: `src/transcriber/cli.py` (add `_sanitize_title` helper)
+- Modify: `src/transcriber/cli.py` (add `_validate_title` and `_title_to_stem` helpers)
 - Test: `tests/unit/test_cli.py` (extend with parametrised tests)
 
-The `_sanitize_title` helper turns a `--title` value into a filename-safe stem. Per spec validation case 26a, it MUST reject `/`, `\`, `\0`, `..`, leading `.` (each would let a hostile or careless title write outside `settings.output_dir` because `atomic.write_text_atomic` creates parent dirs on demand).
+Two distinct transformations of `--title` are needed downstream:
+
+- **Frontmatter `title:`** — preserves user-typed whitespace
+  (e.g. `"Session 17"`). Just validated + stripped.
+- **Output filename stem** — whitespace collapsed to `-` for a clean
+  filename (`Session-17-2026-05-04.md`).
+
+Splitting these into two helpers (`_validate_title` returning the
+display form, `_title_to_stem` collapsing whitespace) keeps each
+function single-purpose and lets the CLI pass the display form to
+`source.prepare(title=...)` (per Task 3b) while computing the
+filename stem separately. Per spec validation case 26a, validation
+MUST reject `/`, `\`, `\0`, `..`, or leading `.` (each would let a
+hostile or careless title write outside `settings.output_dir`
+because `atomic.write_text_atomic` creates parent dirs on demand).
 
 - [ ] **Step 1: Write the failing tests** (append to `tests/unit/test_cli.py`)
 
 ```python
+from transcriber.cli import _title_to_stem, _validate_title
+
+
 @pytest.mark.parametrize(
     "title",
     [
@@ -952,45 +1026,51 @@ The `_sanitize_title` helper turns a `--title` value into a filename-safe stem. 
         "with\0null",
     ],
 )
-def test_sanitize_title_rejects_unsafe_characters(title: str) -> None:
-    from transcriber.cli import _sanitize_title
-
+def test_validate_title_rejects_unsafe_characters(title: str) -> None:
     with pytest.raises(ValueError, match="unsafe filename characters"):
-        _sanitize_title(title)
+        _validate_title(title)
 
 
-def test_sanitize_title_replaces_whitespace_with_dash() -> None:
-    from transcriber.cli import _sanitize_title
-
-    assert _sanitize_title("Session 17") == "Session-17"
-    assert _sanitize_title("multi   space") == "multi-space"
-    # Tabs and other whitespace also collapse.
-    assert _sanitize_title("with\ttab") == "with-tab"
-
-
-def test_sanitize_title_passes_safe_characters_through() -> None:
-    from transcriber.cli import _sanitize_title
-
-    assert _sanitize_title("Session-17") == "Session-17"
-    assert _sanitize_title("RAG_Intro") == "RAG_Intro"
-    assert _sanitize_title("café") == "café"  # unicode round-trips
+def test_validate_title_strips_outer_whitespace_only() -> None:
+    """Outer whitespace stripped; internal whitespace preserved (the
+    YAML frontmatter shows the user-typed title)."""
+    assert _validate_title("Session 17") == "Session 17"
+    assert _validate_title("  Session 17  ") == "Session 17"
+    assert _validate_title("multi   space") == "multi   space"
 
 
-def test_sanitize_title_rejects_empty_after_strip() -> None:
-    from transcriber.cli import _sanitize_title
+def test_validate_title_passes_safe_characters_through() -> None:
+    assert _validate_title("Session-17") == "Session-17"
+    assert _validate_title("RAG_Intro") == "RAG_Intro"
+    assert _validate_title("café") == "café"  # unicode round-trips
 
+
+def test_validate_title_rejects_empty_after_strip() -> None:
     with pytest.raises(ValueError, match="empty"):
-        _sanitize_title("")
+        _validate_title("")
     with pytest.raises(ValueError, match="empty"):
-        _sanitize_title("   ")
+        _validate_title("   ")
+
+
+def test_title_to_stem_collapses_whitespace_to_dash() -> None:
+    assert _title_to_stem("Session 17") == "Session-17"
+    assert _title_to_stem("multi   space") == "multi-space"
+    assert _title_to_stem("with\ttab") == "with-tab"
+
+
+def test_title_to_stem_assumes_input_already_validated() -> None:
+    """`_title_to_stem` is called only after `_validate_title`; it does
+    no validation itself. Document that with a behavioural test on a
+    pre-validated string."""
+    assert _title_to_stem("Session-17") == "Session-17"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `env -u VIRTUAL_ENV uv run pytest tests/unit/test_cli.py -v -k sanitize`
-Expected: `ImportError` (`_sanitize_title` not yet defined).
+Run: `env -u VIRTUAL_ENV uv run pytest tests/unit/test_cli.py -v -k "validate_title or title_to_stem"`
+Expected: `ImportError` (helpers not yet defined).
 
-- [ ] **Step 3: Add `_sanitize_title` to `src/transcriber/cli.py`** (place it near `_confirm_or_decline`, right after the other module-level helpers)
+- [ ] **Step 3: Add the helpers to `src/transcriber/cli.py`** (place near `_confirm_or_decline`, right after the other module-level helpers)
 
 ```python
 import re
@@ -998,12 +1078,17 @@ import re
 _TITLE_FORBIDDEN = ("/", "\\", "\0", "..")
 
 
-def _sanitize_title(title: str) -> str:
-    """Return a filename-safe stem from a user-supplied ``--title``.
+def _validate_title(title: str) -> str:
+    """Validate a user-supplied ``--title`` and return its display form.
 
-    Replaces whitespace runs with a single ``-``; rejects any title that
-    is empty after stripping, or that contains ``/``, ``\\``, ``\\0``,
-    ``..``, or starts with ``.``. Rejecting these is security-relevant:
+    The display form is the user's input with outer whitespace stripped
+    but internal whitespace preserved — exactly what the frontmatter
+    ``title:`` field should record. Filename derivation is a separate
+    concern handled by ``_title_to_stem``.
+
+    Rejects (with ``ValueError``) any title that is empty after
+    stripping, contains ``/``, ``\\``, ``\\0``, or ``..``, or starts
+    with ``.``. Rejecting these is security-relevant:
     ``atomic.write_text_atomic`` creates parent directories on demand,
     so a title like ``../foo`` would write outside the configured
     ``output_dir``.
@@ -1022,8 +1107,16 @@ def _sanitize_title(title: str) -> str:
                 f"--title contains unsafe filename characters: {title!r} "
                 f"(must not contain {forbidden!r})"
             )
-    # Collapse all whitespace runs into a single '-' for the filename stem.
-    return re.sub(r"\s+", "-", stripped)
+    return stripped
+
+
+def _title_to_stem(title: str) -> str:
+    """Collapse whitespace runs to single ``-`` for a filename-safe stem.
+
+    Caller is responsible for validating the title with
+    ``_validate_title`` first; this helper does no validation.
+    """
+    return re.sub(r"\s+", "-", title)
 ```
 
 (Add `import re` to the top of `cli.py` if not already present — check first.)
@@ -1042,12 +1135,17 @@ Expected: ~109 passed, ruff clean, mypy clean. (Existing CLI integration tests s
 
 ```bash
 git add src/transcriber/cli.py tests/unit/test_cli.py
-git commit -m "feat(cli): _sanitize_title helper rejects path-traversal characters
+git commit -m "feat(cli): _validate_title + _title_to_stem split
 
-Replaces whitespace with -, rejects /, \\, \\0, .., or leading '.'.
-Empty (after strip) is also rejected. Security-relevant:
-atomic.write_text_atomic creates parent dirs on demand, so an
-unsanitized --title '../foo' would write outside output_dir."
+_validate_title returns the display form (whitespace stripped, internal
+preserved) for the YAML frontmatter; _title_to_stem collapses
+whitespace to - for the filename. Splitting them lets source.prepare()
+take the display form directly (no post-construction dataclass_replace).
+
+Validation rejects /, \\, \\0, .., or leading '.'. Empty (after strip)
+also rejected. Security-relevant: atomic.write_text_atomic creates
+parent dirs on demand, so an unvalidated --title '../foo' would write
+outside output_dir."
 ```
 
 ---
@@ -1225,12 +1323,25 @@ The changes to `transcribe()`:
 - [ ] **Step 1: Write the failing tests** (append to `tests/unit/test_cli.py`)
 
 ```python
+@pytest.mark.parametrize(
+    "drive_uri",
+    [
+        "drive://1Zdp9aYV",
+        "https://drive.google.com/file/d/1Zdp9aYV/view",
+        "https://drive.google.com/file/d/1Zdp9aYV/view?usp=sharing",
+        "https://drive.google.com/open?id=1Zdp9aYV",
+    ],
+)
 def test_drive_happy_path_with_title(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    drive_uri: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """transcribe drive://X --title 'Session 17' --budget low -y →
+    """transcribe <drive-uri> --title 'Session 17' --budget low -y →
     writes Session-17-{date}.md with frontmatter title 'Session 17' and
-    source_uri 'drive://X'. extract_audio NOT called (Drive path)."""
+    source_uri 'drive://1Zdp9aYV' (canonical, regardless of input form).
+    extract_audio NOT called (Drive path).
+
+    Validation case 25 — every accepted URL form must round-trip to
+    identical output."""
     from transcriber.providers.base import Segment, TranscriptResult
 
     monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
@@ -1262,7 +1373,7 @@ def test_drive_happy_path_with_title(
         app,
         [
             "transcribe",
-            "drive://1Zdp9aYV",
+            drive_uri,
             "--title",
             "Session 17",
             "--budget",
@@ -1272,12 +1383,13 @@ def test_drive_happy_path_with_title(
     )
     assert result.exit_code == 0, result.output
     assert extract_called == []  # Drive path skips ffmpeg
-    expected_path = tmp_path / "Session-17-2026-05-04.md"
     # Date will vary; just check the title is in the filename.
     written = list(tmp_path.glob("Session-17-*.md"))
     assert len(written) == 1, f"expected one Session-17-*.md, got {written}"
     content = written[0].read_text(encoding="utf-8")
     assert "title: Session 17" in content
+    # Canonical drive://FILE_ID in source_uri regardless of which input
+    # URL form was passed — validation case 25's central assertion.
     assert "source_uri: drive://1Zdp9aYV" in content
     assert "source_kind: google_drive" in content
 
@@ -1357,17 +1469,87 @@ def test_drive_unsanitized_title_exits_2(tmp_path: Path) -> None:
 Run: `env -u VIRTUAL_ENV uv run pytest tests/unit/test_cli.py -v -k drive`
 Expected: tests fail — current CLI hardcodes `LocalSource`, has no `--title` flag, has no Drive-variant budget gate.
 
-- [ ] **Step 3: Modify `src/transcriber/cli.py`** — apply all wiring changes in one logical update
+- [ ] **Step 3a: First, parameterize `core/budget.py:check` to take an optional `notify_message` override** (so the Drive-variant gate doesn't have to duplicate Gate 1 + Gate 2 logic)
+
+Find the existing `check()` function in `src/transcriber/core/budget.py`. Add a new keyword-only parameter and use it to override the standard cost-summary notify line:
+
+```python
+def check(
+    *,
+    provider_name: str,
+    budget: str,
+    key_configured: bool,
+    cost_usd: float,
+    yes: bool,
+    prompt: Callable[[str], bool],
+    notify: Callable[[str], None],
+    cost_summary: str | None = None,
+) -> bool:
+    """Run both gates and the confirmation flow.
+
+    [existing docstring unchanged]
+
+    ``cost_summary``: when set, overrides the default per-minute
+    cost-estimate line. Drive sources (URL passthrough) pass a string
+    explaining that AssemblyAI bills per-minute and exact cost shows
+    in the dashboard, since we have no local duration to estimate
+    against. When ``None``, the default ``f"Provider: {provider_name}
+    · Estimated cost: ~${cost_usd:.2f}"`` line is used.
+    """
+    # ... existing Gate 1 + Gate 2 logic unchanged ...
+
+    # Both gates pass — surface the estimate (or the override).
+    if cost_summary is not None:
+        notify(cost_summary)
+    else:
+        notify(f"Provider: {provider_name} · Estimated cost: ~${cost_usd:.2f}")
+
+    # Soft cap: only fires when we have a real cost number to compare.
+    if cost_summary is None and cost_usd > SOFT_CAP_USD:
+        notify(
+            f"⚠️  Estimated cost ${cost_usd:.2f} exceeds soft cap "
+            f"${SOFT_CAP_USD:.2f} — review before proceeding."
+        )
+
+    if yes:
+        return True
+    return prompt("Proceed? [y/N]")
+```
+
+Add a test in `tests/unit/test_budget.py`:
+
+```python
+def test_check_uses_cost_summary_override_when_set() -> None:
+    msgs, notify = _capture_notify()
+    check(
+        provider_name="AssemblyAI",
+        budget="low",
+        key_configured=True,
+        cost_usd=999.0,  # would normally trigger soft cap
+        yes=True,
+        prompt=_noop_prompt,
+        notify=notify,
+        cost_summary="custom message — see dashboard",
+    )
+    assert any("custom message — see dashboard" in m for m in msgs)
+    # When cost_summary is set, the standard estimate line is NOT printed
+    # AND the soft cap is silenced (no duration to compare against).
+    assert not any("Estimated cost" in m for m in msgs)
+    assert not any("soft cap" in m for m in msgs)
+```
+
+Run: `env -u VIRTUAL_ENV uv run pytest tests/unit/test_budget.py -v`
+Expected: all existing budget tests pass + new test.
+
+- [ ] **Step 3b: Now modify `src/transcriber/cli.py`** — apply all wiring changes in one logical update
 
 Add the new imports at the top:
 
 ```python
-from dataclasses import replace as dataclass_replace
-
 from transcriber.sources import resolve_source
 ```
 
-Drop `from transcriber.sources.local import LocalSource` (no longer directly used; goes through `resolve_source`).
+Drop `from transcriber.sources.local import LocalSource` (no longer directly used; goes through `resolve_source`). **No `dataclass_replace` import** — the title is passed to `source.prepare(title=...)` per Tasks 3 + 3b, no post-construction mutation.
 
 Add `--title` to `transcribe()` parameters (between `--language` and `--model` for alphabetical-ish grouping):
 
@@ -1421,18 +1603,34 @@ Replace the source-prep block. Find:
 Replace with:
 
 ```python
-            # Resolve and prepare the source. The dispatcher reject-not-
-            # swallows unknown :// URIs (exit 2) so the user gets a clear
-            # "URI scheme not supported" rather than a misleading "file
-            # not found" from LocalSource fallthrough.
+            # Resolve the source. Dispatcher reject-not-swallows unknown
+            # :// URIs (exit 2) so the user gets a clear "URI scheme not
+            # supported" rather than a misleading "file not found" from
+            # LocalSource fallthrough.
             try:
                 source_cls = resolve_source(source)
             except ValueError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
 
+            # Validate --title up-front so the source.prepare() call below
+            # gets a clean string. Validation rejects path-traversal chars
+            # before the source layer ever sees them.
+            display_title: str | None
+            if title is not None:
+                try:
+                    display_title = _validate_title(title)
+                except ValueError as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    raise typer.Exit(code=2) from exc
+            else:
+                display_title = None
+
+            # Prepare the source with the validated title. Each source
+            # decides how to use it: LocalSource overrides the filename-
+            # stem default; DriveSource stores it for the formatter.
             try:
-                media = source_cls.prepare(source, workspace)
+                media = source_cls.prepare(source, workspace, title=display_title)
             except FileNotFoundError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=4) from exc
@@ -1440,29 +1638,30 @@ Replace with:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
 
-            # Sanitize --title (security: rejects path-traversal chars)
-            # and thread into the (frozen) PreparedMedia.
-            if title is not None:
-                try:
-                    sanitized_title = _sanitize_title(title)
-                except ValueError as exc:
-                    console.print(f"[red]error:[/red] {exc}")
-                    raise typer.Exit(code=2) from exc
-                # Frontmatter shows the user's typed title (whitespace-
-                # preserved); the *filename* uses the dash-collapsed stem.
-                media = dataclass_replace(media, title=title.strip())
-            else:
-                sanitized_title = None
-
             # Branch: Drive passthrough skips ffmpeg + per-call cost
             # estimate; local upload runs both.
             if media.remote_url is not None:
-                # Drive variant of the budget gate: both hard gates still
-                # fire; only the cost-estimate number is replaced with a
-                # "no pre-estimate" notify message and the soft cap is
-                # silenced (no duration → no number).
+                # Drive variant: Gate 1 + Gate 2 still fire via the
+                # standard budget_check; the cost-estimate notify is
+                # overridden via cost_summary because we have no local
+                # duration to estimate against. The soft-cap check
+                # silences itself when cost_summary is set.
                 try:
-                    proceed = _drive_budget_check(budget=budget.value, yes=yes)
+                    proceed = budget_check(
+                        provider_name="AssemblyAI",
+                        budget=budget.value,
+                        key_configured=settings.assemblyai_configured,
+                        cost_usd=0.0,  # unused when cost_summary is set
+                        yes=yes,
+                        prompt=_confirm_or_decline,
+                        notify=lambda msg: console.print(msg),
+                        cost_summary=(
+                            "Provider: AssemblyAI · URL passthrough — "
+                            "AssemblyAI bills per-minute against the public "
+                            "URL; exact cost in the AssemblyAI dashboard "
+                            "after the run."
+                        ),
+                    )
                 except BudgetError as exc:
                     console.print(f"[red]error:[/red] {exc}")
                     raise typer.Exit(code=2) from exc
@@ -1502,60 +1701,12 @@ Replace with:
                     raise typer.Exit(code=0)
 ```
 
-Add the `_drive_budget_check` helper near `_confirm_or_decline`:
-
-```python
-def _drive_budget_check(*, budget: str, yes: bool) -> bool:
-    """Drive-variant of the budget gate: both hard gates (key + budget)
-    still fire via the existing budget_check; the cost-estimate number is
-    replaced with a "no pre-estimate" notify message and the soft cap is
-    silenced because we have no local duration to estimate against.
-    """
-    return budget_check(
-        provider_name="AssemblyAI",
-        budget=budget,
-        key_configured=settings.assemblyai_configured,
-        cost_usd=0.0,  # Sentinel: no estimate; soft cap silenced because cost_usd <= SOFT_CAP_USD.
-        yes=yes,
-        prompt=_confirm_or_decline,
-        notify=lambda msg: console.print(msg),
-    )
-```
-
-(The `cost_usd=0.0` sentinel is acceptable because: Gate 1 + Gate 2 fire BEFORE the soft-cap check; if both pass, the soft-cap branch silently no-ops since `0.0 <= SOFT_CAP_USD`. The `notify` line will print "Estimated cost: ~$0.00" — not ideal. Override the notify message: pass a custom notify that prints the Drive-specific message instead of the default cost line. To avoid duplicating the gate logic, refactor the call:)
-
-Actually, replace the body of `_drive_budget_check` with this cleaner version that doesn't fake a cost number:
-
-```python
-def _drive_budget_check(*, budget: str, yes: bool) -> bool:
-    """Drive-variant of the budget gate: both hard gates (key + budget)
-    still fire; the per-minute cost-estimate notify is replaced with a
-    Drive-specific message; the soft cap is silenced (no local duration
-    to estimate against)."""
-    # Gate 1 + Gate 2 by hand (intentional duplication to avoid coupling
-    # budget.check to source kinds). Same messages as budget.check.
-    if not settings.assemblyai_configured:
-        raise BudgetError(
-            "AssemblyAI key not configured. "
-            "Add `ASSEMBLYAI_API_KEY=...` to `.env` (see `.env.example`)."
-        )
-    if budget == "free":
-        raise BudgetError(
-            "AssemblyAI is a paid provider ($0.009/min). "
-            "Current budget is `free`. Rerun with `--budget low` "
-            "(or `--budget best`)."
-        )
-
-    console.print(
-        "[cyan]Provider: AssemblyAI · URL passthrough[/cyan] — "
-        "AssemblyAI bills per-minute against the public URL; exact cost "
-        "in the AssemblyAI dashboard after the run."
-    )
-
-    if yes:
-        return True
-    return _confirm_or_decline("Proceed? [y/N]")
-```
+No CLI-side helper needed — the Drive-variant gate uses
+`budget_check(..., cost_summary=...)` from Step 3a, which keeps Gate 1
++ Gate 2 single-sourced in `core/budget.py` and lets the CLI override
+just the notify message. (Earlier draft of this plan had a
+`_drive_budget_check` helper that duplicated Gate 1 + Gate 2 by hand;
+that's now resolved by the `cost_summary` parameter.)
 
 Update the provider call. Find:
 
@@ -1605,8 +1756,10 @@ Replace with:
 ```python
             # Resolve output path with collision-suffix policy.
             if output is None:
-                if sanitized_title is not None:
-                    stem = sanitized_title
+                if display_title is not None:
+                    # Whitespace in the user's title becomes - in the
+                    # filename; YAML title preserves the original.
+                    stem = _title_to_stem(display_title)
                 elif media.local_path is not None:
                     stem = media.local_path.stem
                 else:
@@ -1640,15 +1793,17 @@ git commit -m "feat(cli): wire Drive source — dispatch + --title + drive-varia
 
 - resolve_source() routes drive://* / drive.google.com URLs to
   DriveSource; unknown :// URIs reject-not-swallow with exit 2.
-- New --title <str> flag (sanitized via _sanitize_title for path
-  traversal safety); whitespace replaced with - in the filename;
-  YAML title preserves whitespace.
-- Drive-variant budget gate: both hard gates fire as today; cost
-  estimate replaced with 'AssemblyAI bills per-minute · exact cost in
-  dashboard'; soft cap silenced (no duration to compare against).
+- New --title <str> flag validated via _validate_title (path-traversal
+  reject) and threaded into source.prepare(title=...) — no
+  post-construction dataclass_replace mutation.
+- core/budget.py:check gains optional cost_summary parameter; CLI's
+  Drive branch passes a per-minute notify message (no duplicated
+  Gate 1 + Gate 2 logic in cli.py); soft cap silenced when
+  cost_summary is set.
 - Provider.transcribe() now takes media instead of wav_path; CLI
   passes the constructed PreparedMedia through.
-- Output filename: --title (sanitized) > local_path.stem > drive_file_id."
+- Output filename: _title_to_stem(--title) > local_path.stem >
+  drive_file_id."
 ```
 
 ---
@@ -1739,6 +1894,20 @@ cost: same as the local-file scenario (~$0.009/min).
    **Expected:** error "unsafe filename characters" + exit code `2`. No
    AssemblyAI call (and therefore no charge) — the sanitization fires
    before the provider is invoked.
+
+   **Also verify nothing was written outside `output_dir`** (the
+   sanitization is what stops a `../escape` title from reaching
+   `atomic.write_text_atomic`'s parent-dir-creation behaviour):
+
+   ```bash
+   ls -la "$(dirname "$(pwd)")" | grep -i escape || echo "OK — nothing escaped"
+   ls output/ | grep -i escape || echo "OK — nothing in output/ either"
+   ```
+
+   **Expected:** both lines print `OK — nothing escaped`. If the parent
+   directory contains an `escape*` artefact, sanitization failed and
+   the implementation has a real path-traversal bug to fix before
+   merge.
 
 ### Recording the result
 
@@ -1869,6 +2038,32 @@ Replace with:
 Run: `env -u VIRTUAL_ENV uv run pytest -q && env -u VIRTUAL_ENV uv run ruff check src/ tests/ && env -u VIRTUAL_ENV uv run mypy src/ tests/`
 Expected: green.
 
+- [ ] **Step 5b: Verify the diff scope matches validation criterion 7**
+
+Validation criterion 7 demands the PR touches only:
+`src/transcriber/{sources,providers,formatters,core,cli.py}` (production code),
+`tests/unit/`, `tests/manual/end_to_end.md`,
+`docs/learn/`, `specs/2026-05-04-drive-source-passthrough/`,
+`specs/roadmap.md`. **No changes to `pyproject.toml`, `uv.lock`, or
+`.env.example`.** Sanity-check before opening the PR:
+
+```bash
+git fetch origin main 2>&1 | tail -1
+git diff origin/main --stat | grep -E "(pyproject\.toml|uv\.lock|\.env\.example)" \
+    && echo "❌ FORBIDDEN PATH IN DIFF" \
+    || echo "✓ no forbidden paths in diff"
+git diff origin/main --stat | tail -10
+```
+
+**Expected:** `✓ no forbidden paths in diff`. Total stats line shows
+~10-15 files changed (sources/google_drive.py, sources/__init__.py,
+extended sources/base.py + sources/local.py, extended
+providers/{base,assemblyai}.py, extended cli.py, extended
+formatters/markdown.py, extended core/budget.py, ~6 extended +
+2 new test files, 1 manual runbook, 4 doc files, 2 spec files).
+If a forbidden path appears, abort and remove the unrelated change
+before continuing.
+
 - [ ] **Step 6: Commit teaching artifacts**
 
 ```bash
@@ -1912,9 +2107,11 @@ Before declaring this plan complete, the writer should verify:
   template in Task 10 explicitly defers content to *after* the manual
   runbook produces empirical findings — this is the documented
   draft-after-runbook pattern, not a planning placeholder.)
-- [ ] **Type consistency.** `_sanitize_title`, `_drive_budget_check`,
+- [ ] **Type consistency.** `_validate_title`, `_title_to_stem`,
   `_extract_file_id`, `resolve_source`, `DriveSource.prepare`,
-  `PreparedMedia.remote_url` — all referenced consistently across
+  `LocalSource.prepare` (now taking optional `title=` kwarg),
+  `PreparedMedia.remote_url`, `core/budget.py:check`'s new
+  `cost_summary` parameter — all referenced consistently across
   tasks.
 - [ ] **Test commands.** Every `pytest` invocation uses
   `env -u VIRTUAL_ENV uv run pytest` (per the session's recurring
