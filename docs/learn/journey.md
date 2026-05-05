@@ -11,6 +11,60 @@
 
 ---
 
+## PR #17 — Implementation: Drive Source (URL passthrough)
+
+**Merged:** TBD  |  **Branch:** `feat/drive-source-impl`
+**Explainer:** [`prs/pr-017-drive-source-passthrough-impl.md`](prs/pr-017-drive-source-passthrough-impl.md)
+
+PR #17 is the implementation against the spec PR #15 committed and the
+execution plan PR #16 ratified (after two review rounds — one inline
+during plan-writing and one via parallel `pr-review-toolkit` agents
+that flagged 8 safety-critical findings). The slice ships in 8 TDD
+commits that each map 1:1 to a plan task group: F2 contract extension
++ `SourceInputError`, Drive URL parser, `DriveSource.prepare` +
+`LocalSource.prepare(title=...)`, `resolve_source` dispatcher with
+reject-not-swallow, provider `audio_url` passthrough branch, `--title`
+sanitization helpers, formatter handling `local_path=None`, and the
+CLI integration that threads everything together.
+
+The single biggest implementation-phase decision was C1 — how to
+thread the canonical 16 kHz mono WAV path back into `media` after
+`extract_audio` runs. Without `dataclasses.replace(media,
+local_path=wav_path)`, the provider would silently upload the
+original `.mp4` instead of the workspace-extracted WAV. AssemblyAI
+accepts any audio container, so the regression would ship through
+135 unit tests undetected — exactly the kind of "tests pass but
+contract is broken" finding that justifies the plan-PR-sandwich
+cadence the user adopted after PR #12.
+
+The Drive URL passthrough adds zero new dependencies and saves the
+download+upload round-trip on hour-long files. OAuth + private files
+remain explicitly deferred to Slice 3.
+
+Phase 4 status moves from `pending` to `partial — public-link
+passthrough only (Slice 2: PR #16 spec + plan, this PR's
+implementation). OAuth + private files deferred to Slice 3.`
+
+---
+
+## PR #16 — Execution plan: Drive Source (URL passthrough)
+
+**Merged:** 2026-05-04  |  **Branch:** `impl/drive-source-passthrough`
+**Explainer:** none — doc-only PR, see the plan triple itself.
+
+PR #16 is the execution plan that bridged spec (PR #15) and
+implementation (PR #17). The PR was deliberately kept doc-only so
+two review rounds could fire against the proposed code snippets
+*before* any runtime code landed: an inline review caught 10 plan-
+level findings, then a formal `pr-review-toolkit` parallel review
+caught 8 more (one critical: the WAV-vs-source upload regression
+described under PR #17). All 18 safety-critical findings were
+applied to the plan before the implementation PR opened. This PR
+established the plan-PR-sandwich cadence (spec → plan → impl) the
+repo will use for future feature loops.
+
+---
+
 ## PR #15 — Feature spec: Drive Source (URL passthrough)
 
 **Merged:** TBD  |  **Branch:** `feature/drive-source-passthrough-spec`

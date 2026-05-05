@@ -40,7 +40,7 @@
 
 ## [Phase 4 — Google Drive Source](../docs/PLAN.md#phase-4--google-drive-source)
 
-**Status:** pending.
+**Status:** partial — public-link passthrough only (Slice 2: PR #16 spec + plan, this PR's implementation). OAuth + private files deferred to Slice 3.
 
 ## [Phase 5 — Cloud Transcription Providers (provider abstraction)](../docs/PLAN.md#phase-5--cloud-transcription-providers-provider-abstraction)
 

@@ -530,3 +530,13 @@ def test_local_path_uploads_extracted_wav_not_source_file(
     # the C1 invariant.
     assert received_media[0].local_path == wav_in_workspace
     assert received_media[0].local_path != src
+    # Output filename must use the SOURCE stem ('video'), NOT the WAV
+    # stem ('extracted'). After the C1 swap, ``media.local_path`` is the
+    # workspace WAV — using ``media.local_path.stem`` for the filename
+    # would silently regress Slice 1 to write ``extracted-DATE.md``
+    # instead of ``video-DATE.md`` for any non-WAV input.
+    written = list(tmp_path.glob("video-*.md"))
+    assert len(written) == 1, (
+        f"expected one video-*.md (Slice 1 source-stem behaviour), "
+        f"got {[p.name for p in tmp_path.glob('*.md')]}"
+    )

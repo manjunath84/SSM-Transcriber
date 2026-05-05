@@ -26,6 +26,8 @@
 | #13 | Prevent vendor-API-shape regressions: SDD template + mock convention | infra | [`pr-013-prevent-vendor-api-shape-regressions.md`](pr-013-prevent-vendor-api-shape-regressions.md) |
 | #14 | Housekeeping: merge-date backfills + roadmap Phase 5 update + PR-7 explainer | docs | [`pr-014-housekeeping-merge-dates-roadmap-pr7-explainer.md`](pr-014-housekeeping-merge-dates-roadmap-pr7-explainer.md) |
 | #15 | Feature spec: Drive Source (URL passthrough) | feature (spec) | [`pr-015-drive-source-passthrough-spec.md`](pr-015-drive-source-passthrough-spec.md) |
+| #16 | Execution plan: Drive Source (URL passthrough) | feature (plan) | (no explainer — short doc-only PR; see plan triple) |
+| #17 | Implementation: Drive Source (URL passthrough) | feature (impl) | [`pr-017-drive-source-passthrough-impl.md`](pr-017-drive-source-passthrough-impl.md) |
 
 ## Conventions
 

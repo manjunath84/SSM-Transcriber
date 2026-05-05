@@ -347,11 +347,22 @@ def transcribe(
             # Resolve output path with collision-suffix policy.
             if output is None:
                 if display_title is not None:
-                    # Whitespace in --title becomes - in the filename;
-                    # YAML title preserves the original.
+                    # User passed --title: collapse whitespace for filename.
+                    # YAML title preserves the original (display_title).
                     stem = _title_to_stem(display_title)
-                elif media.local_path is not None:
-                    stem = media.local_path.stem
+                elif media.title is not None:
+                    # Local source, no --title: LocalSource.prepare set
+                    # media.title to the original source's stem (e.g.
+                    # ``video`` for ``./video.mp4``). Use it directly —
+                    # source filenames typically don't contain whitespace,
+                    # and Slice 1's behaviour preserved them intact.
+                    #
+                    # NOTE: cannot use ``media.local_path.stem`` here:
+                    # after the C1 dataclasses.replace swap, local_path
+                    # points at the workspace WAV (stem ``audio``), not
+                    # the source. media.title is the source-stem fallback
+                    # LocalSource.prepare populated.
+                    stem = media.title
                 else:
                     # Drive source, no --title: fall back to the file ID.
                     # extra['drive_file_id'] is set by DriveSource.prepare;
