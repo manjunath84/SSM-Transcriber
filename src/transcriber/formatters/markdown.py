@@ -39,7 +39,18 @@ def render(
 
     diarized_speakers: set[str] = {s.speaker for s in result.segments if s.speaker}
     speakers_count = len(diarized_speakers) if diarized_speakers else None
-    title = media.title or media.local_path.stem
+    if media.title:
+        title = media.title
+    elif media.local_path is not None:
+        title = media.local_path.stem
+    else:
+        # Drive-source path, no --title given: fall back to the file ID.
+        # extra['drive_file_id'] is set by DriveSource.prepare; missing
+        # key is a producer-side bug (a Source implementation that returns
+        # kind='google_drive' without populating extra), not a user error.
+        # Let KeyError propagate rather than silently emitting an
+        # 'untitled-DATE.md' file (review finding I4).
+        title = media.extra["drive_file_id"]
 
     frontmatter = _frontmatter(
         title=title,
@@ -129,8 +140,25 @@ def _body(
 
 
 def _source_uri(media: PreparedMedia) -> str:
-    """Return the canonical ``source_uri`` for the frontmatter field."""
+    """Return the canonical ``source_uri`` for the frontmatter field.
+
+    For local sources, the absolute ``file:///`` URI of the input.
+    For URL-passthrough sources (Drive in Slice 2), the canonical
+    ``drive://FILE_ID`` form already stored in ``original_uri``.
+    """
     if media.kind == "local":
+        if media.local_path is None:
+            # PreparedMedia.__post_init__ guarantees a local-kind media has
+            # local_path set; reaching this branch means a Source
+            # implementation produced an inconsistent shape. Fail loud
+            # instead of returning ``original_uri`` (raw user input like
+            # ``./video.mp4``) — that string is not a file:// URI and would
+            # silently break the frontmatter contract (review finding I6).
+            raise ValueError(
+                f"PreparedMedia(kind='local') has local_path=None "
+                f"(original_uri={media.original_uri!r}); "
+                "this is a source-implementation bug, not user input."
+            )
         return media.local_path.as_uri()
     return media.original_uri
 
