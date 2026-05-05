@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import pytest
 
-from transcriber.sources.google_drive import _extract_file_id
+from transcriber.core.workspace import RunWorkspace
+from transcriber.sources.base import PreparedMedia
+from transcriber.sources.google_drive import DriveSource, _extract_file_id
 
 _VALID_ID = "1Zdp9aYV9klOT5_3uAazbeV91eNUOe3Vd"
 
@@ -66,3 +68,64 @@ def test_extract_file_id_rejects_drive_url_with_unrecognised_path() -> None:
     land in the wrong code path."""
     with pytest.raises(ValueError, match="could not extract"):
         _extract_file_id("https://drive.google.com/folders/abc")
+
+
+# ---------------------------------------------------------------------------
+# DriveSource.prepare — wraps the parser into a PreparedMedia.
+# ---------------------------------------------------------------------------
+
+
+def test_drive_source_prepare_returns_correct_prepared_media() -> None:
+    workspace = RunWorkspace()
+    media = DriveSource.prepare(f"drive://{_VALID_ID}", workspace)
+
+    assert isinstance(media, PreparedMedia)
+    assert media.kind == "google_drive"
+    assert media.original_uri == f"drive://{_VALID_ID}"
+    assert media.local_path is None
+    assert media.remote_url == (
+        f"https://drive.google.com/uc?export=download&id={_VALID_ID}"
+    )
+    assert media.title is None  # CLI fills in from --title
+    assert media.duration_seconds is None
+    assert media.extra == {"drive_file_id": _VALID_ID}
+
+
+def test_drive_source_prepare_canonicalises_full_drive_url() -> None:
+    """Whatever URL form the user passes, original_uri normalises to
+    drive://FILE_ID and remote_url to the public-download canonical form."""
+    workspace = RunWorkspace()
+    media = DriveSource.prepare(
+        f"https://drive.google.com/file/d/{_VALID_ID}/view?usp=sharing",
+        workspace,
+    )
+
+    assert media.original_uri == f"drive://{_VALID_ID}"
+    assert media.remote_url == (
+        f"https://drive.google.com/uc?export=download&id={_VALID_ID}"
+    )
+
+
+def test_drive_source_prepare_raises_on_unparseable_uri() -> None:
+    """Defence-in-depth: DriveSource.prepare validates even though
+    resolve_source already filters at dispatch (Task 4). Tests call
+    DriveSource directly without going through dispatch."""
+    workspace = RunWorkspace()
+    with pytest.raises(ValueError, match="could not extract"):
+        DriveSource.prepare("drive://", workspace)
+
+
+def test_drive_source_prepare_raises_on_non_drive_host() -> None:
+    workspace = RunWorkspace()
+    with pytest.raises(ValueError, match="could not extract"):
+        DriveSource.prepare("https://example.com/foo", workspace)
+
+
+def test_drive_source_prepare_threads_title_kwarg() -> None:
+    """CLI passes the validated --title through to prepare(title=...);
+    it lands in PreparedMedia.title for the formatter to pick up."""
+    workspace = RunWorkspace()
+    media = DriveSource.prepare(
+        f"drive://{_VALID_ID}", workspace, title="Session 17"
+    )
+    assert media.title == "Session 17"

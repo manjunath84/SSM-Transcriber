@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import re
 
-from transcriber.sources.base import SourceInputError
+from transcriber.core.workspace import RunWorkspace
+from transcriber.sources.base import PreparedMedia, SourceInputError
 
 # Drive file IDs are URL-safe base64 — alnum, dash, underscore. The minimum
 # length isn't documented but the shortest IDs we see in practice are 25+
@@ -65,3 +66,32 @@ def _extract_file_id(uri: str) -> str:
         f"could not extract a Drive file ID from {uri!r}: "
         "expected drive://FILE_ID or https://drive.google.com/..."
     )
+
+
+class DriveSource:
+    """Wrap a Drive URL into ``PreparedMedia`` for URL-passthrough mode.
+
+    Defence-in-depth: ``prepare`` validates the URL itself even though
+    ``resolve_source`` already rejects non-Drive ``://`` URIs at dispatch.
+    Tests call ``DriveSource.prepare`` directly without the dispatcher,
+    and a future programmatic caller may also bypass dispatch. Same
+    boundary pattern as ``providers/assemblyai.py`` re-checking the API
+    key after the budget gate.
+    """
+
+    @staticmethod
+    def prepare(
+        uri: str, workspace: RunWorkspace, *, title: str | None = None
+    ) -> PreparedMedia:
+        file_id = _extract_file_id(uri)
+        remote_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        return PreparedMedia(
+            kind="google_drive",
+            original_uri=f"drive://{file_id}",
+            local_path=None,
+            remote_url=remote_url,
+            title=title,
+            duration_seconds=None,
+            workspace=workspace,
+            extra={"drive_file_id": file_id},
+        )
