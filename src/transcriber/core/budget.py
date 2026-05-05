@@ -64,6 +64,7 @@ def check(
     yes: bool,
     prompt: Callable[[str], bool],
     notify: Callable[[str], None],
+    cost_summary: str | None = None,
 ) -> bool:
     """Run both gates and the confirmation flow.
 
@@ -74,6 +75,15 @@ def check(
 
     ``prompt`` and ``notify`` are injected so tests can assert call counts
     and content without spinning up ``rich`` or stdin.
+
+    ``cost_summary``: when set, overrides the default per-minute
+    cost-estimate line. URL-passthrough sources (Drive in Slice 2) pass a
+    string explaining that the provider bills per-minute and exact cost
+    shows in the dashboard, since we have no local duration to estimate
+    against. The soft-cap line is also silenced when ``cost_summary`` is
+    set (no real cost number to compare against). When ``None``, the
+    default ``f"Provider: {provider_name} · Estimated cost: ~${cost_usd:.2f}"``
+    line is used.
     """
     # Reject unknown budget tiers BEFORE the gate checks. An unrecognised
     # value like ``"typo"`` would otherwise fall through Gate 2's
@@ -100,12 +110,14 @@ def check(
             "(or `--budget best`)."
         )
 
-    # Both gates pass — surface the estimate.
-    notify(f"Provider: {provider_name} · Estimated cost: ~${cost_usd:.2f}")
+    # Both gates pass — surface the estimate (or the override).
+    if cost_summary is not None:
+        notify(cost_summary)
+    else:
+        notify(f"Provider: {provider_name} · Estimated cost: ~${cost_usd:.2f}")
 
-    # Soft cap: louder warning above the threshold, but ``--yes`` still
-    # bypasses the prompt (consistent with smaller jobs).
-    if cost_usd > SOFT_CAP_USD:
+    # Soft cap: only fires when we have a real cost number to compare.
+    if cost_summary is None and cost_usd > SOFT_CAP_USD:
         notify(
             f"⚠️  Estimated cost ${cost_usd:.2f} exceeds soft cap "
             f"${SOFT_CAP_USD:.2f} — review before proceeding."

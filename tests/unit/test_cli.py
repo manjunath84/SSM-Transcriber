@@ -297,3 +297,236 @@ def test_title_to_stem_assumes_input_already_validated() -> None:
 
     # No validation happens here; the contract is "validate first, then collapse".
     assert _title_to_stem("path with spaces") == "path-with-spaces"
+
+
+# ---------------------------------------------------------------------------
+# Drive source — end-to-end CLI scenarios (Slice 2).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "drive_uri",
+    [
+        "drive://1Zdp9aYV",
+        "https://drive.google.com/file/d/1Zdp9aYV/view",
+        "https://drive.google.com/file/d/1Zdp9aYV/view?usp=sharing",
+        "https://drive.google.com/open?id=1Zdp9aYV",
+    ],
+)
+def test_drive_happy_path_with_title(
+    drive_uri: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """transcribe <drive-uri> --title 'Session 17' --budget low -y →
+    writes Session-17-{date}.md with frontmatter title 'Session 17' and
+    canonical source_uri 'drive://1Zdp9aYV' (regardless of input form).
+    extract_audio NOT called (Drive path).
+
+    Validation case 25 — every accepted URL form must round-trip to
+    identical output."""
+    from transcriber.providers.base import Segment, TranscriptResult
+
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+
+    extract_called: list[str] = []
+
+    def _record_extract(*_args: object, **_kwargs: object) -> tuple[None, float]:
+        extract_called.append("CALLED")
+        return (None, 0.0)
+
+    monkeypatch.setattr("transcriber.cli.extract_audio", _record_extract)
+
+    class _OkProvider:
+        def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def transcribe(self, *_args: object, **_kwargs: object) -> TranscriptResult:
+            return TranscriptResult(
+                text="hi",
+                segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
+                language="en",
+                duration_seconds=1.0,
+                model="universal-3-pro",
+                job_id="drive-job",
+            )
+
+    monkeypatch.setattr("transcriber.cli.AssemblyAIProvider", _OkProvider)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "transcribe",
+            drive_uri,
+            "--title",
+            "Session 17",
+            "--budget",
+            "low",
+            "-y",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert extract_called == []  # Drive path skips ffmpeg
+    written = list(tmp_path.glob("Session-17-*.md"))
+    assert len(written) == 1, f"expected one Session-17-*.md, got {written}"
+    content = written[0].read_text(encoding="utf-8")
+    assert "title: Session 17" in content
+    # Canonical drive://FILE_ID in source_uri regardless of which URL form
+    # was passed (validation case 25's central assertion).
+    assert "source_uri: drive://1Zdp9aYV" in content
+    assert "source_kind: google_drive" in content
+    # Validation case 20 (review I2): the Drive notify message must signal
+    # per-minute billing + dashboard. Lock the production wording so a
+    # future "improvement" that drops either substring breaks the suite.
+    assert "per-minute" in result.output
+    assert "dashboard" in result.output.lower()
+
+
+def test_drive_happy_path_no_title_uses_file_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No --title → output filename uses the file ID."""
+    from transcriber.providers.base import Segment, TranscriptResult
+
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+
+    class _OkProvider:
+        def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def transcribe(self, *_args: object, **_kwargs: object) -> TranscriptResult:
+            return TranscriptResult(
+                text="hi",
+                segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
+                language="en",
+                duration_seconds=1.0,
+                model="universal-3-pro",
+                job_id="drive-job",
+            )
+
+    monkeypatch.setattr("transcriber.cli.AssemblyAIProvider", _OkProvider)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["transcribe", "drive://1Zdp9aYV", "--budget", "low", "-y"],
+    )
+    assert result.exit_code == 0, result.output
+    written = list(tmp_path.glob("1Zdp9aYV-*.md"))
+    assert len(written) == 1
+
+
+def test_unknown_uri_scheme_exits_2(tmp_path: Path) -> None:
+    """transcribe https://example.com/foo → exit 2 with 'URI scheme not
+    supported' (NOT a 'file not found' fallthrough to LocalSource)."""
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["transcribe", "https://example.com/foo", "--budget", "low", "-y"],
+    )
+    assert result.exit_code == 2
+    assert "URI scheme not supported" in result.output
+
+
+def test_drive_budget_free_still_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drive sources don't bypass Gate 2."""
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["transcribe", "drive://1Zdp9aYV", "-y"]  # default --budget=free
+    )
+    assert result.exit_code == 2
+    assert "paid provider" in result.output.lower()
+
+
+def test_drive_no_api_key_still_blocks_at_gate_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validation case 21 (review I3): Drive sources don't bypass Gate 1.
+
+    Without ASSEMBLYAI_API_KEY, a Drive transcription must reject at the
+    gate (exit 2 with the Gate 1 message), NOT proceed to AssemblyAI and
+    surface a wire-level 401. Locks the contract so a future refactor of
+    the Drive branch (e.g., short-circuiting Gate 1 when cost_summary is
+    set) breaks the suite instead of shipping a silent regression.
+    """
+    monkeypatch.delenv("ASSEMBLYAI_API_KEY", raising=False)
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["transcribe", "drive://1Zdp9aYV", "--budget", "low", "-y"],
+    )
+    assert result.exit_code == 2
+    assert "ASSEMBLYAI_API_KEY" in result.output
+
+
+def test_drive_unsanitized_title_exits_2() -> None:
+    """transcribe drive://X --title '../foo' → exit 2 (sanitization)."""
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["transcribe", "drive://1Zdp9aYV", "--title", "../foo", "--budget", "low", "-y"],
+    )
+    assert result.exit_code == 2
+    assert "unsafe filename" in result.output
+
+
+def test_local_path_uploads_extracted_wav_not_source_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1 regression: after extract_audio, the provider must receive the
+    canonical 16 kHz mono WAV path — NOT the original source file.
+
+    Without the dataclasses.replace(media, local_path=wav_path) swap in
+    the CLI's local-path branch, the provider uploads media.local_path
+    (the .mp4 / .m4a the user passed) instead of the WAV extract_audio
+    produced. AssemblyAI accepts any audio container, so the regression
+    is invisible at runtime past mocks but breaks Slice 1's
+    "extract → normalised WAV → upload" contract silently.
+    """
+    from transcriber.providers.base import Segment, TranscriptResult
+    from transcriber.sources.base import PreparedMedia
+
+    src = tmp_path / "video.mp4"
+    src.write_bytes(b"")
+    wav_in_workspace = tmp_path / "ws" / "extracted.wav"
+    wav_in_workspace.parent.mkdir()
+    wav_in_workspace.write_bytes(b"")
+
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr(
+        "transcriber.cli.extract_audio",
+        lambda _path, _ws: (wav_in_workspace, 60.0),
+    )
+
+    received_media: list[PreparedMedia] = []
+
+    class _RecordingProvider:
+        def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def transcribe(
+            self, media: PreparedMedia, *_args: object, **_kwargs: object
+        ) -> TranscriptResult:
+            received_media.append(media)
+            return TranscriptResult(
+                text="hi",
+                segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
+                language="en",
+                duration_seconds=1.0,
+                model="universal-3-pro",
+                job_id="local-job",
+            )
+
+    monkeypatch.setattr("transcriber.cli.AssemblyAIProvider", _RecordingProvider)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["transcribe", str(src), "--budget", "low", "-y"]
+    )
+    assert result.exit_code == 0, result.output
+    assert len(received_media) == 1
+    # The provider must have seen the EXTRACTED WAV in the workspace,
+    # not the original .mp4 the user passed on the command line. This is
+    # the C1 invariant.
+    assert received_media[0].local_path == wav_in_workspace
+    assert received_media[0].local_path != src

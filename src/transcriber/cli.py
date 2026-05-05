@@ -8,6 +8,7 @@ json) land in their own phases.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 from datetime import date
@@ -32,7 +33,8 @@ from transcriber.core.workspace import RunWorkspace
 from transcriber.formatters import markdown as md_formatter
 from transcriber.providers.assemblyai import AssemblyAIProvider
 from transcriber.providers.base import ProviderError
-from transcriber.sources.local import LocalSource
+from transcriber.sources import resolve_source
+from transcriber.sources.base import SourceInputError
 
 
 class Budget(StrEnum):
@@ -147,6 +149,13 @@ def transcribe(
         str | None,
         typer.Option("-l", "--language", help="Language code, e.g. 'en'. Default: auto-detect"),
     ] = None,
+    title: Annotated[
+        str | None,
+        typer.Option(
+            "--title",
+            help="Frontmatter + filename stem (Drive sources). Defaults to file ID.",
+        ),
+    ] = None,
     model: Annotated[
         str,
         typer.Option(
@@ -187,47 +196,135 @@ def transcribe(
     keep = keep_temp or settings.keep_temp
     try:
         with RunWorkspace(keep=keep) as workspace:
-            # Resolve source (local only in Slice 1).
+            # Resolve the source. Dispatcher reject-not-swallows unknown
+            # :// URIs (exit 2) so the user gets a clear "URI scheme not
+            # supported" rather than a misleading "file not found" from
+            # LocalSource fallthrough.
             try:
-                media = LocalSource.prepare(source, workspace)
+                source_cls = resolve_source(source)
+            except SourceInputError as exc:
+                console.print(f"[red]error:[/red] {exc}")
+                raise typer.Exit(code=2) from exc
+
+            # Validate --title up-front so source.prepare() gets a clean
+            # string. Validation rejects path-traversal characters before
+            # the source layer or atomic.write_text_atomic ever sees them.
+            display_title: str | None
+            if title is not None:
+                try:
+                    display_title = _validate_title(title)
+                except ValueError as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    raise typer.Exit(code=2) from exc
+            else:
+                display_title = None
+
+            # Prepare the source with the validated title. Each source
+            # decides how to use it: LocalSource overrides the filename-
+            # stem default; DriveSource stores it for the formatter.
+            #
+            # Catch SourceInputError specifically (NOT bare ValueError):
+            # PreparedMedia.__post_init__ raises plain ValueError for
+            # invariant violations (producer bug — both fields set, or
+            # neither). Letting that bubble with a traceback surfaces the
+            # bug to the developer rather than showing the dataclass
+            # invariant message to the end user as exit 2 (review I7).
+            try:
+                media = source_cls.prepare(source, workspace, title=display_title)
             except FileNotFoundError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=4) from exc
-            except ValueError as exc:
+            except SourceInputError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
 
-            # Extract audio + duration via ffprobe.
-            try:
-                wav_path, duration_seconds = extract_audio(media.local_path, workspace)
-            except AudioExtractError as exc:
-                console.print(f"[red]error:[/red] {exc}")
-                raise typer.Exit(code=4) from exc
+            # Branch: Drive passthrough skips ffmpeg + per-call cost
+            # estimate; local upload runs both.
+            if media.remote_url is not None:
+                # Drive variant: Gate 1 + Gate 2 still fire via the
+                # standard budget_check; the cost-estimate notify is
+                # overridden via cost_summary because we have no local
+                # duration to estimate against. Soft-cap silenced too.
+                try:
+                    proceed = budget_check(
+                        provider_name="AssemblyAI",
+                        budget=budget.value,
+                        key_configured=settings.assemblyai_configured,
+                        cost_usd=0.0,  # unused when cost_summary is set
+                        yes=yes,
+                        prompt=_confirm_or_decline,
+                        notify=lambda msg: console.print(msg),
+                        cost_summary=(
+                            "Provider: AssemblyAI · URL passthrough — "
+                            "AssemblyAI bills per-minute against the public "
+                            "URL; exact cost in the AssemblyAI dashboard "
+                            "after the run."
+                        ),
+                    )
+                except BudgetError as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    raise typer.Exit(code=2) from exc
+                if not proceed:
+                    console.print(
+                        "[yellow]Cancelled by user; no charge incurred.[/yellow]"
+                    )
+                    raise typer.Exit(code=0)
+            else:
+                # Local path: existing extract + budget flow.
+                if media.local_path is None:
+                    # Defence-in-depth: PreparedMedia.__post_init__ guarantees
+                    # exactly-one-of (local_path, remote_url) is set; reaching
+                    # this branch means a Source produced an inconsistent shape.
+                    raise RuntimeError(
+                        "PreparedMedia invariant violated: "
+                        "local source has no local_path."
+                    )
 
-            # Two-gate spend check.
-            cost_usd = estimate_assemblyai_cost(duration_seconds)
-            try:
-                proceed = budget_check(
-                    provider_name="AssemblyAI",
-                    budget=budget.value,
-                    key_configured=settings.assemblyai_configured,
-                    cost_usd=cost_usd,
-                    yes=yes,
-                    prompt=_confirm_or_decline,
-                    notify=lambda msg: console.print(msg),
-                )
-            except BudgetError as exc:
-                console.print(f"[red]error:[/red] {exc}")
-                raise typer.Exit(code=2) from exc
-            if not proceed:
-                console.print("[yellow]Cancelled by user; no charge incurred.[/yellow]")
-                raise typer.Exit(code=0)
+                try:
+                    wav_path, duration_seconds = extract_audio(
+                        media.local_path, workspace
+                    )
+                except AudioExtractError as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    raise typer.Exit(code=4) from exc
+
+                # C1 fix: thread the canonical 16 kHz mono WAV back into
+                # ``media`` so the provider uploads the extracted audio,
+                # NOT the original .mp4 / .m4a / etc. Without this swap the
+                # AssemblyAI upload path silently regresses Slice 1's
+                # "extract → normalised WAV → upload" contract: the provider
+                # would receive ``media.local_path`` (= original source) and
+                # upload it. AssemblyAI accepts any audio container, so the
+                # regression is invisible at runtime past mocks but degrades
+                # transcription quality on any local source whose container
+                # isn't already AssemblyAI's preferred shape.
+                media = dataclasses.replace(media, local_path=wav_path)
+
+                cost_usd = estimate_assemblyai_cost(duration_seconds)
+                try:
+                    proceed = budget_check(
+                        provider_name="AssemblyAI",
+                        budget=budget.value,
+                        key_configured=settings.assemblyai_configured,
+                        cost_usd=cost_usd,
+                        yes=yes,
+                        prompt=_confirm_or_decline,
+                        notify=lambda msg: console.print(msg),
+                    )
+                except BudgetError as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    raise typer.Exit(code=2) from exc
+                if not proceed:
+                    console.print(
+                        "[yellow]Cancelled by user; no charge incurred.[/yellow]"
+                    )
+                    raise typer.Exit(code=0)
 
             # Provider call.
             provider = AssemblyAIProvider(max_wait_seconds=max_wait * 60)
             try:
                 result = provider.transcribe(
-                    wav_path,
+                    media,
                     language=language,
                     diarize=not no_speakers,
                     speech_model=model,
@@ -249,7 +346,19 @@ def transcribe(
 
             # Resolve output path with collision-suffix policy.
             if output is None:
-                stem = media.local_path.stem
+                if display_title is not None:
+                    # Whitespace in --title becomes - in the filename;
+                    # YAML title preserves the original.
+                    stem = _title_to_stem(display_title)
+                elif media.local_path is not None:
+                    stem = media.local_path.stem
+                else:
+                    # Drive source, no --title: fall back to the file ID.
+                    # extra['drive_file_id'] is set by DriveSource.prepare;
+                    # missing key is a producer-side bug, not user input.
+                    # Let KeyError bubble with traceback rather than
+                    # silently writing 'untitled-DATE.md' (review I5).
+                    stem = media.extra["drive_file_id"]
                 date_str = date.today().isoformat()
                 output = settings.output_dir / f"{stem}-{date_str}.md"
             output = atomic.resolve_collision(output)
