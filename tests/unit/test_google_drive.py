@@ -115,7 +115,8 @@ def test_drive_source_prepare_returns_correct_prepared_media() -> None:
     assert media.original_uri == f"drive://{_VALID_ID}"
     assert media.local_path is None
     assert media.remote_url == (
-        f"https://drive.google.com/uc?export=download&id={_VALID_ID}"
+        f"https://drive.usercontent.google.com/download"
+        f"?id={_VALID_ID}&export=download&confirm=t"
     )
     assert media.title is None  # CLI fills in from --title
     assert media.duration_seconds is None
@@ -133,7 +134,8 @@ def test_drive_source_prepare_canonicalises_full_drive_url() -> None:
 
     assert media.original_uri == f"drive://{_VALID_ID}"
     assert media.remote_url == (
-        f"https://drive.google.com/uc?export=download&id={_VALID_ID}"
+        f"https://drive.usercontent.google.com/download"
+        f"?id={_VALID_ID}&export=download&confirm=t"
     )
 
 

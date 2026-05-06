@@ -102,7 +102,17 @@ class DriveSource:
         uri: str, workspace: RunWorkspace, *, title: str | None = None
     ) -> PreparedMedia:
         file_id = _extract_file_id(uri)
-        remote_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        # The legacy ``drive.google.com/uc?export=download&id=FILE_ID`` host
+        # injects an HTML "virus-scan warning" interstitial for files >~25 MB,
+        # which AssemblyAI's URL fetcher receives instead of the file
+        # (manifests as: "File does not appear to contain audio. File type is
+        # text/html"). The drive.usercontent.google.com download host with
+        # ``confirm=t`` bypasses the interstitial and serves the file directly.
+        # Verified empirically against a 235 MB Drive source on 2026-05-06.
+        remote_url = (
+            f"https://drive.usercontent.google.com/download"
+            f"?id={file_id}&export=download&confirm=t"
+        )
         return PreparedMedia(
             kind="google_drive",
             original_uri=f"drive://{file_id}",

@@ -76,7 +76,7 @@ def _media_kwargs(**overrides: object) -> dict[str, object]:
         "kind": "google_drive",
         "original_uri": "drive://X",
         "local_path": None,
-        "remote_url": "https://drive.google.com/uc?export=download&id=X",
+        "remote_url": "https://drive.usercontent.google.com/download?id=X&export=download&confirm=t",
         "title": None,
         "duration_seconds": None,
         "workspace": RunWorkspace(),
@@ -114,7 +114,7 @@ def test_prepared_media_accepts_local_path_only(tmp_path: Path) -> None:
 def test_prepared_media_accepts_remote_url_only() -> None:
     media = PreparedMedia(**_media_kwargs())  # type: ignore[arg-type]
     assert media.local_path is None
-    assert media.remote_url == "https://drive.google.com/uc?export=download&id=X"
+    assert media.remote_url == "https://drive.usercontent.google.com/download?id=X&export=download&confirm=t"
 
 
 def test_source_input_error_is_value_error_subclass() -> None:
