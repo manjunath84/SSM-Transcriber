@@ -91,3 +91,25 @@ def test_load_drive_credentials_refreshes_when_expired(tmp_path: Path) -> None:
     assert result is mock_creds
     mock_creds.refresh.assert_called_once_with(mock_request.return_value)
     assert token_path.read_text() == '{"token": "refreshed"}'
+
+
+def test_load_drive_credentials_raises_auth_error_when_refresh_fails(tmp_path: Path) -> None:
+    """RefreshError during token refresh → AuthError (not an uncaught exception)."""
+    from google.auth import exceptions as google_auth_exceptions
+
+    token_path = tmp_path / "google_token.json"
+    token_path.write_text('{"token": "expired"}')
+
+    mock_creds = MagicMock()
+    mock_creds.valid = False
+    mock_creds.expired = True
+    mock_creds.refresh_token = "refresh-tok"
+    mock_creds.refresh.side_effect = google_auth_exceptions.RefreshError("revoked")
+
+    creds_patcher = patch(
+        "transcriber.core.auth.Credentials.from_authorized_user_file", return_value=mock_creds
+    )
+    with patch("transcriber.core.auth.TOKEN_PATH", token_path):
+        with creds_patcher:
+            with pytest.raises(AuthError, match="could not be refreshed"):
+                load_drive_credentials()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from google.auth import exceptions as google_auth_exceptions
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -38,7 +39,13 @@ def load_drive_credentials() -> Credentials:
     if creds.valid:
         return creds
     if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
+        try:
+            creds.refresh(Request())
+        except google_auth_exceptions.RefreshError as exc:
+            raise AuthError(
+                "Google Drive token could not be refreshed. "
+                "Rerun: ssm-transcriber auth google-drive"
+            ) from exc
         _save_credentials(creds)
         return creds
     raise AuthError(

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from transcriber.destinations.base import DestinationError, OutputDestination
 from transcriber.destinations.drive import DriveDestination
 
 _LOAD_CREDS = "transcriber.destinations.drive.load_drive_credentials"
@@ -20,6 +21,12 @@ def _make_service(web_view_link: str = "https://drive.google.com/file/d/abc/view
         "webViewLink": web_view_link,
     }
     return mock_service
+
+
+def test_drive_destination_satisfies_output_destination_protocol() -> None:
+    """DriveDestination structurally satisfies OutputDestination Protocol."""
+    dest: OutputDestination = DriveDestination(folder_id="test")  # mypy checks this
+    assert hasattr(dest, "upload")
 
 
 def test_upload_returns_drive_url(tmp_path: Path) -> None:
@@ -57,8 +64,6 @@ def test_upload_propagates_api_error(tmp_path: Path) -> None:
     """If the API call raises, DestinationError is raised with the reason."""
     from googleapiclient.errors import HttpError
 
-    from transcriber.destinations.base import DestinationError
-
     md_file = tmp_path / "out.md"
     md_file.write_text("# hi")
 
@@ -77,8 +82,6 @@ def test_upload_propagates_api_error(tmp_path: Path) -> None:
 
 def test_upload_raises_when_webviewlink_missing(tmp_path: Path) -> None:
     """If Drive response omits webViewLink, DestinationError is raised."""
-    from transcriber.destinations.base import DestinationError
-
     md_file = tmp_path / "session.md"
     md_file.write_text("# Transcript\n")
 

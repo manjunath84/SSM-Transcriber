@@ -467,7 +467,11 @@ def transcribe(
             console.print(f"[green]✓[/green] Saved to: {output}")
 
             if upload_to_drive:
-                assert upload_folder_id is not None  # set at fail-fast check above
+                if upload_folder_id is None:
+                    raise RuntimeError(
+                        "upload_folder_id is None despite upload_to_drive=True; "
+                        "fail-fast check at the top of transcribe should have caught this"
+                    )
                 try:
                     dest = DriveDestination(folder_id=upload_folder_id)
                     drive_url = dest.upload(output, output.name)
