@@ -9,7 +9,7 @@ calls that function with the planned output path.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -601,3 +601,94 @@ def test_auth_google_drive_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
         client_id="test-client-id", client_secret="test-client-secret"
     )
     assert "authenticated" in result.stdout.lower()
+
+
+# ── upload command ────────────────────────────────────────────────────────────
+
+def test_upload_missing_file_exits_4(tmp_path: Path) -> None:
+    """`upload` with a path that doesn't exist → exit 4 (local file error).
+
+    Exit 4 matches the established matrix: local-file errors (missing source,
+    ffmpeg failure) all map to 4.  The task spec draft said exit 1, but the
+    project matrix is {0, 2, 3, 4} — "file not found" is a local-file error,
+    same category as the ``transcribe`` command's FileNotFoundError → exit 4
+    path (cli.py lines 253-256).
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["upload", str(tmp_path / "nonexistent.md")])
+    assert result.exit_code == 4
+    assert "not found" in result.stdout.lower()
+
+
+def test_upload_no_folder_configured_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`upload` with no folder set → exit 2 with helpful message.
+
+    Uses setattr on the singleton because drive_output_folder_id is a
+    pydantic-settings field baked in at construction time; setenv would
+    not affect a singleton already created (and a teammate with
+    TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID in their .env would see a flaky
+    failure without this explicit override).
+    """
+    md = tmp_path / "session.md"
+    md.write_text("# Transcript")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", None)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upload", str(md)])
+    assert result.exit_code == 2
+    assert "--drive-folder" in result.stdout
+
+
+def test_upload_happy_path_calls_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Happy path: DriveDestination.upload() called with correct args, URL printed.
+
+    Uses setattr on the singleton because drive_output_folder_id is a
+    pydantic-settings field baked in at construction time.
+    """
+    md = tmp_path / "session.md"
+    md.write_text("# Transcript")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-abc")
+
+    mock_dest = MagicMock()
+    mock_dest.upload.return_value = "https://drive.google.com/file/d/xyz/view"
+
+    runner = CliRunner()
+    with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+        result = runner.invoke(app, ["upload", str(md)])
+
+    assert result.exit_code == 0
+    assert "https://drive.google.com/file/d/xyz/view" in result.stdout
+    mock_dest.upload.assert_called_once_with(md, "session.md")
+
+
+def test_upload_drive_folder_flag_overrides_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--drive-folder` overrides TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID.
+
+    Uses setattr on the singleton because drive_output_folder_id is a
+    pydantic-settings field baked in at construction time.
+    """
+    md = tmp_path / "out.md"
+    md.write_text("# hi")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "env-folder")
+
+    mock_dest = MagicMock()
+    mock_dest.upload.return_value = "https://drive.google.com/file/d/new/view"
+
+    captured_folder: list[str] = []
+
+    def capture_folder(folder_id: str) -> MagicMock:
+        captured_folder.append(folder_id)
+        return mock_dest
+
+    runner = CliRunner()
+    with patch("transcriber.cli.DriveDestination", side_effect=capture_folder):
+        result = runner.invoke(app, ["upload", str(md), "--drive-folder", "cli-folder"])
+
+    assert result.exit_code == 0
+    assert captured_folder == ["cli-folder"]

@@ -25,13 +25,15 @@ from rich.table import Table
 from transcriber.config import settings
 from transcriber.core import atomic
 from transcriber.core.audio import AudioExtractError, extract as extract_audio
-from transcriber.core.auth import authenticate_drive
+from transcriber.core.auth import AuthError, authenticate_drive
 from transcriber.core.budget import (
     BudgetError,
     check as budget_check,
     estimate_assemblyai_cost,
 )
 from transcriber.core.workspace import RunWorkspace
+from transcriber.destinations.base import DestinationError
+from transcriber.destinations.drive import DriveDestination
 from transcriber.formatters import markdown as md_formatter
 from transcriber.providers.assemblyai import AssemblyAIProvider
 from transcriber.providers.base import ProviderError
@@ -147,6 +149,48 @@ def _title_to_stem(title: str) -> str:
     keeps the YAML display form separate from the filename-friendly form.
     """
     return re.sub(r"\s+", "-", title)
+
+
+def _resolve_drive_folder(cli_folder: str | None) -> str:
+    """Return the Drive folder ID from CLI flag or config. Exits 2 if neither set."""
+    folder = cli_folder or settings.drive_output_folder_id
+    if not folder:
+        console.print(
+            "[red]error:[/red] No Drive folder configured.\n"
+            "Pass --drive-folder FOLDER_ID  or  set TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID in .env"
+        )
+        raise typer.Exit(code=2)
+    return folder
+
+
+# ── transcriber upload ────────────────────────────────────────────────────────
+
+@app.command()
+def upload(
+    file: Annotated[Path, typer.Argument(help="Transcript file to upload to Google Drive")],
+    drive_folder: Annotated[
+        str | None,
+        typer.Option(
+            "--drive-folder",
+            help="Drive folder ID (overrides TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID)",
+        ),
+    ] = None,
+) -> None:
+    """Upload an existing transcript file to Google Drive."""
+    if not file.exists():
+        console.print(f"[red]error:[/red] File not found: {file}")
+        raise typer.Exit(code=4)
+
+    folder_id = _resolve_drive_folder(drive_folder)
+
+    try:
+        dest = DriveDestination(folder_id=folder_id)
+        url = dest.upload(file, file.name)
+    except (AuthError, DestinationError) as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+    console.print(f"Uploaded → {url}")
 
 
 # ── transcriber transcribe ────────────────────────────────────────────────────
