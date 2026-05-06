@@ -763,6 +763,7 @@ def test_transcribe_upload_to_drive_happy_path(
     src.write_bytes(b"")
     monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
     monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-xyz")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
     monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
 
     mock_provider = MagicMock()
@@ -792,3 +793,87 @@ def test_transcribe_upload_to_drive_happy_path(
     uploaded_path: Path = call_args.args[0]
     assert uploaded_path.suffix == ".md"
     assert "https://drive.google.com/file/d/test/view" in result.stdout
+
+
+def test_transcribe_upload_to_drive_auth_error_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--upload-to-drive` when DriveDestination raises AuthError → exit 2, local .md preserved."""
+    from transcriber.providers.base import TranscriptResult
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-xyz")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    mock_provider = MagicMock()
+    mock_provider.transcribe.return_value = TranscriptResult(
+        text="Hello world",
+        segments=[],
+        language="en",
+        duration_seconds=60.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    mock_dest = MagicMock()
+    mock_dest.upload.side_effect = AuthError("token expired")
+
+    runner = CliRunner()
+    with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+        with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+            result = runner.invoke(
+                app,
+                ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+            )
+
+    assert result.exit_code == 2
+    assert "token expired" in result.stdout
+    # The local .md must still exist despite the upload failure
+    md_files = list(tmp_path.glob("*.md"))
+    assert len(md_files) == 1, "Local .md transcript must be preserved on upload failure"
+
+
+def test_transcribe_upload_to_drive_destination_error_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--upload-to-drive` when DriveDestination raises DestinationError →
+    exit 2, local .md preserved."""
+    from transcriber.providers.base import TranscriptResult
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-xyz")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    mock_provider = MagicMock()
+    mock_provider.transcribe.return_value = TranscriptResult(
+        text="Hello world",
+        segments=[],
+        language="en",
+        duration_seconds=60.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    mock_dest = MagicMock()
+    mock_dest.upload.side_effect = DestinationError(
+        "Drive upload failed: 403. Transcript saved locally at /tmp/x.md"
+    )
+
+    runner = CliRunner()
+    with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+        with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+            result = runner.invoke(
+                app,
+                ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+            )
+
+    assert result.exit_code == 2
+    assert "Drive upload failed" in result.stdout
+    md_files = list(tmp_path.glob("*.md"))
+    assert len(md_files) == 1, "Local .md transcript must be preserved on upload failure"

@@ -292,8 +292,10 @@ def transcribe(
                 display_title = None
 
             # Fail fast: validate Drive folder before doing any transcription work.
+            # Store the result so we don't call _resolve_drive_folder twice.
+            upload_folder_id: str | None = None
             if upload_to_drive:
-                _resolve_drive_folder(drive_folder)
+                upload_folder_id = _resolve_drive_folder(drive_folder)
 
             # Prepare the source with the validated title. Each source
             # decides how to use it: LocalSource overrides the filename-
@@ -465,9 +467,9 @@ def transcribe(
             console.print(f"[green]✓[/green] Saved to: {output}")
 
             if upload_to_drive:
-                folder_id = _resolve_drive_folder(drive_folder)
+                assert upload_folder_id is not None  # set at fail-fast check above
                 try:
-                    dest = DriveDestination(folder_id=folder_id)
+                    dest = DriveDestination(folder_id=upload_folder_id)
                     drive_url = dest.upload(output, output.name)
                 except (AuthError, DestinationError) as exc:
                     console.print(f"[red]error:[/red] {exc}")
