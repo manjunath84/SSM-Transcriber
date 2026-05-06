@@ -177,7 +177,7 @@ def upload(
     ] = None,
 ) -> None:
     """Upload an existing transcript file to Google Drive."""
-    if not file.exists():
+    if not file.is_file():
         console.print(f"[red]error:[/red] File not found: {file}")
         raise typer.Exit(code=4)
 

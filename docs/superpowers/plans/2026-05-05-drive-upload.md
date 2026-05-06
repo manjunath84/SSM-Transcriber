@@ -509,11 +509,11 @@ Add to the bottom of `tests/unit/test_cli.py`:
 ```python
 # ── auth command ─────────────────────────────────────────────────────────────
 
-def test_auth_unknown_provider_exits_1() -> None:
-    """`auth s3` is not a supported provider → exit 1."""
+def test_auth_unknown_provider_exits_2() -> None:
+    """`auth s3` is not a supported provider → exit 2."""
     runner = CliRunner()
     result = runner.invoke(app, ["auth", "s3"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "unknown provider" in result.stdout.lower()
 
 
@@ -554,7 +554,7 @@ from unittest.mock import patch
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-uv run pytest tests/unit/test_cli.py::test_auth_unknown_provider_exits_1 \
+uv run pytest tests/unit/test_cli.py::test_auth_unknown_provider_exits_2 \
               tests/unit/test_cli.py::test_auth_google_drive_missing_credentials_exits_2 \
               tests/unit/test_cli.py::test_auth_google_drive_happy_path -v
 ```
@@ -581,7 +581,7 @@ def auth(
     """Authenticate with a cloud provider and save credentials."""
     if provider != "google-drive":
         console.print(f"[red]error:[/red] Unknown provider {provider!r}. Supported: 'google-drive'")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=2)
 
     client_id = (os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
@@ -602,7 +602,7 @@ Also add `import os` to the imports in `cli.py` if not already present.
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-uv run pytest tests/unit/test_cli.py::test_auth_unknown_provider_exits_1 \
+uv run pytest tests/unit/test_cli.py::test_auth_unknown_provider_exits_2 \
               tests/unit/test_cli.py::test_auth_google_drive_missing_credentials_exits_2 \
               tests/unit/test_cli.py::test_auth_google_drive_happy_path -v
 ```
@@ -639,11 +639,11 @@ Add to the bottom of `tests/unit/test_cli.py`:
 ```python
 # ── upload command ────────────────────────────────────────────────────────────
 
-def test_upload_missing_file_exits_1(tmp_path: Path) -> None:
-    """`upload` with a path that doesn't exist → exit 1."""
+def test_upload_missing_file_exits_4(tmp_path: Path) -> None:
+    """`upload` with a path that doesn't exist → exit 4."""
     runner = CliRunner()
     result = runner.invoke(app, ["upload", str(tmp_path / "nonexistent.md")])
-    assert result.exit_code == 1
+    assert result.exit_code == 4
     assert "not found" in result.stdout.lower()
 
 
@@ -715,7 +715,7 @@ from unittest.mock import MagicMock, patch
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-uv run pytest tests/unit/test_cli.py::test_upload_missing_file_exits_1 \
+uv run pytest tests/unit/test_cli.py::test_upload_missing_file_exits_4 \
               tests/unit/test_cli.py::test_upload_no_folder_configured_exits_2 \
               tests/unit/test_cli.py::test_upload_happy_path_calls_destination \
               tests/unit/test_cli.py::test_upload_drive_folder_flag_overrides_env -v
@@ -754,7 +754,7 @@ def upload(
     """Upload an existing transcript file to Google Drive."""
     if not file.exists():
         console.print(f"[red]error:[/red] File not found: {file}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=4)
 
     folder_id = _resolve_drive_folder(drive_folder)
 
@@ -771,7 +771,7 @@ def upload(
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-uv run pytest tests/unit/test_cli.py::test_upload_missing_file_exits_1 \
+uv run pytest tests/unit/test_cli.py::test_upload_missing_file_exits_4 \
               tests/unit/test_cli.py::test_upload_no_folder_configured_exits_2 \
               tests/unit/test_cli.py::test_upload_happy_path_calls_destination \
               tests/unit/test_cli.py::test_upload_drive_folder_flag_overrides_env -v

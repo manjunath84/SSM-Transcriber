@@ -15,6 +15,8 @@ import pytest
 from typer.testing import CliRunner
 
 from transcriber.cli import app
+from transcriber.core.auth import AuthError
+from transcriber.destinations.base import DestinationError
 
 
 def test_unsupported_format_exits_2(tmp_path: Path) -> None:
@@ -657,11 +659,12 @@ def test_upload_happy_path_calls_destination(
     mock_dest.upload.return_value = "https://drive.google.com/file/d/xyz/view"
 
     runner = CliRunner()
-    with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+    with patch("transcriber.cli.DriveDestination", return_value=mock_dest) as MockDest:
         result = runner.invoke(app, ["upload", str(md)])
 
     assert result.exit_code == 0
     assert "https://drive.google.com/file/d/xyz/view" in result.stdout
+    MockDest.assert_called_once_with(folder_id="folder-abc")
     mock_dest.upload.assert_called_once_with(md, "session.md")
 
 
@@ -692,3 +695,39 @@ def test_upload_drive_folder_flag_overrides_env(
 
     assert result.exit_code == 0
     assert captured_folder == ["cli-folder"]
+
+
+def test_upload_auth_error_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`upload` when DriveDestination raises AuthError → exit 2 with the error message."""
+    md = tmp_path / "f.md"
+    md.write_text("# hi")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-abc")
+
+    mock_dest = MagicMock()
+    mock_dest.upload.side_effect = AuthError("token expired")
+
+    with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+        result = CliRunner().invoke(app, ["upload", str(md)])
+
+    assert result.exit_code == 2
+    assert "token expired" in result.stdout
+
+
+def test_upload_destination_error_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`upload` when DriveDestination raises DestinationError → exit 2 with the error message."""
+    md = tmp_path / "f.md"
+    md.write_text("# hi")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-abc")
+
+    mock_dest = MagicMock()
+    mock_dest.upload.side_effect = DestinationError("Drive upload failed: 403")
+
+    with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+        result = CliRunner().invoke(app, ["upload", str(md)])
+
+    assert result.exit_code == 2
+    assert "Drive upload failed" in result.stdout
