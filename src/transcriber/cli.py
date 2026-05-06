@@ -233,11 +233,11 @@ def transcribe(
     ] = False,
     upload_to_drive: Annotated[
         bool,
-        typer.Option("--upload-to-drive", help="Upload the transcript to Google Drive after transcription"),
+        typer.Option("--upload-to-drive", help="Upload the transcript to Google Drive after transcription"),  # noqa: E501
     ] = False,
     drive_folder: Annotated[
         str | None,
-        typer.Option("--drive-folder", help="Drive folder ID (overrides TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID)"),
+        typer.Option("--drive-folder", help="Drive folder ID (overrides TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID)"),  # noqa: E501
     ] = None,
     no_timestamps: Annotated[
         bool,
