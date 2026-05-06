@@ -27,6 +27,7 @@ def test_save_credentials_creates_file_and_parent_dirs(tmp_path: Path) -> None:
 
     assert token_path.exists()
     assert token_path.read_text() == '{"token": "t"}'
+    assert oct(token_path.stat().st_mode)[-3:] == "600"
 
 
 def test_load_drive_credentials_raises_auth_error_when_invalid(tmp_path: Path) -> None:
@@ -46,3 +47,47 @@ def test_load_drive_credentials_raises_auth_error_when_invalid(tmp_path: Path) -
         ):
             with pytest.raises(AuthError, match="expired"):
                 load_drive_credentials()
+
+
+def test_load_drive_credentials_returns_valid_creds(tmp_path: Path) -> None:
+    """Token file exists and credentials are still valid → return them directly."""
+    token_path = tmp_path / "google_token.json"
+    token_path.write_text('{"token": "valid"}')
+
+    mock_creds = MagicMock()
+    mock_creds.valid = True
+
+    creds_patcher = patch(
+        "transcriber.core.auth.Credentials.from_authorized_user_file",
+        return_value=mock_creds,
+    )
+    with patch("transcriber.core.auth.TOKEN_PATH", token_path):
+        with creds_patcher:
+            result = load_drive_credentials()
+
+    assert result is mock_creds
+
+
+def test_load_drive_credentials_refreshes_when_expired(tmp_path: Path) -> None:
+    """Expired token with refresh_token available → refreshes and saves updated creds."""
+    token_path = tmp_path / "google_token.json"
+    token_path.write_text('{"token": "expired"}')
+
+    mock_creds = MagicMock()
+    mock_creds.valid = False
+    mock_creds.expired = True
+    mock_creds.refresh_token = "refresh-tok"
+    mock_creds.to_json.return_value = '{"token": "refreshed"}'
+
+    creds_patcher = patch(
+        "transcriber.core.auth.Credentials.from_authorized_user_file",
+        return_value=mock_creds,
+    )
+    with patch("transcriber.core.auth.TOKEN_PATH", token_path):
+        with creds_patcher:
+            with patch("transcriber.core.auth.Request") as mock_request:
+                result = load_drive_credentials()
+
+    assert result is mock_creds
+    mock_creds.refresh.assert_called_once_with(mock_request.return_value)
+    assert token_path.read_text() == '{"token": "refreshed"}'

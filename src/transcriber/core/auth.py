@@ -68,3 +68,4 @@ def authenticate_drive(client_id: str, client_secret: str) -> None:
 def _save_credentials(creds: Credentials) -> None:
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     TOKEN_PATH.write_text(creds.to_json())
+    TOKEN_PATH.chmod(0o600)
