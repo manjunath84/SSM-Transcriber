@@ -567,11 +567,11 @@ def test_local_path_uploads_extracted_wav_not_source_file(
 
 # ── auth command ─────────────────────────────────────────────────────────────
 
-def test_auth_unknown_provider_exits_1() -> None:
-    """`auth s3` is not a supported provider → exit 1."""
+def test_auth_unknown_provider_exits_2() -> None:
+    """`auth s3` is not a supported provider → exit 2."""
     runner = CliRunner()
     result = runner.invoke(app, ["auth", "s3"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "unknown provider" in result.stdout.lower()
 
 

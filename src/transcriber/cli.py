@@ -438,7 +438,7 @@ def auth(
     """Authenticate with a cloud provider and save credentials."""
     if provider != "google-drive":
         console.print(f"[red]error:[/red] Unknown provider {provider!r}. Supported: 'google-drive'")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=2)
 
     client_id = (os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
