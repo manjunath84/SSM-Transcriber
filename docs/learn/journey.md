@@ -11,6 +11,22 @@
 
 ---
 
+## PR #19 — Drive Upload: transcript → Google Drive
+
+**Merged:** TBD  |  **Branch:** `feat/drive-upload`
+**Explainer:** [`prs/pr-019-drive-upload.md`](prs/pr-019-drive-upload.md)
+
+PR #19 adds Google Drive as an upload destination for transcripts. The
+`--upload-to-drive` flag on `transcribe` and a standalone `upload` subcommand
+both route through a thin `OutputDestination` Protocol, consistent with the
+`TranscriptionProvider` pattern. Auth is a one-time `auth google-drive`
+subcommand that persists a refresh token with 0600 permissions; the Drive
+`drive.file` scope limits the app to files it creates. The local `.md` is
+always written before upload is attempted — transcript loss on failure is
+impossible by construction.
+
+---
+
 ## PR #18 — Fix AssemblyAI rate constant + factor in diarization
 
 **Merged:** TBD  |  **Branch:** `fix/assemblyai-rate-constant`

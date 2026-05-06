@@ -17,6 +17,63 @@ uv run ssm-transcriber transcribe "https://youtu.be/..."
 > `uv run ssm-transcriber models download --quality balanced` to avoid waiting
 > on the first transcribe call or surprising an offline run.
 
+## Transcription quick-start
+
+```bash
+# Install
+git clone https://github.com/manjunath84/SSM-Transcriber
+cd SSM-Transcriber
+uv sync
+
+# Transcribe a local file (free — uses faster-whisper locally)
+# Note: Phase 1 (local faster-whisper) is not yet built.
+# The working path today is cloud transcription via AssemblyAI (see below).
+
+# Transcribe via AssemblyAI (requires ASSEMBLYAI_API_KEY in .env)
+uv run ssm-transcriber transcribe ./recording.mp4 --budget low
+
+# Transcribe a Google Drive file (public link)
+uv run ssm-transcriber transcribe "drive://FILE_ID" --budget low
+
+# See all options
+uv run ssm-transcriber transcribe --help
+```
+
+## Google Drive upload
+
+Transcripts can be uploaded to Google Drive after transcription, or
+uploaded separately from an existing file.
+
+### One-time setup
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com) → **APIs & Services** → **Library**. Search for **Google Drive API** and enable it.
+2. Go to **APIs & Services** → **Credentials** → **Create Credentials** → **OAuth client ID**. Choose **Desktop app**, download the JSON, and copy the client ID and secret.
+3. Add to your `.env`:
+   ```
+   GOOGLE_OAUTH_CLIENT_ID=your-client-id
+   GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
+   TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID=your-folder-id
+   ```
+   Find a folder ID by opening the folder in Drive — it's the last segment of the URL.
+4. Run the one-time auth flow:
+   ```bash
+   uv run ssm-transcriber auth google-drive
+   ```
+   A browser window opens for consent. The token is saved to `~/.config/transcriber/google_token.json`.
+
+### Usage
+
+```bash
+# Transcribe and upload in one step
+uv run ssm-transcriber transcribe "drive://FILE_ID" --budget low --upload-to-drive
+
+# Upload a previously-transcribed file
+uv run ssm-transcriber upload ./output/Session20-transcript-2026-05-05.md
+
+# Override the default folder for one run
+uv run ssm-transcriber upload ./output/session.md --drive-folder OTHER_FOLDER_ID
+```
+
 ## Cost model
 
 | Mode | Cost |
