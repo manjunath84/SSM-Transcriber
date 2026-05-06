@@ -9,6 +9,7 @@ calls that function with the planned output path.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -562,3 +563,41 @@ def test_local_path_uploads_extracted_wav_not_source_file(
         f"expected one video-*.md (Slice 1 source-stem behaviour), "
         f"got {[p.name for p in tmp_path.glob('*.md')]}"
     )
+
+
+# ── auth command ─────────────────────────────────────────────────────────────
+
+def test_auth_unknown_provider_exits_1() -> None:
+    """`auth s3` is not a supported provider → exit 1."""
+    runner = CliRunner()
+    result = runner.invoke(app, ["auth", "s3"])
+    assert result.exit_code == 1
+    assert "unknown provider" in result.stdout.lower()
+
+
+def test_auth_google_drive_missing_credentials_exits_2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`auth google-drive` without OAuth credentials configured → exit 2."""
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
+    runner = CliRunner()
+    result = runner.invoke(app, ["auth", "google-drive"])
+    assert result.exit_code == 2
+    assert "GOOGLE_OAUTH_CLIENT_ID" in result.stdout
+
+
+def test_auth_google_drive_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`auth google-drive` with credentials runs authenticate_drive and exits 0."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "test-client-secret")
+
+    with patch("transcriber.cli.authenticate_drive") as mock_auth:
+        runner = CliRunner()
+        result = runner.invoke(app, ["auth", "google-drive"])
+
+    assert result.exit_code == 0
+    mock_auth.assert_called_once_with(
+        client_id="test-client-id", client_secret="test-client-secret"
+    )
+    assert "authenticated" in result.stdout.lower()

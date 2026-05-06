@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 import re
 from datetime import date
 from enum import StrEnum
@@ -24,6 +25,7 @@ from rich.table import Table
 from transcriber.config import settings
 from transcriber.core import atomic
 from transcriber.core.audio import AudioExtractError, extract as extract_audio
+from transcriber.core.auth import authenticate_drive
 from transcriber.core.budget import (
     BudgetError,
     check as budget_check,
@@ -431,13 +433,25 @@ def providers() -> None:
 
 @app.command()
 def auth(
-    service: Annotated[str, typer.Argument(help="Service to authenticate: google-drive")],
+    provider: Annotated[str, typer.Argument(help="Provider to authenticate ('google-drive')")],
 ) -> None:
-    """Authenticate with an external service (e.g. Google Drive OAuth)."""
-    console.print(f"[yellow]Auth for '{service}' not yet implemented (Phase 4).[/yellow]")
-    # Exit 2 = config / usage error per validation.md exit-code matrix
-    # ({0,2,3,4}). Originally 1 (outside the documented matrix).
-    raise typer.Exit(code=2)
+    """Authenticate with a cloud provider and save credentials."""
+    if provider != "google-drive":
+        console.print(f"[red]error:[/red] Unknown provider {provider!r}. Supported: 'google-drive'")
+        raise typer.Exit(code=1)
+
+    client_id = (os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        console.print(
+            "[red]error:[/red] Google OAuth credentials not configured.\n"
+            "Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in .env\n"
+            "(see .env.example for setup instructions)"
+        )
+        raise typer.Exit(code=2)
+
+    authenticate_drive(client_id=client_id, client_secret=client_secret)
+    console.print("[green]Google Drive authenticated. Token saved.[/green]")
 
 
 # ── transcriber config ────────────────────────────────────────────────────────
