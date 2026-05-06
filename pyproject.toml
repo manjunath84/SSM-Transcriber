@@ -59,6 +59,10 @@ mypy_path = "src"
 module = ["ffmpeg"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["google_auth_oauthlib.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
