@@ -628,10 +628,10 @@ def test_upload_missing_file_exits_4(tmp_path: Path) -> None:
     """`upload` with a path that doesn't exist → exit 4 (local file error).
 
     Exit 4 matches the established matrix: local-file errors (missing source,
-    ffmpeg failure) all map to 4.  The task spec draft said exit 1, but the
+    ffmpeg failure) all map to 4. The task spec draft said exit 1, but the
     project matrix is {0, 2, 3, 4} — "file not found" is a local-file error,
     same category as the ``transcribe`` command's FileNotFoundError → exit 4
-    path (cli.py lines 253-256).
+    path.
     """
     runner = CliRunner()
     result = runner.invoke(app, ["upload", str(tmp_path / "nonexistent.md")])
@@ -732,10 +732,14 @@ def test_upload_auth_error_exits_2(
     assert "token expired" in result.stdout
 
 
-def test_upload_destination_error_exits_2(
+def test_upload_destination_error_exits_4(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`upload` when DriveDestination raises DestinationError → exit 2 with the error message."""
+    """`upload` when DriveDestination raises DestinationError → exit 4 (file preserved).
+
+    Different exit code from AuthError (2 = config to fix) lets scripts
+    distinguish "fix auth" from "transient upload failure, retry".
+    """
     md = tmp_path / "f.md"
     md.write_text("# hi")
     monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-abc")
@@ -746,8 +750,27 @@ def test_upload_destination_error_exits_2(
     with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
         result = CliRunner().invoke(app, ["upload", str(md)])
 
-    assert result.exit_code == 2
+    assert result.exit_code == 4
     assert "Drive upload failed" in result.stdout
+
+
+@pytest.mark.parametrize("flag_value", ["   ", "\t", "\n  \t"])
+def test_upload_whitespace_only_drive_folder_flag_exits_2(
+    flag_value: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--drive-folder '   '`` is treated as unset → exit 2 with helpful message.
+
+    Without the .strip() in _resolve_drive_folder, a whitespace-only flag
+    would slip past the truthiness check and propagate to DriveDestination,
+    which would raise DestinationError later (after construction).
+    """
+    md = tmp_path / "f.md"
+    md.write_text("# hi")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", None)
+
+    result = CliRunner().invoke(app, ["upload", str(md), "--drive-folder", flag_value])
+    assert result.exit_code == 2
+    assert "--drive-folder" in result.stdout
 
 
 # ── transcribe --upload-to-drive ──────────────────────────────────────────────
@@ -909,10 +932,17 @@ def test_transcribe_upload_to_drive_folder_flag_overrides_config(
     assert captured_folder == ["cli-folder"]
 
 
-def test_transcribe_upload_to_drive_auth_error_exits_2(
+def test_transcribe_upload_to_drive_auth_error_post_extract_exits_4(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`--upload-to-drive` when DriveDestination raises AuthError → exit 2, local .md preserved."""
+    """AuthError raised by upload (after a paid AssemblyAI call) → exit 4, recovery hint printed.
+
+    This is the race-condition path: pre-flight load_drive_credentials
+    succeeded, then the token was revoked between fail-fast and upload. The
+    user has paid for transcription and the .md is on disk — different
+    category from the pre-flight AuthError (exit 2), which is the "config
+    broken, no work done" case.
+    """
     from transcriber.providers.base import TranscriptResult
 
     src = tmp_path / "x.wav"
@@ -944,18 +974,24 @@ def test_transcribe_upload_to_drive_auth_error_exits_2(
                     ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
                 )
 
-    assert result.exit_code == 2
+    assert result.exit_code == 4
     assert "token expired" in result.stdout
-    # The local .md must still exist despite the upload failure
+    # AuthError messages don't include the path; CLI must add the recovery
+    # hint so the user knows where to find the .md they just paid for.
     md_files = list(tmp_path.glob("*.md"))
     assert len(md_files) == 1, "Local .md transcript must be preserved on upload failure"
+    assert md_files[0].name in result.stdout, "User must see local .md path on upload failure"
 
 
-def test_transcribe_upload_to_drive_destination_error_exits_2(
+def test_transcribe_upload_to_drive_destination_error_exits_4(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`--upload-to-drive` when DriveDestination raises DestinationError →
-    exit 2, local .md preserved."""
+    """DestinationError after transcribe → exit 4, local .md preserved.
+
+    Exit 4 (post-paid recoverable) rather than exit 2 (config). The
+    DestinationError message itself already contains "Transcript saved
+    locally at <path>" so the user knows where to recover from.
+    """
     from transcriber.providers.base import TranscriptResult
 
     src = tmp_path / "x.wav"
@@ -989,7 +1025,59 @@ def test_transcribe_upload_to_drive_destination_error_exits_2(
                     ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
                 )
 
-    assert result.exit_code == 2
+    assert result.exit_code == 4
     assert "Drive upload failed" in result.stdout
     md_files = list(tmp_path.glob("*.md"))
     assert len(md_files) == 1, "Local .md transcript must be preserved on upload failure"
+
+
+def test_transcribe_writes_transcript_before_calling_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Architectural invariant: dest.upload() runs only after the .md is on disk.
+
+    The headline guarantee of the upload feature is "transcript-loss-impossible
+    by construction". Asserting that ``len(md_files) == 1`` post-failure (the
+    other tests do) only proves the file existed at *some* point during the
+    test; this asserts the file existed *at the moment upload was invoked*.
+    """
+    from transcriber.providers.base import TranscriptResult
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-xyz")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    mock_provider = MagicMock()
+    mock_provider.transcribe.return_value = TranscriptResult(
+        text="hello",
+        segments=[],
+        language="en",
+        duration_seconds=60.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    file_existed_at_upload: list[bool] = []
+
+    def _check_then_succeed(path: Path, _name: str) -> str:
+        file_existed_at_upload.append(path.exists() and path.stat().st_size > 0)
+        return "https://drive.google.com/file/d/x/view"
+
+    mock_dest = MagicMock()
+    mock_dest.upload.side_effect = _check_then_succeed
+
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+            with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+                result = CliRunner().invoke(
+                    app,
+                    ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+                )
+
+    assert result.exit_code == 0, result.output
+    assert file_existed_at_upload == [True], (
+        "transcript must be on disk (non-empty) when dest.upload() is called"
+    )

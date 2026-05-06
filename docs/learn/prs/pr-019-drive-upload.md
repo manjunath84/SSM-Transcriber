@@ -45,9 +45,9 @@ invariants, not just conventions.
 
 - The local `.md` is always written before upload is attempted — transcript loss on upload failure is impossible by construction.
 - `drive.file` OAuth scope (not `drive`) — the app can only see files it created, not the user's full Drive.
-- `DestinationError` and `AuthError` both map to exit 2 (config/setup), consistent with `BudgetError`.
+- Exit codes split by recoverability, not just error type: `AuthError` (config to fix) → exit 2; `DestinationError` (file/transcript on disk, retry possible) → exit 4. After a paid `transcribe` run, both map to exit 4 because the .md is on disk regardless of which one fired.
 - `_resolve_drive_folder` is shared between `transcribe` and `upload` — folder resolution logic lives in one place.
-- Token file is written atomically — `.tmp` is written and `chmod(0o600)` applied before `rename` to the final path, so the token is never world-readable, even transiently.
+- Token file is written atomically with secure mode from byte zero: `os.open(..., O_CREAT|O_WRONLY|O_EXCL, 0o600)` ensures the file is never world/group-readable even transiently. The trailing `tmp.replace()` is inside the `try` so a failed rename cleans up the token-bearing `.tmp` rather than leaking it.
 - `--upload-to-drive` fails fast on both folder config and Drive credentials before any audio extraction or paid API call — a user without a token learns immediately, not after paying AssemblyAI.
 - The plan's initial test specifications used exit 1 for configuration errors, which is outside the project's `{0, 2, 3, 4}` matrix. Exit 1 was corrected to exit 2 (config error) for unknown-provider and exit 4 (local file not found) for missing-file cases, consistent with how `transcribe` handles `FileNotFoundError`.
 

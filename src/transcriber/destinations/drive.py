@@ -9,7 +9,9 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
+import httplib2
 from google.auth import exceptions as google_auth_exceptions
+from googleapiclient import errors as gapi_errors
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
@@ -34,8 +36,16 @@ class DriveDestination:
         of the local path — useful when the workspace temp name differs from the
         desired output name.
 
-        Returns the ``webViewLink`` URL. Raises ``DestinationError`` on any
-        API or transport failure so the caller always receives a domain error.
+        Returns the ``webViewLink`` URL.
+
+        Raises:
+            AuthError: if Drive credentials cannot be loaded or refreshed.
+                Propagated from ``load_drive_credentials`` so the caller can
+                map it to the auth-level exit code.
+            DestinationError: on any API, network, or transport failure, or
+                if the Drive response is missing ``webViewLink``. Message
+                always contains ``"Transcript saved locally at <path>"`` so
+                the user can recover by re-uploading manually.
         """
         creds = load_drive_credentials()
         file_metadata = {
@@ -52,13 +62,29 @@ class DriveDestination:
                 .execute()
             )
         except HttpError as exc:
+            # exc.reason is None for malformed responses; fall back to str(exc).
+            reason = exc.reason or str(exc) or "unknown error"
             raise DestinationError(
-                f"Drive upload failed: {exc.reason}. "
+                f"Drive upload failed: {reason}. "
                 f"Transcript saved locally at {path}"
             ) from exc
-        except (google_auth_exceptions.TransportError, OSError) as exc:
+        except (
+            google_auth_exceptions.TransportError,
+            httplib2.HttpLib2Error,
+            OSError,
+        ) as exc:
+            # httplib2.HttpLib2Error is NOT an OSError subclass; covers DNS
+            # failure, captive-portal hijack, malformed proxy response.
             raise DestinationError(
                 f"Drive upload failed: network error: {exc}. "
+                f"Transcript saved locally at {path}"
+            ) from exc
+        except gapi_errors.Error as exc:
+            # Parent class of HttpError (already handled above); covers
+            # InvalidJsonError (HTML returned during outage),
+            # UnknownApiNameOrVersion, MediaUploadSizeError, etc.
+            raise DestinationError(
+                f"Drive upload failed: {exc}. "
                 f"Transcript saved locally at {path}"
             ) from exc
         url = result.get("webViewLink")

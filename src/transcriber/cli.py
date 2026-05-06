@@ -183,12 +183,18 @@ def upload(
 
     folder_id = _resolve_drive_folder(drive_folder)
 
+    # AuthError (config: re-run auth google-drive) is exit 2; DestinationError
+    # (network/API failure with file still on disk, retry possible) is exit 4.
+    # Different exit codes let scripts distinguish "fix config" from "retry".
     try:
         dest = DriveDestination(folder_id=folder_id)
         url = dest.upload(file, file.name)
-    except (AuthError, DestinationError) as exc:
+    except AuthError as exc:
         console.print(f"[red]error:[/red] {exc}")
         raise typer.Exit(code=2) from exc
+    except DestinationError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(code=4) from exc
 
     console.print(f"Uploaded → {url}")
 
@@ -477,14 +483,24 @@ def transcribe(
                 if upload_folder_id is None:
                     raise RuntimeError(
                         "upload_folder_id is None despite upload_to_drive=True; "
-                        "fail-fast check at the top of transcribe should have caught this"
+                        "the upload-to-drive fail-fast check should have caught this"
                     )
+                # Both error types exit 4 here (transcript already on disk
+                # after a paid AssemblyAI call — recovery means re-uploading,
+                # not re-running). DestinationError messages already contain
+                # "Transcript saved locally at <path>"; AuthError doesn't, so
+                # we print the path explicitly. Pre-flight AuthError (before
+                # extract) is a separate path that exits 2.
                 try:
                     dest = DriveDestination(folder_id=upload_folder_id)
                     drive_url = dest.upload(output, output.name)
-                except (AuthError, DestinationError) as exc:
+                except AuthError as exc:
                     console.print(f"[red]error:[/red] {exc}")
-                    raise typer.Exit(code=2) from exc
+                    console.print(f"[yellow]Transcript saved locally at {output}[/yellow]")
+                    raise typer.Exit(code=4) from exc
+                except DestinationError as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    raise typer.Exit(code=4) from exc
                 console.print(f"Uploaded → {drive_url}")
     except KeyboardInterrupt:
         # Standard SIGINT exit code; workspace cleanup runs via __exit__.
