@@ -96,6 +96,7 @@ def test_redacted_dump_excludes_unknown_keys(monkeypatch: pytest.MonkeyPatch) ->
         "cache_enabled",
         "keep_temp",
         "llm_model",
+        "drive_output_folder_id",
         "log_level",
     }
     assert set(dump.keys()).issubset(expected)
