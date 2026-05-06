@@ -28,6 +28,7 @@
 | #15 | Feature spec: Drive Source (URL passthrough) | feature (spec) | [`pr-015-drive-source-passthrough-spec.md`](pr-015-drive-source-passthrough-spec.md) |
 | #16 | Execution plan: Drive Source (URL passthrough) | feature (plan) | (no explainer — short doc-only PR; see plan triple) |
 | #17 | Implementation: Drive Source (URL passthrough) | feature (impl) | [`pr-017-drive-source-passthrough-impl.md`](pr-017-drive-source-passthrough-impl.md) |
+| #18 | Fix AssemblyAI rate constant + factor in diarization | fix | [`pr-018-assemblyai-rate-constant-fix.md`](pr-018-assemblyai-rate-constant-fix.md) |
 
 ## Conventions
 

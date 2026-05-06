@@ -41,12 +41,42 @@ def _capture_notify() -> tuple[list[str], Callable[[str], None]]:
     return msgs, notify
 
 
-def test_estimate_cost_one_minute() -> None:
-    assert estimate_assemblyai_cost(60.0) == pytest.approx(0.009)
+def test_estimate_cost_one_minute_with_diarization() -> None:
+    """Default --speakers (diarization on): U3P + Speaker Diarization.
+
+    Per empirical AssemblyAI billing data verified across two
+    independent days (2026-05-03: 132m 43s = $0.508747; 2026-05-05:
+    63m = $0.2415), the per-minute math is:
+      Universal-3 Pro:     $0.003500/min
+      Speaker Diarization: $0.000333/min
+      Combined:            $0.003833/min
+    """
+    assert estimate_assemblyai_cost(60.0, diarize=True) == pytest.approx(
+        0.003833, abs=1e-5
+    )
 
 
-def test_estimate_cost_ten_minutes() -> None:
-    assert estimate_assemblyai_cost(600.0) == pytest.approx(0.09)
+def test_estimate_cost_ten_minutes_with_diarization() -> None:
+    assert estimate_assemblyai_cost(600.0, diarize=True) == pytest.approx(
+        0.03833, abs=1e-4
+    )
+
+
+def test_estimate_cost_no_diarization_drops_speaker_addon() -> None:
+    """--no-speakers drops the diarization charge; only U3P billed."""
+    assert estimate_assemblyai_cost(60.0, diarize=False) == pytest.approx(
+        0.0035, abs=1e-5
+    )
+
+
+def test_estimate_cost_matches_real_pr17_run() -> None:
+    """Lock the rate against the empirical PR #17 manual run:
+    63 min audio, diarization on → exactly $0.2415 from the AssemblyAI
+    Cost dashboard. If a future rate change drops this assertion,
+    update the constants and re-verify against fresh dashboard data."""
+    assert estimate_assemblyai_cost(63 * 60.0, diarize=True) == pytest.approx(
+        0.2415, abs=0.005
+    )
 
 
 def test_gate1_fails_when_key_missing() -> None:
