@@ -95,17 +95,25 @@ class TranscriberSettings(BaseSettings):
         return bool((os.getenv("ASSEMBLYAI_API_KEY") or "").strip())
 
     @property
-    def google_oauth_configured(self) -> bool:
-        """Whether GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are set.
+    def google_oauth_client_id(self) -> str:
+        """GOOGLE_OAUTH_CLIENT_ID value, stripped. Empty string if unset.
 
-        Per CLAUDE.md conventions, OAuth credentials are third-party keys
-        so they are read unprefixed from os.environ rather than via
-        pydantic-settings' TRANSCRIBER_ prefix.
+        Third-party key: unprefixed by convention, read via os.getenv.
         """
-        return (
-            bool((os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip())
-            and bool((os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip())
-        )
+        return (os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
+
+    @property
+    def google_oauth_client_secret(self) -> str:
+        """GOOGLE_OAUTH_CLIENT_SECRET value, stripped. Empty string if unset.
+
+        Third-party key: unprefixed by convention, read via os.getenv.
+        """
+        return (os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
+
+    @property
+    def google_oauth_configured(self) -> bool:
+        """Whether GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are both set."""
+        return bool(self.google_oauth_client_id) and bool(self.google_oauth_client_secret)
 
     def redacted_dump(self) -> dict[str, str]:
         """Return a dict of settings safe for logging and CLI output.

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import os
 import re
 from datetime import date
 from enum import StrEnum
@@ -25,7 +24,7 @@ from rich.table import Table
 from transcriber.config import settings
 from transcriber.core import atomic
 from transcriber.core.audio import AudioExtractError, extract as extract_audio
-from transcriber.core.auth import AuthError, authenticate_drive
+from transcriber.core.auth import AuthError, authenticate_drive, load_drive_credentials
 from transcriber.core.budget import (
     BudgetError,
     check as budget_check,
@@ -291,11 +290,18 @@ def transcribe(
             else:
                 display_title = None
 
-            # Fail fast: validate Drive folder before doing any transcription work.
-            # Store the result so we don't call _resolve_drive_folder twice.
+            # Fail fast: validate Drive folder and credentials before doing any
+            # transcription work. Both checks run before audio extraction or any
+            # paid API call so the user doesn't pay AssemblyAI only to discover
+            # a Drive misconfiguration afterward.
             upload_folder_id: str | None = None
             if upload_to_drive:
                 upload_folder_id = _resolve_drive_folder(drive_folder)
+                try:
+                    load_drive_credentials()
+                except AuthError as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    raise typer.Exit(code=2) from exc
 
             # Prepare the source with the validated title. Each source
             # decides how to use it: LocalSource overrides the filename-
@@ -512,9 +518,7 @@ def auth(
         console.print(f"[red]error:[/red] Unknown provider {provider!r}. Supported: 'google-drive'")
         raise typer.Exit(code=2)
 
-    client_id = (os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
-    client_secret = (os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
-    if not client_id or not client_secret:
+    if not settings.google_oauth_configured:
         console.print(
             "[red]error:[/red] Google OAuth credentials not configured.\n"
             "Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in .env\n"
@@ -522,7 +526,14 @@ def auth(
         )
         raise typer.Exit(code=2)
 
-    authenticate_drive(client_id=client_id, client_secret=client_secret)
+    try:
+        authenticate_drive(
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+        )
+    except Exception as exc:
+        console.print(f"[red]error:[/red] Drive authentication failed: {exc}")
+        raise typer.Exit(code=2) from exc
     console.print("[green]Google Drive authenticated. Token saved.[/green]")
 
 

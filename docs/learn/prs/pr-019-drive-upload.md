@@ -17,8 +17,8 @@ makes adding future destinations (S3, Notion) a one-class change.
 - `core/auth.py` — OAuth token storage and refresh; `AuthError` → exit 2; token persisted with 0600 permissions
 - `destinations/base.py` — `OutputDestination` Protocol + `DestinationError`
 - `destinations/drive.py` — `DriveDestination.upload()` wrapping `google-api-python-client`
-- `cli.py` — `auth google-drive` subcommand; `upload` subcommand; `--upload-to-drive` + `--drive-folder` flags on `transcribe`; `_resolve_drive_folder()` shared helper; fail-fast folder check before transcription work
-- `config.py` — `TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID` setting; `google_oauth_configured` property
+- `cli.py` — `auth google-drive` subcommand; `upload` subcommand; `--upload-to-drive` + `--drive-folder` flags on `transcribe`; `_resolve_drive_folder()` shared helper; fail-fast folder + auth credential check before any transcription work
+- `config.py` — `TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID` setting; `google_oauth_client_id`, `google_oauth_client_secret`, `google_oauth_configured` properties (follow the `assemblyai_configured` pattern — third-party keys read via `os.getenv` inside config properties)
 - `README.md` — Google Drive setup guide + transcription quick-start
 
 ## Why this approach
@@ -47,14 +47,15 @@ invariants, not just conventions.
 - `drive.file` OAuth scope (not `drive`) — the app can only see files it created, not the user's full Drive.
 - `DestinationError` and `AuthError` both map to exit 2 (config/setup), consistent with `BudgetError`.
 - `_resolve_drive_folder` is shared between `transcribe` and `upload` — folder resolution logic lives in one place.
-- Token file is written with `chmod(0o600)` — OAuth refresh tokens are sensitive credentials.
+- Token file is written atomically — `.tmp` is written and `chmod(0o600)` applied before `rename` to the final path, so the token is never world-readable, even transiently.
+- `--upload-to-drive` fails fast on both folder config and Drive credentials before any audio extraction or paid API call — a user without a token learns immediately, not after paying AssemblyAI.
 - The plan's initial test specifications used exit 1 for configuration errors, which is outside the project's `{0, 2, 3, 4}` matrix. Exit 1 was corrected to exit 2 (config error) for unknown-provider and exit 4 (local file not found) for missing-file cases, consistent with how `transcribe` handles `FileNotFoundError`.
 
 ## Interview angle
 
 - **Story type:** extensible design at low cost — Protocol pattern applied to a new output destination, consistent with existing provider pattern.
 - **One-sentence hook:** "Added Drive upload by defining a 3-line OutputDestination Protocol first, so the implementation is a single concrete class with no special-casing in the CLI orchestration."
-- **Code review findings caught:** token file permissions (world-readable credential), webViewLink key error escape, test hermiticity (output_dir not isolated), exit-code matrix violations — all caught and fixed during the two-stage review cycle.
+- **Code review findings caught:** token file permissions (fixed via atomic write — no world-readable window), webViewLink escape, test hermiticity (output_dir not isolated), exit-code matrix violations, `build()` outside try block, `authenticate_drive()` unguarded, `TransportError` uncaught, `os.getenv` in CLI violating config-singleton rule, auth fail-fast missing before paid call — all caught and fixed during the PR review cycle.
 - **Pointer:** [`interview-prep.md`](../interview-prep.md) — relates to the PreparedMedia DTO boundary design story.
 
 ## Further reading

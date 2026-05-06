@@ -605,6 +605,23 @@ def test_auth_google_drive_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "authenticated" in result.stdout.lower()
 
 
+def test_auth_google_drive_authenticate_error_exits_2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`auth google-drive` when authenticate_drive raises → exit 2 with message, not traceback."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "test-client-secret")
+
+    with patch(
+        "transcriber.cli.authenticate_drive",
+        side_effect=OSError("port already in use"),
+    ):
+        result = CliRunner().invoke(app, ["auth", "google-drive"])
+
+    assert result.exit_code == 2
+    assert "authentication failed" in result.stdout.lower()
+
+
 # ── upload command ────────────────────────────────────────────────────────────
 
 def test_upload_missing_file_exits_4(tmp_path: Path) -> None:
@@ -738,12 +755,23 @@ def test_upload_destination_error_exits_2(
 def test_transcribe_upload_to_drive_no_folder_exits_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`--upload-to-drive` without folder configured → exit 2 before any API call."""
+    """`--upload-to-drive` without folder configured → exit 2 before any API call.
+
+    Specifically verifies that extract_audio is NOT called — the fail-fast
+    check fires before any audio or transcription work begins.
+    """
     src = tmp_path / "x.wav"
     src.write_bytes(b"")
     monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
     monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", None)
-    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    extract_called: list[str] = []
+
+    def _record_extract(*_args: object, **_kwargs: object) -> tuple[object, float]:
+        extract_called.append("called")
+        return (_args[0], 60.0)
+
+    monkeypatch.setattr("transcriber.cli.extract_audio", _record_extract)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -751,6 +779,44 @@ def test_transcribe_upload_to_drive_no_folder_exits_2(
     )
     assert result.exit_code == 2
     assert "--drive-folder" in result.stdout
+    assert extract_called == [], "extract_audio must not be called before folder check passes"
+
+
+def test_transcribe_upload_to_drive_auth_failfast_before_paid_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--upload-to-drive` when not authenticated → exit 2 before any API call.
+
+    load_drive_credentials is called early (fail-fast). The budget gate
+    must NOT fire first — the user should not be asked to confirm cost
+    when they haven't authenticated yet.
+    """
+    from transcriber.core.auth import AuthError
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-abc")
+
+    extract_called: list[str] = []
+
+    def _record_extract(*_args: object, **_kwargs: object) -> tuple[object, float]:
+        extract_called.append("called")
+        return (_args[0], 60.0)
+
+    monkeypatch.setattr("transcriber.cli.extract_audio", _record_extract)
+    def _raise_auth() -> None:
+        raise AuthError("Run: ssm-transcriber auth google-drive")
+
+    monkeypatch.setattr("transcriber.cli.load_drive_credentials", _raise_auth)
+
+    result = CliRunner().invoke(
+        app, ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"]
+    )
+
+    assert result.exit_code == 2
+    assert "auth google-drive" in result.stdout
+    assert extract_called == [], "extract_audio must not be called before auth check passes"
 
 
 def test_transcribe_upload_to_drive_happy_path(
@@ -780,12 +846,13 @@ def test_transcribe_upload_to_drive_happy_path(
     mock_dest.upload.return_value = "https://drive.google.com/file/d/test/view"
 
     runner = CliRunner()
-    with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
-        with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
-            result = runner.invoke(
-                app,
-                ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
-            )
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+            with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+                result = runner.invoke(
+                    app,
+                    ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+                )
 
     assert result.exit_code == 0
     mock_dest.upload.assert_called_once()
@@ -822,12 +889,13 @@ def test_transcribe_upload_to_drive_auth_error_exits_2(
     mock_dest.upload.side_effect = AuthError("token expired")
 
     runner = CliRunner()
-    with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
-        with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
-            result = runner.invoke(
-                app,
-                ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
-            )
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+            with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+                result = runner.invoke(
+                    app,
+                    ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+                )
 
     assert result.exit_code == 2
     assert "token expired" in result.stdout
@@ -866,12 +934,13 @@ def test_transcribe_upload_to_drive_destination_error_exits_2(
     )
 
     runner = CliRunner()
-    with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
-        with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
-            result = runner.invoke(
-                app,
-                ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
-            )
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+            with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+                result = runner.invoke(
+                    app,
+                    ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+                )
 
     assert result.exit_code == 2
     assert "Drive upload failed" in result.stdout

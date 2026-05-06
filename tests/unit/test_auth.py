@@ -113,3 +113,81 @@ def test_load_drive_credentials_raises_auth_error_when_refresh_fails(tmp_path: P
         with creds_patcher:
             with pytest.raises(AuthError, match="could not be refreshed"):
                 load_drive_credentials()
+
+
+def test_load_drive_credentials_raises_auth_error_when_transport_error(tmp_path: Path) -> None:
+    """TransportError (network failure) during refresh → AuthError, not raw exception."""
+    from google.auth import exceptions as google_auth_exceptions
+
+    token_path = tmp_path / "google_token.json"
+    token_path.write_text('{"token": "expired"}')
+
+    mock_creds = MagicMock()
+    mock_creds.valid = False
+    mock_creds.expired = True
+    mock_creds.refresh_token = "refresh-tok"
+    mock_creds.refresh.side_effect = google_auth_exceptions.TransportError("network error")
+
+    with patch("transcriber.core.auth.TOKEN_PATH", token_path):
+        with patch(
+            "transcriber.core.auth.Credentials.from_authorized_user_file",
+            return_value=mock_creds,
+        ):
+            with pytest.raises(AuthError, match="could not be refreshed"):
+                load_drive_credentials()
+
+
+def test_load_drive_credentials_raises_auth_error_on_corrupt_file(tmp_path: Path) -> None:
+    """Corrupt or unreadable token file raises AuthError, not a raw ValueError."""
+    token_path = tmp_path / "google_token.json"
+    token_path.write_text("not valid json at all {{{")
+
+    with patch("transcriber.core.auth.TOKEN_PATH", token_path):
+        with patch(
+            "transcriber.core.auth.Credentials.from_authorized_user_file",
+            side_effect=ValueError("invalid json"),
+        ):
+            with pytest.raises(AuthError, match="corrupt or unreadable"):
+                load_drive_credentials()
+
+
+def test_save_credentials_is_atomic(tmp_path: Path) -> None:
+    """_save_credentials writes via a .tmp file then renames — no world-readable window."""
+    token_path = tmp_path / "sub" / "google_token.json"
+    mock_creds = MagicMock()
+    mock_creds.to_json.return_value = '{"token": "t"}'
+
+    with patch("transcriber.core.auth.TOKEN_PATH", token_path):
+        _save_credentials(mock_creds)
+
+    assert token_path.exists()
+    assert not token_path.with_suffix(".tmp").exists(), ".tmp must be cleaned up after rename"
+    assert token_path.read_text() == '{"token": "t"}'
+    assert oct(token_path.stat().st_mode)[-3:] == "600"
+
+
+def test_authenticate_drive_calls_flow_with_correct_config(tmp_path: Path) -> None:
+    """authenticate_drive constructs InstalledAppFlow with the right client config shape."""
+    from transcriber.core.auth import authenticate_drive
+
+    mock_creds = MagicMock()
+    mock_creds.to_json.return_value = '{"token": "new"}'
+    mock_flow = MagicMock()
+    mock_flow.run_local_server.return_value = mock_creds
+
+    token_path = tmp_path / "google_token.json"
+
+    with patch("transcriber.core.auth.TOKEN_PATH", token_path):
+        with patch(
+            "transcriber.core.auth.InstalledAppFlow.from_client_config",
+            return_value=mock_flow,
+        ) as mock_from_config:
+            authenticate_drive(client_id="cid", client_secret="csecret")
+
+    call_config = mock_from_config.call_args[0][0]
+    assert call_config["installed"]["client_id"] == "cid"
+    assert call_config["installed"]["client_secret"] == "csecret"
+    assert "auth_uri" in call_config["installed"]
+    assert "token_uri" in call_config["installed"]
+    mock_flow.run_local_server.assert_called_once_with(port=0)
+    assert token_path.exists()

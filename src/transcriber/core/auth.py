@@ -27,21 +27,32 @@ class AuthError(TranscriberError):
 def load_drive_credentials() -> Credentials:
     """Return valid Drive credentials, refreshing the access token if needed.
 
-    Raises ``AuthError`` when the token file is absent or the refresh token
-    is gone — both require the user to re-run ``auth google-drive``.
+    Raises:
+        AuthError: if the token file is absent, corrupt, unreadable, or if
+            the refresh token is gone or cannot be refreshed — all require
+            re-running ``auth google-drive``.
     """
     if not TOKEN_PATH.exists():
         raise AuthError(
             "Not authenticated with Google Drive. "
             "Run: ssm-transcriber auth google-drive"
         )
-    creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    try:
+        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    except (ValueError, OSError) as exc:
+        raise AuthError(
+            "Google Drive token file is corrupt or unreadable. "
+            "Rerun: ssm-transcriber auth google-drive"
+        ) from exc
     if creds.valid:
         return creds
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-        except google_auth_exceptions.RefreshError as exc:
+        except (
+            google_auth_exceptions.RefreshError,
+            google_auth_exceptions.TransportError,
+        ) as exc:
             raise AuthError(
                 "Google Drive token could not be refreshed. "
                 "Rerun: ssm-transcriber auth google-drive"
@@ -74,5 +85,7 @@ def authenticate_drive(client_id: str, client_secret: str) -> None:
 
 def _save_credentials(creds: Credentials) -> None:
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_PATH.write_text(creds.to_json())
-    TOKEN_PATH.chmod(0o600)
+    tmp = TOKEN_PATH.with_suffix(".tmp")
+    tmp.write_text(creds.to_json())
+    tmp.chmod(0o600)
+    tmp.replace(TOKEN_PATH)
