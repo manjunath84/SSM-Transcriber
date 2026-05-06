@@ -39,7 +39,7 @@ invariants, not just conventions.
 
 ## New Python idioms introduced
 
-- `typing.Protocol` — structural subtyping ("duck typing with a contract"). See [`python-notes.md`](../python-notes.md) for the existing `TranscriptionProvider` entry.
+- `typing.Protocol` — structural subtyping ("duck typing with a contract"). See [`python-notes.md → typing.Protocol`](../python-notes.md) for the existing Protocol entry.
 
 ## What a reviewer should notice
 
@@ -48,7 +48,7 @@ invariants, not just conventions.
 - `DestinationError` and `AuthError` both map to exit 2 (config/setup), consistent with `BudgetError`.
 - `_resolve_drive_folder` is shared between `transcribe` and `upload` — folder resolution logic lives in one place.
 - Token file is written with `chmod(0o600)` — OAuth refresh tokens are sensitive credentials.
-- Exit codes 1 was used in the original plan but is outside the project's `{0, 2, 3, 4}` matrix. The implementation corrects this to exit 2 (config error) for unknown-provider and to exit 4 (local file not found) for missing files — consistent with how `transcribe` handles `FileNotFoundError`.
+- The plan's initial test specifications used exit 1 for configuration errors, which is outside the project's `{0, 2, 3, 4}` matrix. Exit 1 was corrected to exit 2 (config error) for unknown-provider and exit 4 (local file not found) for missing-file cases, consistent with how `transcribe` handles `FileNotFoundError`.
 
 ## Interview angle
 

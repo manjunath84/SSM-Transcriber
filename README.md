@@ -4,31 +4,24 @@ Multi-agent audio/video transcription pipeline — local-first, cloud-agnostic, 
 
 Transcribe video and audio from **local files**, **YouTube URLs**, and **Google Drive** using a provider-swappable pipeline. Default transcription runs entirely locally with no API keys required.
 
-## Quick start
+## Development setup
 
 ```bash
-uv sync
-uv run ssm-transcriber transcribe ./video.mp4
-uv run ssm-transcriber transcribe "https://youtu.be/..."
-```
-
-> **First-run note:** `faster-whisper` downloads model weights on first use
-> (`tiny` ≈ 75 MB, `base` ≈ 145 MB, `large-v3` ≈ 3 GB). Prefetch with
-> `uv run ssm-transcriber models download --quality balanced` to avoid waiting
-> on the first transcribe call or surprising an offline run.
-
-## Transcription quick-start
-
-```bash
-# Install
 git clone https://github.com/manjunath84/SSM-Transcriber
 cd SSM-Transcriber
 uv sync
 
-# Transcribe a local file (free — uses faster-whisper locally)
-# Note: Phase 1 (local faster-whisper) is not yet built.
-# The working path today is cloud transcription via AssemblyAI (see below).
+# Confirm the CLI is installed
+uv run ssm-transcriber --help
+```
 
+> **Current status:** Phase 1 (local `faster-whisper` transcription) is not yet built.
+> Local-file and YouTube transcription commands are defined but not functional.
+> The working path today is cloud transcription via AssemblyAI (see below).
+
+## Transcription quick-start
+
+```bash
 # Transcribe via AssemblyAI (requires ASSEMBLYAI_API_KEY in .env)
 uv run ssm-transcriber transcribe ./recording.mp4 --budget low
 
