@@ -231,6 +231,14 @@ def transcribe(
         bool,
         typer.Option("--no-speakers", help="Disable speaker diarization (default: on)"),
     ] = False,
+    upload_to_drive: Annotated[
+        bool,
+        typer.Option("--upload-to-drive", help="Upload the transcript to Google Drive after transcription"),
+    ] = False,
+    drive_folder: Annotated[
+        str | None,
+        typer.Option("--drive-folder", help="Drive folder ID (overrides TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID)"),
+    ] = None,
     no_timestamps: Annotated[
         bool,
         typer.Option("--no-timestamps", help="Strip mm:ss timestamp prefixes (default: on)"),
@@ -282,6 +290,10 @@ def transcribe(
                     raise typer.Exit(code=2) from exc
             else:
                 display_title = None
+
+            # Fail fast: validate Drive folder before doing any transcription work.
+            if upload_to_drive:
+                _resolve_drive_folder(drive_folder)
 
             # Prepare the source with the validated title. Each source
             # decides how to use it: LocalSource overrides the filename-
@@ -451,6 +463,16 @@ def transcribe(
                 raise typer.Exit(code=4) from exc
 
             console.print(f"[green]✓[/green] Saved to: {output}")
+
+            if upload_to_drive:
+                folder_id = _resolve_drive_folder(drive_folder)
+                try:
+                    dest = DriveDestination(folder_id=folder_id)
+                    drive_url = dest.upload(output, output.name)
+                except (AuthError, DestinationError) as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    raise typer.Exit(code=2) from exc
+                console.print(f"Uploaded → {drive_url}")
     except KeyboardInterrupt:
         # Standard SIGINT exit code; workspace cleanup runs via __exit__.
         console.print("[yellow]Interrupted.[/yellow]")

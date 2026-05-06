@@ -731,3 +731,64 @@ def test_upload_destination_error_exits_2(
 
     assert result.exit_code == 2
     assert "Drive upload failed" in result.stdout
+
+
+# ── transcribe --upload-to-drive ──────────────────────────────────────────────
+
+def test_transcribe_upload_to_drive_no_folder_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--upload-to-drive` without folder configured → exit 2 before any API call."""
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", None)
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"]
+    )
+    assert result.exit_code == 2
+    assert "--drive-folder" in result.stdout
+
+
+def test_transcribe_upload_to_drive_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--upload-to-drive` after a successful transcription uploads the .md output."""
+    from transcriber.providers.base import TranscriptResult
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-xyz")
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    mock_provider = MagicMock()
+    mock_provider.transcribe.return_value = TranscriptResult(
+        text="Hello world",
+        segments=[],
+        language="en",
+        duration_seconds=60.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    mock_dest = MagicMock()
+    mock_dest.upload.return_value = "https://drive.google.com/file/d/test/view"
+
+    runner = CliRunner()
+    with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+        with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+            result = runner.invoke(
+                app,
+                ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+            )
+
+    assert result.exit_code == 0
+    mock_dest.upload.assert_called_once()
+    call_args = mock_dest.upload.call_args
+    uploaded_path: Path = call_args.args[0]
+    assert uploaded_path.suffix == ".md"
+    assert "https://drive.google.com/file/d/test/view" in result.stdout
