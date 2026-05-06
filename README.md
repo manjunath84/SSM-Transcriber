@@ -39,20 +39,26 @@ uploaded separately from an existing file.
 
 ### One-time setup
 
+Full step-by-step instructions (including the OAuth consent screen
+config and source-file sharing requirement) are in
+[`docs/ai/runbooks/drive-transcribe-upload.md`](docs/ai/runbooks/drive-transcribe-upload.md).
+Quick version:
+
 1. Go to [Google Cloud Console](https://console.cloud.google.com) → **APIs & Services** → **Library**. Search for **Google Drive API** and enable it.
-2. Go to **APIs & Services** → **Credentials** → **Create Credentials** → **OAuth client ID**. Choose **Desktop app**, download the JSON, and copy the client ID and secret.
-3. Add to your `.env`:
+2. **OAuth consent screen** → External → add scope `.../auth/drive.file` → add your Google account as a Test user.
+3. **Credentials** → **Create Credentials** → **OAuth client ID** → **Desktop app** → copy the client ID and secret.
+4. Add to your `.env`:
    ```
    GOOGLE_OAUTH_CLIENT_ID=your-client-id
    GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
    TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID=your-folder-id
    ```
    Find a folder ID by opening the folder in Drive — it's the last segment of the URL.
-4. Run the one-time auth flow:
+5. Run the one-time auth flow:
    ```bash
    uv run ssm-transcriber auth google-drive
    ```
-   A browser window opens for consent. The token is saved to `~/.config/transcriber/google_token.json`.
+   A browser window opens for consent. The token is saved to `~/.config/transcriber/google_token.json` (mode `0600`).
 
 ### Usage
 
