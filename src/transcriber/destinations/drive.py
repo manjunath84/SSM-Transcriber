@@ -47,4 +47,10 @@ class DriveDestination:
                 f"Drive upload failed: {exc.reason}. "
                 f"Transcript saved locally at {path}"
             ) from exc
-        return result["webViewLink"]
+        url = result.get("webViewLink")
+        if not url:
+            raise DestinationError(
+                "Drive upload succeeded but response is missing webViewLink. "
+                f"Transcript saved locally at {path}"
+            )
+        return url
