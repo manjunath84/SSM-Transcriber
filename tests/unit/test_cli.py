@@ -862,6 +862,53 @@ def test_transcribe_upload_to_drive_happy_path(
     assert "https://drive.google.com/file/d/test/view" in result.stdout
 
 
+def test_transcribe_upload_to_drive_folder_flag_overrides_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--drive-folder passed to transcribe overrides TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID."""
+    from transcriber.providers.base import TranscriptResult
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "env-folder")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    mock_provider = MagicMock()
+    mock_provider.transcribe.return_value = TranscriptResult(
+        text="hi",
+        segments=[],
+        language="en",
+        duration_seconds=60.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    captured_folder: list[str] = []
+    mock_dest = MagicMock()
+    mock_dest.upload.return_value = "https://drive.google.com/file/d/x/view"
+
+    def _capture(folder_id: str) -> MagicMock:
+        captured_folder.append(folder_id)
+        return mock_dest
+
+    runner = CliRunner()
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+            with patch("transcriber.cli.DriveDestination", side_effect=_capture):
+                result = runner.invoke(
+                    app,
+                    [
+                        "transcribe", str(src), "--budget", "low",
+                        "--upload-to-drive", "--drive-folder", "cli-folder", "-y",
+                    ],
+                )
+
+    assert result.exit_code == 0, result.output
+    assert captured_folder == ["cli-folder"]
+
+
 def test_transcribe_upload_to_drive_auth_error_exits_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

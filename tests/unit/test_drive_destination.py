@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from googleapiclient.http import MediaFileUpload
 
 from transcriber.destinations.base import DestinationError, OutputDestination
 from transcriber.destinations.drive import DriveDestination
@@ -58,6 +59,9 @@ def test_upload_sends_correct_folder_and_filename(tmp_path: Path) -> None:
     assert create_kwargs["body"]["parents"] == ["folder-abc"]
     assert create_kwargs["body"]["name"] == "out.md"
     assert create_kwargs["fields"] == "id,webViewLink"
+    assert isinstance(create_kwargs["media_body"], MediaFileUpload)
+    # Verify the MediaFileUpload points at the actual file, not some other path
+    assert create_kwargs["media_body"]._filename == str(md_file)
 
 
 def test_upload_propagates_api_error(tmp_path: Path) -> None:
@@ -78,6 +82,24 @@ def test_upload_propagates_api_error(tmp_path: Path) -> None:
         with patch(_LOAD_CREDS, return_value=MagicMock()):
             with pytest.raises(DestinationError, match="Drive upload failed"):
                 DriveDestination(folder_id="bad-folder").upload(md_file, "out.md")
+
+
+def test_upload_propagates_transport_error(tmp_path: Path) -> None:
+    """Network failures during the upload raise DestinationError, not a raw exception."""
+    from google.auth import exceptions as google_auth_exceptions
+
+    md_file = tmp_path / "out.md"
+    md_file.write_text("# hi")
+
+    mock_service = MagicMock()
+    mock_service.files().create().execute.side_effect = google_auth_exceptions.TransportError(
+        "connection reset"
+    )
+
+    with patch(_BUILD, return_value=mock_service):
+        with patch(_LOAD_CREDS, return_value=MagicMock()):
+            with pytest.raises(DestinationError, match="network error"):
+                DriveDestination(folder_id="folder-abc").upload(md_file, "out.md")
 
 
 def test_upload_raises_when_webviewlink_missing(tmp_path: Path) -> None:

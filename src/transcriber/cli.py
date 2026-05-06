@@ -152,7 +152,8 @@ def _title_to_stem(title: str) -> str:
 
 def _resolve_drive_folder(cli_folder: str | None) -> str:
     """Return the Drive folder ID from CLI flag or config. Exits 2 if neither set."""
-    folder = cli_folder or settings.drive_output_folder_id
+    raw = cli_folder or settings.drive_output_folder_id
+    folder = raw.strip() if raw else None
     if not folder:
         console.print(
             "[red]error:[/red] No Drive folder configured.\n"

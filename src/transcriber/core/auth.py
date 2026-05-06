@@ -7,6 +7,7 @@ TOKEN_PATH holds the refresh token persisted after ``auth google-drive``.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from google.auth import exceptions as google_auth_exceptions
@@ -86,6 +87,15 @@ def authenticate_drive(client_id: str, client_secret: str) -> None:
 def _save_credentials(creds: Credentials) -> None:
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = TOKEN_PATH.with_suffix(".tmp")
-    tmp.write_text(creds.to_json())
-    tmp.chmod(0o600)
+    tmp.unlink(missing_ok=True)
+    # O_CREAT|O_WRONLY|O_EXCL with mode 0o600 means the file is never
+    # world-readable, not even transiently. write_text()+chmod() would leave
+    # a TOCTOU window where the process umask (typically 0o644) applies first.
+    fd = os.open(str(tmp), os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(creds.to_json())
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     tmp.replace(TOKEN_PATH)

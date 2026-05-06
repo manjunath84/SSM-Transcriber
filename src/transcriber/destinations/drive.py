@@ -9,6 +9,7 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
+from google.auth import exceptions as google_auth_exceptions
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
@@ -21,6 +22,7 @@ class DriveDestination:
     """Uploads a local file to a Google Drive folder."""
 
     def __init__(self, folder_id: str) -> None:
+        folder_id = folder_id.strip()
         if not folder_id:
             raise DestinationError("Drive folder ID must not be empty")
         self._folder_id = folder_id
@@ -52,6 +54,11 @@ class DriveDestination:
         except HttpError as exc:
             raise DestinationError(
                 f"Drive upload failed: {exc.reason}. "
+                f"Transcript saved locally at {path}"
+            ) from exc
+        except (google_auth_exceptions.TransportError, OSError) as exc:
+            raise DestinationError(
+                f"Drive upload failed: network error: {exc}. "
                 f"Transcript saved locally at {path}"
             ) from exc
         url = result.get("webViewLink")
