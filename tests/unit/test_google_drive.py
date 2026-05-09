@@ -9,12 +9,17 @@ verbatim from the spec.
 from __future__ import annotations
 
 import pytest
+import responses
 
 from transcriber.core.workspace import RunWorkspace
 from transcriber.sources.base import PreparedMedia
 from transcriber.sources.google_drive import DriveSource, _extract_file_id
 
 _VALID_ID = "1Zdp9aYV9klOT5_3uAazbeV91eNUOe3Vd"
+_REMOTE_URL = (
+    f"https://drive.usercontent.google.com/download"
+    f"?id={_VALID_ID}&export=download&confirm=t"
+)
 
 
 @pytest.mark.parametrize(
@@ -106,7 +111,20 @@ def test_extract_file_id_rejects_folder_urls_with_clearer_message(
 # ---------------------------------------------------------------------------
 
 
+@responses.activate
 def test_drive_source_prepare_returns_correct_prepared_media() -> None:
+    """Default-field shape after prepare(). With no --title, title is
+    auto-resolved from the CDN's Content-Disposition header (option (c),
+    PLAN.md Phase 4 Slice 3); all other fields take their dataclass
+    defaults."""
+    responses.add(
+        responses.GET,
+        _REMOTE_URL,
+        status=200,
+        headers={
+            "content-disposition": 'attachment; filename="Session17.mp4"'
+        },
+    )
     workspace = RunWorkspace()
     media = DriveSource.prepare(f"drive://{_VALID_ID}", workspace)
 
@@ -114,29 +132,26 @@ def test_drive_source_prepare_returns_correct_prepared_media() -> None:
     assert media.kind == "google_drive"
     assert media.original_uri == f"drive://{_VALID_ID}"
     assert media.local_path is None
-    assert media.remote_url == (
-        f"https://drive.usercontent.google.com/download"
-        f"?id={_VALID_ID}&export=download&confirm=t"
-    )
-    assert media.title is None  # CLI fills in from --title
+    assert media.remote_url == _REMOTE_URL
+    assert media.title == "Session17"
     assert media.duration_seconds is None
     assert media.extra == {"drive_file_id": _VALID_ID}
 
 
 def test_drive_source_prepare_canonicalises_full_drive_url() -> None:
     """Whatever URL form the user passes, original_uri normalises to
-    drive://FILE_ID and remote_url to the public-download canonical form."""
+    drive://FILE_ID and remote_url to the public-download canonical form.
+    Passing title= explicitly bypasses the network probe — this test is
+    about URL canonicalisation, not titling."""
     workspace = RunWorkspace()
     media = DriveSource.prepare(
         f"https://drive.google.com/file/d/{_VALID_ID}/view?usp=sharing",
         workspace,
+        title="Session 17",
     )
 
     assert media.original_uri == f"drive://{_VALID_ID}"
-    assert media.remote_url == (
-        f"https://drive.usercontent.google.com/download"
-        f"?id={_VALID_ID}&export=download&confirm=t"
-    )
+    assert media.remote_url == _REMOTE_URL
 
 
 def test_drive_source_prepare_raises_on_unparseable_uri() -> None:
@@ -156,9 +171,100 @@ def test_drive_source_prepare_raises_on_non_drive_host() -> None:
 
 def test_drive_source_prepare_threads_title_kwarg() -> None:
     """CLI passes the validated --title through to prepare(title=...);
-    it lands in PreparedMedia.title for the formatter to pick up."""
+    it lands in PreparedMedia.title for the formatter to pick up. When
+    --title is set the network probe is skipped — no HTTP mock required."""
     workspace = RunWorkspace()
     media = DriveSource.prepare(
         f"drive://{_VALID_ID}", workspace, title="Session 17"
     )
     assert media.title == "Session 17"
+
+
+# ---------------------------------------------------------------------------
+# Title auto-resolution from Content-Disposition (option (c) — see
+# docs/PLAN.md "Phase 4 — Slice 3"). When the user doesn't pass --title,
+# DriveSource.prepare does a streamed GET against the public Drive download
+# URL and parses the Content-Disposition filename. No OAuth, no GCP project.
+# Same code path AssemblyAI uses to fetch the file, so headers we parse
+# here are the headers AssemblyAI sees.
+# ---------------------------------------------------------------------------
+
+
+@responses.activate
+def test_drive_source_prepare_resolves_title_from_content_disposition() -> None:
+    """Vendor-API contract: Drive's CDN sends e.g.
+    ``content-disposition: attachment; filename="Session17.mp4"`` on the
+    public download URL. The exact header bytes pinned here come from a
+    curl probe of a real Drive file (235 MB, anyone-with-link), captured
+    in specs/2026-05-04-drive-source-passthrough/requirements.md.
+
+    Per the CLAUDE.md guardrail (PR #12 lesson): pin byte-for-byte to
+    catch silent regressions if Google's CDN changes the header shape."""
+    responses.add(
+        responses.GET,
+        _REMOTE_URL,
+        status=200,
+        headers={
+            "content-disposition": 'attachment; filename="Session17.mp4"'
+        },
+    )
+    workspace = RunWorkspace()
+    media = DriveSource.prepare(f"drive://{_VALID_ID}", workspace)
+    assert media.title == "Session17"
+
+
+@responses.activate
+def test_drive_source_prepare_falls_through_when_no_content_disposition() -> None:
+    """File no longer publicly shared (or any non-CD response): caller
+    falls through to the file-ID stem at the CLI/formatter layer.
+    media.title stays None — same behaviour as Slice 2 shipped."""
+    responses.add(responses.GET, _REMOTE_URL, status=200, headers={})
+    workspace = RunWorkspace()
+    media = DriveSource.prepare(f"drive://{_VALID_ID}", workspace)
+    assert media.title is None
+
+
+@responses.activate
+def test_drive_source_prepare_falls_through_on_non_200() -> None:
+    """403 / 404 from Drive (revoked sharing, deleted file): swallow and
+    fall through. The user will hit the same condition during the actual
+    transcribe-fetch and get a clear error from AssemblyAI; no point
+    failing twice."""
+    responses.add(responses.GET, _REMOTE_URL, status=404)
+    workspace = RunWorkspace()
+    media = DriveSource.prepare(f"drive://{_VALID_ID}", workspace)
+    assert media.title is None
+
+
+@responses.activate
+def test_drive_source_prepare_falls_through_on_network_error() -> None:
+    """Offline / DNS failure / timeout: don't block transcribe. The user
+    might be offline composing a job to run later — accepting the file ID
+    stem is strictly better than exit-2-ing on a network probe."""
+    from requests.exceptions import ConnectionError as ReqConnectionError
+
+    responses.add(responses.GET, _REMOTE_URL, body=ReqConnectionError("boom"))
+    workspace = RunWorkspace()
+    media = DriveSource.prepare(f"drive://{_VALID_ID}", workspace)
+    assert media.title is None
+
+
+@responses.activate
+def test_drive_source_prepare_resolves_via_canonicalised_url() -> None:
+    """User pasted a full Drive URL form. prepare() canonicalises to the
+    drive.usercontent.google.com download URL before probing — verify the
+    probe hits that canonical URL, not whatever the user pasted."""
+    responses.add(
+        responses.GET,
+        _REMOTE_URL,
+        status=200,
+        headers={
+            "content-disposition": 'attachment; filename="Session17.mp4"'
+        },
+    )
+    workspace = RunWorkspace()
+    media = DriveSource.prepare(
+        f"https://drive.google.com/file/d/{_VALID_ID}/view?usp=sharing",
+        workspace,
+    )
+    assert media.title == "Session17"
