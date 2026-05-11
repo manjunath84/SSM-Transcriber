@@ -47,18 +47,19 @@ user-visible outcome AND survives across multiple PRs / review rounds.
 7. **Merged** → PR closes the issue automatically via the `Closes`
    keyword. Status: **Done**.
 
-## Status column extension
+## Status columns
 
-The default Project Status field ships with **Todo / In Progress /
-Done**. The lifecycle above uses five columns; if you want the extra
-granularity, edit the Status options via the web UI to:
+The Project's Status field is configured for the 5-column lifecycle:
 
 > **Backlog → In Spec → In Progress → In Review → Done**
 
-The CLI doesn't yet support editing single-select options on existing
-fields cleanly. This is one-time setup. If you skip it the lifecycle
-still works — *In Spec* and *In Review* just collapse into *Todo* and
-*In Progress* respectively.
+(The default GitHub Project Status field ships with *Todo / In Progress
+/ Done*. The extra options were added via `gh api graphql` →
+`updateProjectV2Field` with the full `singleSelectOptions` list; the
+gh CLI doesn't expose this on a regular subcommand. If you ever need to
+add another option, the same mutation overwrites the full list, so
+pass all five existing options plus the new one — partial updates
+delete unmentioned options.)
 
 ## Edge cases
 
