@@ -1,0 +1,60 @@
+name: Phase / Slice
+description: Track one PLAN.md phase or slice through brainstorm → spec → PR → merge.
+title: "Phase <N> Slice <M> — <slug>"
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Granularity rule (see `docs/ai/runbooks/tracking.md`): **one issue per
+        PLAN.md phase or slice — never per PR, never per component.** Follow-up
+        commits / review fixes land on the open PR, not on a new issue.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: 1–2 sentences capturing the user-visible outcome. Detail lives in the spec.
+      placeholder: "Transcribe a YouTube URL by pulling existing captions; skip ASR entirely when captions exist."
+    validations:
+      required: true
+
+  - type: input
+    id: spec
+    attributes:
+      label: Spec
+      description: Path to `specs/<date>-<slug>/`. Use "TBD until brainstorm complete" if the slice hasn't been brainstormed yet.
+      placeholder: "specs/2026-05-15-youtube-captions/"
+    validations:
+      required: true
+
+  - type: textarea
+    id: gates
+    attributes:
+      label: Slice gates
+      description: Tick each as it's reached. Status field on the Project board moves in lockstep.
+      value: |
+        - [ ] Brainstorm complete
+        - [ ] Spec written (`specs/<date>-<slug>/requirements.md`)
+        - [ ] Implementation plan written
+        - [ ] PR opened
+        - [ ] Review complete (ultrareview if structural / new dependency)
+        - [ ] Merged
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What's explicitly *not* in this slice. Link to the PLAN.md section that owns the deferred work.
+      placeholder: "yt-dlp audio fallback (deferred to Slice 2 — PLAN.md §Phase 2 Slice 2)."
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: How will we know the slice shipped end-to-end? One real command + expected outcome is enough.
+      placeholder: "`uv run ssm-transcriber transcribe \"https://youtu.be/VIDEO_ID\" --budget low -y` → transcript file written; exit 0."
+    validations:
+      required: true

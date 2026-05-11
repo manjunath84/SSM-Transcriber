@@ -15,6 +15,11 @@
 > roadmap. `docs/learn/README.md` owns teaching-register and living-doc rules.
 > The root AI adapter files keep compact startup guardrails, but they are not
 > the primary source of truth.
+>
+> **Live execution status:** the [SSM-Transcriber Roadmap Project](https://github.com/users/manjunath84/projects/3)
+> tracks each phase/slice as an issue (one per slice, never per PR — see
+> `docs/ai/runbooks/tracking.md` for the convention). This document
+> defines the *plan*; the board reflects *what's in flight*.
 
 ---
 

@@ -5,6 +5,7 @@ Start here:
 - [`docs/ai/README.md`](docs/ai/README.md) — AI-agnostic operator guide
 - [`docs/PLAN.md`](docs/PLAN.md) — detailed roadmap and F1–F8 contracts
 - [`docs/learn/README.md`](docs/learn/README.md) — living-doc and teaching-register rules
+- [Project board](https://github.com/users/manjunath84/projects/3) — live status of phases/slices ([`docs/ai/runbooks/tracking.md`](docs/ai/runbooks/tracking.md) for the convention)
 
 ## Project
 
@@ -24,9 +25,14 @@ uv run mypy src/ tests/
 
 ## Current phase
 
-Phase 0 skeleton only. Only the CLI stub (`cli.py`) and config singleton
-(`config.py`) are implemented; core pipeline, sources, formatters, providers,
-and agents are not built yet.
+Phase 0–1 + Phase 4 (Slices 2 + 2.5) shipped: CLI, config, sources
+(local, Drive URL passthrough), AssemblyAI provider, markdown
+formatter, Drive upload destination. Phases 2 (YouTube), 3 (LLM
+post-processing), 5 (multi-provider), 6 (multi-agent) are open on the
+[Project board](https://github.com/users/manjunath84/projects/3).
+Phase 4 Slice 3 (Drive OAuth + private files) is deferred until a
+concrete private-file use case lands. See `docs/PLAN.md` for the full
+roadmap and live board for execution status.
 
 ## Guardrails to keep inline
 
@@ -66,3 +72,9 @@ and agents are not built yet.
   enforce repo-specific inputs, outputs, and checks.
 - When changing docs, follow the source docs instead of inventing new policy in
   command files or tool adapters.
+- Work is tracked on the [SSM-Transcriber Roadmap Project](https://github.com/users/manjunath84/projects/3).
+  Granularity: one issue per PLAN.md phase/slice. PR bodies use
+  `Closes #<issue>` so merges auto-close the board card. Full
+  convention: [`docs/ai/runbooks/tracking.md`](docs/ai/runbooks/tracking.md).
+  Do **not** open issues per PR or per file — those land in commits/PR
+  descriptions, not the board.
