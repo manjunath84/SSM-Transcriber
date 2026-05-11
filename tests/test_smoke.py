@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from typer.testing import CliRunner
 
 from transcriber import __version__
@@ -53,9 +54,10 @@ def test_cli_transcribe_missing_file_exits_4() -> None:
     assert "not found" in result.stdout.lower()
 
 
-def test_cli_auth_stub_exits_with_config_code() -> None:
-    """Auth stub exits 2 (config/usage error) per the {0,2,3,4} matrix
-    documented in validation.md, not 1 (outside the matrix)."""
+def test_cli_auth_google_drive_no_creds_exits_2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """auth google-drive without credentials configured → exit 2."""
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
     runner = CliRunner()
     result = runner.invoke(app, ["auth", "google-drive"])
     assert result.exit_code == 2

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import re
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
@@ -24,12 +23,16 @@ from rich.table import Table
 from transcriber.config import settings
 from transcriber.core import atomic
 from transcriber.core.audio import AudioExtractError, extract as extract_audio
+from transcriber.core.auth import AuthError, authenticate_drive, load_drive_credentials
 from transcriber.core.budget import (
     BudgetError,
     check as budget_check,
     estimate_assemblyai_cost,
 )
+from transcriber.core.title import title_to_stem, validate_title
 from transcriber.core.workspace import RunWorkspace
+from transcriber.destinations.base import DestinationError
+from transcriber.destinations.drive import DriveDestination
 from transcriber.formatters import markdown as md_formatter
 from transcriber.providers.assemblyai import AssemblyAIProvider
 from transcriber.providers.base import ProviderError
@@ -79,72 +82,61 @@ def _confirm_or_decline(msg: str) -> bool:
 #
 # atomic.write_text_atomic creates parent directories on demand. An
 # unsanitized --title "../foo" would let a user (or a misuse) write outside
-# settings.output_dir. _validate_title rejects path-traversal characters at
+# settings.output_dir. validate_title rejects path-traversal characters at
 # the CLI boundary so the source layer / formatter never see an unsafe value.
-#
-# The helpers are split:
-#   _validate_title -> the display form (whitespace stripped at the edges,
-#                      internal whitespace preserved). This lands in YAML
-#                      frontmatter as ``title:``.
-#   _title_to_stem  -> collapses internal whitespace to ``-`` for use in the
-#                      output filename. Caller is responsible for validating
-#                      first; this helper does no validation of its own.
-
-_TITLE_FORBIDDEN_SUBSTRINGS = ("/", "\\", "\0", "..")
+# See ``transcriber.core.title`` for the shared validate_title +
+# title_to_stem helpers (also used by the Drive source layer to validate
+# auto-resolved filenames from the public download URL's
+# Content-Disposition header).
 
 
-def _validate_title(title: str) -> str:
-    """Return the display form of a user-provided ``--title`` value.
-
-    Strips leading/trailing whitespace; preserves internal whitespace so
-    the YAML ``title:`` field round-trips what the user typed. Raises
-    ``ValueError`` with the documented "unsafe filename characters"
-    message on path-traversal characters (``/``, ``\\``, NUL, ``..``),
-    a leading dot (would create a hidden file), or any C0 control
-    character or DEL — those would corrupt YAML frontmatter when written
-    as a ``title:`` flow scalar.
-
-    The ``..`` substring rejection is intentionally conservative
-    (validation case 26a explicitly tests ``"ok..bad"`` as rejected,
-    even though it isn't path traversal alone). Spec policy decision —
-    don't relax without re-opening the spec.
-    """
-    stripped = title.strip()
-    if not stripped:
-        raise ValueError(
-            f"--title contains unsafe filename characters: {title!r}"
+def _resolve_drive_folder(cli_folder: str | None) -> str:
+    """Return the Drive folder ID from CLI flag or config. Exits 2 if neither set."""
+    raw = cli_folder or settings.drive_output_folder_id
+    folder = raw.strip() if raw else None
+    if not folder:
+        console.print(
+            "[red]error:[/red] No Drive folder configured.\n"
+            "Pass --drive-folder FOLDER_ID  or  set TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID in .env"
         )
-    if stripped.startswith("."):
-        raise ValueError(
-            f"--title contains unsafe filename characters: {title!r}"
-        )
-    for forbidden in _TITLE_FORBIDDEN_SUBSTRINGS:
-        if forbidden in stripped:
-            raise ValueError(
-                f"--title contains unsafe filename characters: {title!r}"
-            )
-    # C0 control characters (0x00-0x1f) corrupt YAML flow scalars when
-    # written as ``title: ...``: a literal newline splits the value
-    # mid-scalar, a carriage return + line feed pair swaps in unicode
-    # bidi marks. DEL (0x7f) is outside printable ASCII. NUL is already
-    # caught above via _TITLE_FORBIDDEN_SUBSTRINGS, but listing the
-    # complete C0 + DEL range here is the clean way to express the
-    # invariant rather than relying on two overlapping checks.
-    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in stripped):
-        raise ValueError(
-            f"--title contains unsafe filename characters: {title!r}"
-        )
-    return stripped
+        raise typer.Exit(code=2)
+    return folder
 
 
-def _title_to_stem(title: str) -> str:
-    """Collapse internal whitespace runs to ``-`` for a filename stem.
+# ── transcriber upload ────────────────────────────────────────────────────────
 
-    Caller is responsible for validating the title with ``_validate_title``
-    first; this helper does no validation. Splitting the responsibilities
-    keeps the YAML display form separate from the filename-friendly form.
-    """
-    return re.sub(r"\s+", "-", title)
+@app.command()
+def upload(
+    file: Annotated[Path, typer.Argument(help="Transcript file to upload to Google Drive")],
+    drive_folder: Annotated[
+        str | None,
+        typer.Option(
+            "--drive-folder",
+            help="Drive folder ID (overrides TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID)",
+        ),
+    ] = None,
+) -> None:
+    """Upload an existing transcript file to Google Drive."""
+    if not file.is_file():
+        console.print(f"[red]error:[/red] File not found: {file}")
+        raise typer.Exit(code=4)
+
+    folder_id = _resolve_drive_folder(drive_folder)
+
+    # AuthError (config: re-run auth google-drive) is exit 2; DestinationError
+    # (network/API failure with file still on disk, retry possible) is exit 4.
+    # Different exit codes let scripts distinguish "fix config" from "retry".
+    try:
+        dest = DriveDestination(folder_id=folder_id)
+        url = dest.upload(file, file.name)
+    except AuthError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+    except DestinationError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(code=4) from exc
+
+    console.print(f"Uploaded → {url}")
 
 
 # ── transcriber transcribe ────────────────────────────────────────────────────
@@ -185,6 +177,14 @@ def transcribe(
         bool,
         typer.Option("--no-speakers", help="Disable speaker diarization (default: on)"),
     ] = False,
+    upload_to_drive: Annotated[
+        bool,
+        typer.Option("--upload-to-drive", help="Upload the transcript to Google Drive after transcription"),  # noqa: E501
+    ] = False,
+    drive_folder: Annotated[
+        str | None,
+        typer.Option("--drive-folder", help="Drive folder ID (overrides TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID)"),  # noqa: E501
+    ] = None,
     no_timestamps: Annotated[
         bool,
         typer.Option("--no-timestamps", help="Strip mm:ss timestamp prefixes (default: on)"),
@@ -230,12 +230,25 @@ def transcribe(
             display_title: str | None
             if title is not None:
                 try:
-                    display_title = _validate_title(title)
+                    display_title = validate_title(title)
                 except ValueError as exc:
                     console.print(f"[red]error:[/red] {exc}")
                     raise typer.Exit(code=2) from exc
             else:
                 display_title = None
+
+            # Fail fast: validate Drive folder and credentials before doing any
+            # transcription work. Both checks run before audio extraction or any
+            # paid API call so the user doesn't pay AssemblyAI only to discover
+            # a Drive misconfiguration afterward.
+            upload_folder_id: str | None = None
+            if upload_to_drive:
+                upload_folder_id = _resolve_drive_folder(drive_folder)
+                try:
+                    load_drive_credentials()
+                except AuthError as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    raise typer.Exit(code=2) from exc
 
             # Prepare the source with the validated title. Each source
             # decides how to use it: LocalSource overrides the filename-
@@ -373,26 +386,33 @@ def transcribe(
                 if display_title is not None:
                     # User passed --title: collapse whitespace for filename.
                     # YAML title preserves the original (display_title).
-                    stem = _title_to_stem(display_title)
+                    stem = title_to_stem(display_title)
                 elif media.title is not None:
-                    # Local source, no --title: LocalSource.prepare set
-                    # media.title to the original source's stem (e.g.
-                    # ``video`` for ``./video.mp4``). Use it directly —
-                    # source filenames typically don't contain whitespace,
-                    # and Slice 1's behaviour preserved them intact.
+                    # Source-resolved title (LocalSource: file stem;
+                    # DriveSource: auto-resolved from Content-Disposition,
+                    # already validated in the source layer). Route
+                    # through title_to_stem so both the --title path and
+                    # the source-resolved path produce the same on-disk
+                    # filename shape ("Session 17" → Session-17), closing
+                    # the convergence gap flagged by the ultrareview of
+                    # PR #19's Drive-auto title resolution.
                     #
                     # NOTE: cannot use ``media.local_path.stem`` here:
                     # after the C1 dataclasses.replace swap, local_path
                     # points at the workspace WAV (stem ``audio``), not
                     # the source. media.title is the source-stem fallback
                     # LocalSource.prepare populated.
-                    stem = media.title
+                    stem = title_to_stem(media.title)
                 else:
-                    # Drive source, no --title: fall back to the file ID.
-                    # extra['drive_file_id'] is set by DriveSource.prepare;
-                    # missing key is a producer-side bug, not user input.
-                    # Let KeyError bubble with traceback rather than
-                    # silently writing 'untitled-DATE.md' (review I5).
+                    # Drive source with no --title and the CDN title
+                    # probe returned None (file no longer publicly
+                    # shared, hostile filename rejected by
+                    # validate_title, network failure, etc.). Fall back
+                    # to the file ID. extra['drive_file_id'] is set by
+                    # DriveSource.prepare; missing key is a producer-side
+                    # bug, not user input. Let KeyError bubble with
+                    # traceback rather than silently writing
+                    # 'untitled-DATE.md' (review I5).
                     stem = media.extra["drive_file_id"]
                 date_str = date.today().isoformat()
                 output = settings.output_dir / f"{stem}-{date_str}.md"
@@ -405,6 +425,30 @@ def transcribe(
                 raise typer.Exit(code=4) from exc
 
             console.print(f"[green]✓[/green] Saved to: {output}")
+
+            if upload_to_drive:
+                if upload_folder_id is None:
+                    raise RuntimeError(
+                        "upload_folder_id is None despite upload_to_drive=True; "
+                        "the upload-to-drive fail-fast check should have caught this"
+                    )
+                # Both error types exit 4 here (transcript already on disk
+                # after a paid AssemblyAI call — recovery means re-uploading,
+                # not re-running). DestinationError messages already contain
+                # "Transcript saved locally at <path>"; AuthError doesn't, so
+                # we print the path explicitly. Pre-flight AuthError (before
+                # extract) is a separate path that exits 2.
+                try:
+                    dest = DriveDestination(folder_id=upload_folder_id)
+                    drive_url = dest.upload(output, output.name)
+                except AuthError as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    console.print(f"[yellow]Transcript saved locally at {output}[/yellow]")
+                    raise typer.Exit(code=4) from exc
+                except DestinationError as exc:
+                    console.print(f"[red]error:[/red] {exc}")
+                    raise typer.Exit(code=4) from exc
+                console.print(f"Uploaded → {drive_url}")
     except KeyboardInterrupt:
         # Standard SIGINT exit code; workspace cleanup runs via __exit__.
         console.print("[yellow]Interrupted.[/yellow]")
@@ -431,13 +475,30 @@ def providers() -> None:
 
 @app.command()
 def auth(
-    service: Annotated[str, typer.Argument(help="Service to authenticate: google-drive")],
+    provider: Annotated[str, typer.Argument(help="Provider to authenticate ('google-drive')")],
 ) -> None:
-    """Authenticate with an external service (e.g. Google Drive OAuth)."""
-    console.print(f"[yellow]Auth for '{service}' not yet implemented (Phase 4).[/yellow]")
-    # Exit 2 = config / usage error per validation.md exit-code matrix
-    # ({0,2,3,4}). Originally 1 (outside the documented matrix).
-    raise typer.Exit(code=2)
+    """Authenticate with a cloud provider and save credentials."""
+    if provider != "google-drive":
+        console.print(f"[red]error:[/red] Unknown provider {provider!r}. Supported: 'google-drive'")
+        raise typer.Exit(code=2)
+
+    if not settings.google_oauth_configured:
+        console.print(
+            "[red]error:[/red] Google OAuth credentials not configured.\n"
+            "Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in .env\n"
+            "(see .env.example for setup instructions)"
+        )
+        raise typer.Exit(code=2)
+
+    try:
+        authenticate_drive(
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+        )
+    except Exception as exc:
+        console.print(f"[red]error:[/red] Drive authentication failed: {exc}")
+        raise typer.Exit(code=2) from exc
+    console.print("[green]Google Drive authenticated. Token saved.[/green]")
 
 
 # ── transcriber config ────────────────────────────────────────────────────────

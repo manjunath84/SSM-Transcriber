@@ -6,16 +6,30 @@ calls (verbatim)" and returns a ``PreparedMedia`` whose ``remote_url`` is
 the canonical Drive download URL AssemblyAI fetches directly. **No OAuth,
 no local download, no upload.**
 
+When the caller doesn't pass ``title``, ``prepare`` does a streamed GET
+against the public download URL and parses the ``Content-Disposition``
+filename. This is option (c) in the PLAN.md §"Phase 4 — Slice 3"
+discussion of filename resolution: no Drive API call, no OAuth scope
+broadening, same endpoint AssemblyAI fetches the bytes from.
+
 OAuth + private-file support is a deferred Slice 3; see ``docs/PLAN.md``
 §"Phase 4 — Drive Source".
 """
 
 from __future__ import annotations
 
+import logging
 import re
+from pathlib import Path
+from urllib.parse import unquote
 
+import requests
+
+from transcriber.core.title import validate_title
 from transcriber.core.workspace import RunWorkspace
 from transcriber.sources.base import PreparedMedia, SourceInputError
+
+logger = logging.getLogger(__name__)
 
 # Drive file IDs are URL-safe base64 — alnum, dash, underscore. The minimum
 # length isn't documented but the shortest IDs we see in practice are 25+
@@ -32,6 +46,65 @@ _FILE_D_RE = re.compile(r"/file/d/([A-Za-z0-9_-]+)(?:/|$)")
 
 # `?id=<ID>` or `&id=<ID>` — extract the ID query parameter value.
 _ID_QUERY_RE = re.compile(r"[?&]id=([A-Za-z0-9_-]+)")
+
+# RFC 6266 §5: ``filename="..."`` is the simple form Drive's CDN sends.
+# Drive does not use the RFC 5987 ``filename*=UTF-8''...`` form even for
+# unicode filenames (verified by curl probe 2026-05-06; see spec
+# §"Reference calls (verbatim)"). Match only the simple quoted form.
+_CD_FILENAME_RE = re.compile(r'filename="([^"]+)"', re.IGNORECASE)
+
+# Probe timeout for the Content-Disposition fetch. Long enough that a
+# transient slow path doesn't pre-empt a real transcribe; short enough
+# that an offline user doesn't wait minutes for a doomed probe to fail.
+_TITLE_PROBE_TIMEOUT_SECONDS = 10.0
+
+
+def _fetch_drive_filename(remote_url: str) -> str | None:
+    """Return the Drive file's filename stem, or ``None`` on any failure.
+
+    Uses the same unauthenticated download URL that AssemblyAI fetches
+    the bytes from. ``stream=True`` means the response body is never
+    transferred — only headers — and the context manager closes the
+    socket immediately. One round trip, ~50 ms typical.
+
+    Fail-soft on every error path: missing creds aren't relevant here
+    (this URL is public), but offline / DNS failure / non-200 / missing
+    or unparseable Content-Disposition all degrade to ``None`` so the
+    caller falls through to the file-ID stem. The user will hit any
+    real connectivity issue again during the actual AssemblyAI fetch
+    and get a clearer error there; no value in failing twice.
+    """
+    try:
+        with requests.get(
+            remote_url,
+            stream=True,
+            allow_redirects=True,
+            timeout=_TITLE_PROBE_TIMEOUT_SECONDS,
+        ) as response:
+            if response.status_code != 200:
+                return None
+            cd = response.headers.get("content-disposition", "")
+    except requests.RequestException as exc:
+        logger.debug("drive title probe failed: %s", exc)
+        return None
+
+    if not (match := _CD_FILENAME_RE.search(cd)):
+        return None
+    stem = Path(unquote(match.group(1))).stem
+    if not stem:
+        return None
+    # Validate with the same rules the --title path uses (path-traversal
+    # chars, leading dot, C0 controls, DEL). Anyone-with-link Drive
+    # sources mean the uploader can be a third party — an uploader who
+    # named their file ``foo\nbar.mp4`` would otherwise corrupt YAML
+    # frontmatter via the literal newline in the ``title:`` flow scalar.
+    # ValueError → fall through to the file-ID stem; same outcome as
+    # any other probe failure.
+    try:
+        return validate_title(stem)
+    except ValueError:
+        logger.debug("drive title probe: rejected hostile filename %r", stem)
+        return None
 
 
 def _extract_file_id(uri: str) -> str:
@@ -102,13 +175,24 @@ class DriveSource:
         uri: str, workspace: RunWorkspace, *, title: str | None = None
     ) -> PreparedMedia:
         file_id = _extract_file_id(uri)
-        remote_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        # The legacy ``drive.google.com/uc?export=download&id=FILE_ID`` host
+        # injects an HTML "virus-scan warning" interstitial for files >~25 MB,
+        # which AssemblyAI's URL fetcher receives instead of the file
+        # (manifests as: "File does not appear to contain audio. File type is
+        # text/html"). The drive.usercontent.google.com download host with
+        # ``confirm=t`` bypasses the interstitial and serves the file directly.
+        # Verified empirically against a 235 MB Drive source on 2026-05-06.
+        remote_url = (
+            f"https://drive.usercontent.google.com/download"
+            f"?id={file_id}&export=download&confirm=t"
+        )
+        resolved_title = title if title is not None else _fetch_drive_filename(remote_url)
         return PreparedMedia(
             kind="google_drive",
             original_uri=f"drive://{file_id}",
             local_path=None,
             remote_url=remote_url,
-            title=title,
+            title=resolved_title,
             duration_seconds=None,
             workspace=workspace,
             extra={"drive_file_id": file_id},

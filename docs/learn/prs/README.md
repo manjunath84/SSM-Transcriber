@@ -29,6 +29,7 @@
 | #16 | Execution plan: Drive Source (URL passthrough) | feature (plan) | (no explainer — short doc-only PR; see plan triple) |
 | #17 | Implementation: Drive Source (URL passthrough) | feature (impl) | [`pr-017-drive-source-passthrough-impl.md`](pr-017-drive-source-passthrough-impl.md) |
 | #18 | Fix AssemblyAI rate constant + factor in diarization | fix | [`pr-018-assemblyai-rate-constant-fix.md`](pr-018-assemblyai-rate-constant-fix.md) |
+| #19 | Drive Upload: transcript → Google Drive | feature (impl) | [`pr-019-drive-upload.md`](pr-019-drive-upload.md) |
 
 ## Conventions
 

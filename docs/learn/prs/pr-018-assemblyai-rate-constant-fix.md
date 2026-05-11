@@ -88,6 +88,10 @@ rate hooks). This PR keeps Slice 1's "single hardcoded rate"
 abstraction shape; just corrects the values and splits the
 diarization slot for the default-on case.
 
+## New Python idioms introduced
+
+- `*, kwarg` keyword-only argument separator — see [`python-notes.md#keyword-only-arguments-kwarg`](../python-notes.md#keyword-only-arguments-kwarg)
+
 ## What a reviewer should notice
 
 - **The PR is small** — 1 file changed in src/, 1 file changed in
@@ -119,8 +123,9 @@ diarization slot for the default-on case.
   surfaced that PR #12's hardcoded AssemblyAI rate was 2.35x too
   high. Fixed by splitting the rate into model + add-on constants
   verified against two independent days of dashboard billing data."
-- **Pointer:** the cost-vs-estimate gap analysis in PR #17's
-  explainer plus the empirical rate derivation table above.
+- **Pointer:** [`interview-prep.md` — "Tell me about a time your automated tests failed to catch a bug"](../interview-prep.md#tell-me-about-a-time-your-automated-tests-failed-to-catch-a-bug);
+  cost-vs-estimate gap analysis in PR #17's explainer; empirical rate
+  derivation table above.
 
 ## Further reading
 

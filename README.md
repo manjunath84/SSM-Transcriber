@@ -4,18 +4,74 @@ Multi-agent audio/video transcription pipeline — local-first, cloud-agnostic, 
 
 Transcribe video and audio from **local files**, **YouTube URLs**, and **Google Drive** using a provider-swappable pipeline. Default transcription runs entirely locally with no API keys required.
 
-## Quick start
+## Development setup
 
 ```bash
+git clone https://github.com/manjunath84/SSM-Transcriber
+cd SSM-Transcriber
 uv sync
-uv run ssm-transcriber transcribe ./video.mp4
-uv run ssm-transcriber transcribe "https://youtu.be/..."
+
+# Confirm the CLI is installed
+uv run ssm-transcriber --help
 ```
 
-> **First-run note:** `faster-whisper` downloads model weights on first use
-> (`tiny` ≈ 75 MB, `base` ≈ 145 MB, `large-v3` ≈ 3 GB). Prefetch with
-> `uv run ssm-transcriber models download --quality balanced` to avoid waiting
-> on the first transcribe call or surprising an offline run.
+> **Current status:** Phase 1 (local `faster-whisper` transcription) is not yet built.
+> Local-file and YouTube transcription commands are defined but not functional.
+> The working path today is cloud transcription via AssemblyAI (see below).
+
+## Transcription quick-start
+
+```bash
+# Transcribe via AssemblyAI (requires ASSEMBLYAI_API_KEY in .env)
+uv run ssm-transcriber transcribe ./recording.mp4 --budget low
+
+# Transcribe a Google Drive file (public link)
+uv run ssm-transcriber transcribe "drive://FILE_ID" --budget low
+
+# See all options
+uv run ssm-transcriber transcribe --help
+```
+
+## Google Drive upload
+
+Transcripts can be uploaded to Google Drive after transcription, or
+uploaded separately from an existing file.
+
+### One-time setup
+
+Full step-by-step instructions (including the OAuth consent screen
+config and source-file sharing requirement) are in
+[`docs/ai/runbooks/drive-transcribe-upload.md`](docs/ai/runbooks/drive-transcribe-upload.md).
+Quick version:
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com) → **APIs & Services** → **Library**. Search for **Google Drive API** and enable it.
+2. **OAuth consent screen** → External → add scope `.../auth/drive.file` → add your Google account as a Test user.
+3. **Credentials** → **Create Credentials** → **OAuth client ID** → **Desktop app** → copy the client ID and secret.
+4. Add to your `.env`:
+   ```
+   GOOGLE_OAUTH_CLIENT_ID=your-client-id
+   GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
+   TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID=your-folder-id
+   ```
+   Find a folder ID by opening the folder in Drive — it's the last segment of the URL.
+5. Run the one-time auth flow:
+   ```bash
+   uv run ssm-transcriber auth google-drive
+   ```
+   A browser window opens for consent. The token is saved to `~/.config/transcriber/google_token.json` (mode `0600`).
+
+### Usage
+
+```bash
+# Transcribe and upload in one step
+uv run ssm-transcriber transcribe "drive://FILE_ID" --budget low --upload-to-drive
+
+# Upload a previously-transcribed file
+uv run ssm-transcriber upload ./output/Session20-transcript-2026-05-05.md
+
+# Override the default folder for one run
+uv run ssm-transcriber upload ./output/session.md --drive-folder OTHER_FOLDER_ID
+```
 
 ## Cost model
 

@@ -226,6 +226,42 @@ async helps, and if it does, you introduce it then, not by speculation.
 **Pointers:** [`docs/PLAN.md` F1](../PLAN.md),
 [`journey.md` PR #3 entry](journey.md#pr-3--phase-1-foundations-f1f8).
 
+### "Tell me about a time your automated tests failed to catch a bug"
+
+**Story: The wrong rate constant that 12 weeks of unit tests missed** (PR #18).
+
+- **Situation.** PR #12 shipped AssemblyAI support with a hardcoded rate
+  constant `ASSEMBLYAI_RATE_PER_MINUTE_USD = 0.009`. The unit tests verified
+  that the cost-estimation math was correct *relative to the constant* — 10
+  minutes at $0.009/min = $0.09. Every test passed. The constant was 2.35x too
+  high.
+- **Task.** The PR #17 manual runbook required comparing the CLI's pre-run cost
+  estimate against the actual AssemblyAI billing dashboard after a real
+  transcription run. I had to run this check before declaring PR #17 done.
+- **Action.** The dashboard showed $0.2415 for 63 minutes of audio. The CLI
+  had quoted $0.567. I pulled two independent days of Cost dashboard data,
+  computed the per-minute math ($0.0035/min base + $0.000333/min diarization),
+  and confirmed the constants to 6 decimal places. PR #18 split the single
+  constant into two empirically-verified ones and added a regression test
+  that locks the rate against the real billing figure —
+  `test_estimate_cost_matches_real_pr17_run`. A future rate change will fail
+  that assertion and force re-verification against fresh dashboard data.
+- **Result.** The bug had lived in the codebase through one full feature (Drive
+  source passthrough, PR #17) without any test catching it. The structural
+  defence turned out to matter: PR #15's brainstorm decision to skip
+  per-minute estimates for Drive sources had inadvertently made Slice 2 immune
+  to the bug class.
+
+**The interviewer's follow-up is usually: "How did you make sure it wouldn't
+happen again?"** Answer: two things. First, the new regression test locks the
+rate against an empirical billing figure, not a computed value — the constant
+*is* the thing being tested. Second, every manual runbook now includes a
+cost-vs-dashboard comparison step, making the rate a thing you verify on every
+real run, not something you trust once and forget.
+
+**Pointers:** [`prs/pr-018-assemblyai-rate-constant-fix.md`](prs/pr-018-assemblyai-rate-constant-fix.md),
+[`journey.md` PR #18 entry](journey.md#pr-18--fix-assemblyai-rate-constant--factor-in-diarization).
+
 ---
 
 ## System design

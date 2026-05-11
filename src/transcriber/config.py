@@ -67,6 +67,9 @@ class TranscriberSettings(BaseSettings):
     # ── LLM (Phase 6a+) ──────────────────────────────────────────────────────
     llm_model: str = "groq/llama-3.1-8b-instant"
 
+    # ── Google Drive (upload destination) ────────────────────────────────────
+    drive_output_folder_id: str | None = None
+
     # ── Logging ──────────────────────────────────────────────────────────────
     log_level: str = "INFO"
 
@@ -91,6 +94,27 @@ class TranscriberSettings(BaseSettings):
         """
         return bool((os.getenv("ASSEMBLYAI_API_KEY") or "").strip())
 
+    @property
+    def google_oauth_client_id(self) -> str:
+        """GOOGLE_OAUTH_CLIENT_ID value, stripped. Empty string if unset.
+
+        Third-party key: unprefixed by convention, read via os.getenv.
+        """
+        return (os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
+
+    @property
+    def google_oauth_client_secret(self) -> str:
+        """GOOGLE_OAUTH_CLIENT_SECRET value, stripped. Empty string if unset.
+
+        Third-party key: unprefixed by convention, read via os.getenv.
+        """
+        return (os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
+
+    @property
+    def google_oauth_configured(self) -> bool:
+        """Whether GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are both set."""
+        return bool(self.google_oauth_client_id) and bool(self.google_oauth_client_secret)
+
     def redacted_dump(self) -> dict[str, str]:
         """Return a dict of settings safe for logging and CLI output.
 
@@ -107,6 +131,7 @@ class TranscriberSettings(BaseSettings):
             "cache_enabled",
             "keep_temp",
             "llm_model",
+            "drive_output_folder_id",
             "log_level",
         }
         return {k: str(v) for k, v in self.model_dump().items() if k in allowlist}

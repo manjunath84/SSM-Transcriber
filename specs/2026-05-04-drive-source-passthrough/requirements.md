@@ -32,6 +32,10 @@ Each item below is explicitly out of scope for this slice and lands later:
   permissions). Same OAuth dependency.
 - **Auto-derived title from Drive filename via Content-Disposition
   scrape.** Defer; `--title` flag covers the user-facing need today.
+  *(Update post-Slice-2: shipped as a follow-up to PR #19 — see
+  §"Google Drive — public download URL response headers (filename
+  probe)" below and PLAN.md §"Phase 4 — Slice 3" filename
+  auto-resolution table.)*
 - **Cost pre-estimation for Drive sources.** Skipped per the brainstorm
   decision; the message tells the user AssemblyAI bills per-minute and
   exact cost is in the dashboard. No `ffprobe-over-HTTP` or HEAD-based
@@ -192,6 +196,33 @@ https://drive.google.com/uc?export=download&id=1Zdp9aYV9klOT5_3uAazbeV91eNUOe3Vd
 ```
 
 All five round-trip to the same file ID `1Zdp9aYV9klOT5_3uAazbeV91eNUOe3Vd`.
+
+### Google Drive — public download URL response headers (filename probe)
+
+**Source:** curl probe of a real anyone-with-link Drive file (235 MB,
+the same source that triggered the virus-scan interstitial fix in PR #4f26ff7).
+**Retrieval date:** 2026-05-06
+**Used by:** `_fetch_drive_filename` in `sources/google_drive.py` —
+option (c) in PLAN.md §"Phase 4 — Slice 3".
+
+Streamed GET against the canonical download URL (no auth, no API):
+
+```bash
+curl -sI "https://drive.usercontent.google.com/download?id=1Zdp9aYV9klOT5_3uAazbeV91eNUOe3Vd&export=download&confirm=t"
+```
+
+Response includes (verbatim header bytes — pinned in the unit test):
+
+```text
+content-disposition: attachment; filename="Session17.mp4"
+```
+
+The implementation parses the simple RFC 6266 `filename="..."` form;
+Drive does not emit the RFC 5987 `filename*=UTF-8''...` form even for
+unicode filenames (verified against this probe). If the file is no
+longer publicly shared the response is HTML (sign-in page) without
+`Content-Disposition` and the prober returns `None` — caller falls
+through to the file-ID stem.
 
 ## Output contracts
 

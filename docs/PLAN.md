@@ -636,6 +636,25 @@ uv run ssm-transcriber transcribe "drive://1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs"
 **Verification:** transcribe a private Drive file the current user
 owns; OAuth refresh-token round-trip works without re-prompting.
 
+##### Filename auto-resolution — alternatives considered
+
+When a user runs `transcribe drive://FILE_ID` without `--title`, the
+output filename and frontmatter `title` need a human-readable string.
+Three options surfaced during the post-PR-#19 review:
+
+| Option | What it does | OAuth/GCP cost | Outcome |
+|---|---|---|---|
+| (a) **Strict OAuth** | Call Drive API `files().get(fields="name")` for every Drive transcribe; require auth even for transcribe-without-upload. | Forces every Drive user to set up a Google Cloud project and broaden the OAuth scope from `drive.file` to `drive.metadata.readonly` (consent screen now reads "see info about all your Drive files"). | **Rejected** — abandons the no-OAuth onramp Slice 2 was designed around. |
+| (b) **Best-effort OAuth** | Same API call, wrapped in try/except; missing creds aren't fatal. | Same scope-broadening as (a). Behaviour splits across users (authenticated → real filename, unauthenticated → file ID stem). | **Rejected** — cost of (a) for partial benefit. |
+| (c) **CDN Content-Disposition** | Streamed `GET` of the public download URL (same URL AssemblyAI fetches the bytes from); parse `Content-Disposition: attachment; filename="..."`. | None — endpoint is unauthenticated, scope unchanged at `drive.file`. | **Shipped** as a follow-up to PR #19 (`_fetch_drive_filename` in `sources/google_drive.py`). One round trip, ~50 ms, fail-soft on every error path. |
+
+If Slice 3 lands a real OAuth path for private-file *download*, (a) or
+(b) become trivial follow-ups for the metadata side too — but (c) keeps
+working for public-link sources and continues to spare those users the
+GCP setup. The vendor-API contract for (c) is pinned byte-for-byte in
+`specs/2026-05-04-drive-source-passthrough/requirements.md`
+§"Reference calls (verbatim)".
+
 ---
 
 ### Phase 5 — Cloud Transcription Providers (provider abstraction)

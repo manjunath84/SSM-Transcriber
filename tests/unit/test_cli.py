@@ -9,11 +9,14 @@ calls that function with the planned output path.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
 
 from transcriber.cli import app
+from transcriber.core.auth import AuthError
+from transcriber.destinations.base import DestinationError
 
 
 def test_unsupported_format_exits_2(tmp_path: Path) -> None:
@@ -220,9 +223,14 @@ def test_eof_on_prompt_treated_as_decline(
 
 
 # ---------------------------------------------------------------------------
-# Title sanitization helpers (Slice 2). _validate_title returns the display
-# form (whitespace stripped at edges, internal preserved). _title_to_stem
-# collapses internal whitespace to '-' for filenames.
+# Title sanitization helpers (Slice 2 + post-PR-#19 follow-up).
+# validate_title returns the display form (whitespace stripped at edges,
+# internal preserved). title_to_stem collapses internal whitespace to '-'
+# for filenames. Both moved from cli.py to core/title.py so the Drive
+# source layer can share them (bug_004 fix — auto-resolved filenames
+# from Content-Disposition headers must hit the same validator the
+# --title path uses, otherwise an uploader-chosen ``foo\nbar.mp4`` from
+# Drive corrupts YAML frontmatter).
 # ---------------------------------------------------------------------------
 
 
@@ -236,9 +244,9 @@ def test_eof_on_prompt_treated_as_decline(
     ],
 )
 def test_validate_title_accepts_safe_titles(title: str, expected: str) -> None:
-    from transcriber.cli import _validate_title
+    from transcriber.core.title import validate_title
 
-    assert _validate_title(title) == expected
+    assert validate_title(title) == expected
 
 
 @pytest.mark.parametrize(
@@ -257,10 +265,10 @@ def test_validate_title_rejects_unsafe_characters(unsafe: str) -> None:
     directories on demand, so an unsanitized --title '../foo' would write
     outside settings.output_dir. Validation case 26a explicitly tests this.
     """
-    from transcriber.cli import _validate_title
+    from transcriber.core.title import validate_title
 
     with pytest.raises(ValueError, match="unsafe filename"):
-        _validate_title(unsafe)
+        validate_title(unsafe)
 
 
 @pytest.mark.parametrize(
@@ -279,17 +287,17 @@ def test_validate_title_rejects_control_characters(unsafe: str) -> None:
     splits the value mid-scalar, a carriage return swaps in unicode
     direction, etc. NUL was already covered by the unsafe-substring
     check; widen to all C0 controls + DEL."""
-    from transcriber.cli import _validate_title
+    from transcriber.core.title import validate_title
 
     with pytest.raises(ValueError, match="unsafe filename"):
-        _validate_title(unsafe)
+        validate_title(unsafe)
 
 
 def test_validate_title_rejects_empty_after_strip() -> None:
-    from transcriber.cli import _validate_title
+    from transcriber.core.title import validate_title
 
     with pytest.raises(ValueError, match="unsafe filename|empty"):
-        _validate_title("   ")
+        validate_title("   ")
 
 
 @pytest.mark.parametrize(
@@ -306,19 +314,19 @@ def test_title_to_stem_collapses_whitespace_to_dashes(
 ) -> None:
     """Whitespace in --title becomes '-' in the filename; YAML title
     preserves the original (validation case 26b)."""
-    from transcriber.cli import _title_to_stem
+    from transcriber.core.title import title_to_stem
 
-    assert _title_to_stem(title) == expected_stem
+    assert title_to_stem(title) == expected_stem
 
 
 def test_title_to_stem_assumes_input_already_validated() -> None:
-    """_title_to_stem does no validation — it expects a string that has
-    already passed _validate_title. Tests document the order so a future
+    """title_to_stem does no validation — it expects a string that has
+    already passed validate_title. Tests document the order so a future
     caller doesn't accidentally swap them."""
-    from transcriber.cli import _title_to_stem
+    from transcriber.core.title import title_to_stem
 
     # No validation happens here; the contract is "validate first, then collapse".
-    assert _title_to_stem("path with spaces") == "path-with-spaces"
+    assert title_to_stem("path with spaces") == "path-with-spaces"
 
 
 # ---------------------------------------------------------------------------
@@ -406,11 +414,19 @@ def test_drive_happy_path_with_title(
 def test_drive_happy_path_no_title_uses_file_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No --title → output filename uses the file ID."""
+    """No --title → CDN title probe returns None (mocked, to keep the
+    unit-test hermetic — see bug_012 in the post-PR-#19 review) → output
+    filename falls back to the file ID."""
     from transcriber.providers.base import Segment, TranscriptResult
 
     monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
     monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    # Without this, DriveSource.prepare() makes a real network call to
+    # drive.usercontent.google.com — bug_012 from the ultrareview.
+    monkeypatch.setattr(
+        "transcriber.sources.google_drive._fetch_drive_filename",
+        lambda _u: None,
+    )
 
     class _OkProvider:
         def __init__(self, *_args: object, **_kwargs: object) -> None: ...
@@ -437,6 +453,51 @@ def test_drive_happy_path_no_title_uses_file_id(
     assert len(written) == 1
 
 
+def test_drive_auto_resolved_title_produces_dash_stem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """bug_004 (CLI side): when DriveSource auto-resolves a title with
+    internal whitespace ('Session 17' from Content-Disposition), the
+    output filename must collapse whitespace to '-' identically to the
+    --title path. Closes the convergence gap where
+    ``--title "Session 17"`` produced ``Session-17-DATE.md`` but the
+    auto-resolved path produced ``Session 17-DATE.md``."""
+    from transcriber.providers.base import Segment, TranscriptResult
+
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr(
+        "transcriber.sources.google_drive._fetch_drive_filename",
+        lambda _u: "Session 17",
+    )
+
+    class _OkProvider:
+        def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def transcribe(self, *_args: object, **_kwargs: object) -> TranscriptResult:
+            return TranscriptResult(
+                text="hi",
+                segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
+                language="en",
+                duration_seconds=1.0,
+                model="universal-3-pro",
+                job_id="drive-job",
+            )
+
+    monkeypatch.setattr("transcriber.cli.AssemblyAIProvider", _OkProvider)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["transcribe", "drive://1Zdp9aYV", "--budget", "low", "-y"],
+    )
+    assert result.exit_code == 0, result.output
+    # Dash-collapsed — matches what --title "Session 17" produces.
+    assert list(tmp_path.glob("Session-17-*.md"))
+    # Literal-space form must not appear.
+    assert not list(tmp_path.glob("Session 17-*.md"))
+
+
 def test_unknown_uri_scheme_exits_2(tmp_path: Path) -> None:
     """transcribe https://example.com/foo → exit 2 with 'URI scheme not
     supported' (NOT a 'file not found' fallthrough to LocalSource)."""
@@ -452,6 +513,13 @@ def test_unknown_uri_scheme_exits_2(tmp_path: Path) -> None:
 def test_drive_budget_free_still_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Drive sources don't bypass Gate 2."""
     monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+    # Mock the CDN title probe — DriveSource.prepare() runs before the
+    # budget gate, so without this the test makes a real network call
+    # (bug_012 from the ultrareview).
+    monkeypatch.setattr(
+        "transcriber.sources.google_drive._fetch_drive_filename",
+        lambda _u: None,
+    )
     runner = CliRunner()
     result = runner.invoke(
         app, ["transcribe", "drive://1Zdp9aYV", "-y"]  # default --budget=free
@@ -472,6 +540,12 @@ def test_drive_no_api_key_still_blocks_at_gate_1(
     set) breaks the suite instead of shipping a silent regression.
     """
     monkeypatch.delenv("ASSEMBLYAI_API_KEY", raising=False)
+    # Mock the CDN title probe — same reason as test_drive_budget_free
+    # above; bug_012 from the ultrareview.
+    monkeypatch.setattr(
+        "transcriber.sources.google_drive._fetch_drive_filename",
+        lambda _u: None,
+    )
     runner = CliRunner()
     result = runner.invoke(
         app,
@@ -561,4 +635,520 @@ def test_local_path_uploads_extracted_wav_not_source_file(
     assert len(written) == 1, (
         f"expected one video-*.md (Slice 1 source-stem behaviour), "
         f"got {[p.name for p in tmp_path.glob('*.md')]}"
+    )
+
+
+# ── auth command ─────────────────────────────────────────────────────────────
+
+def test_auth_unknown_provider_exits_2() -> None:
+    """`auth s3` is not a supported provider → exit 2."""
+    runner = CliRunner()
+    result = runner.invoke(app, ["auth", "s3"])
+    assert result.exit_code == 2
+    assert "unknown provider" in result.stdout.lower()
+
+
+def test_auth_google_drive_missing_credentials_exits_2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`auth google-drive` without OAuth credentials configured → exit 2."""
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
+    runner = CliRunner()
+    result = runner.invoke(app, ["auth", "google-drive"])
+    assert result.exit_code == 2
+    assert "GOOGLE_OAUTH_CLIENT_ID" in result.stdout
+
+
+def test_auth_google_drive_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`auth google-drive` with credentials runs authenticate_drive and exits 0."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "test-client-secret")
+
+    with patch("transcriber.cli.authenticate_drive") as mock_auth:
+        runner = CliRunner()
+        result = runner.invoke(app, ["auth", "google-drive"])
+
+    assert result.exit_code == 0
+    mock_auth.assert_called_once_with(
+        client_id="test-client-id", client_secret="test-client-secret"
+    )
+    assert "authenticated" in result.stdout.lower()
+
+
+def test_auth_google_drive_authenticate_error_exits_2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`auth google-drive` when authenticate_drive raises → exit 2 with message, not traceback."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "test-client-secret")
+
+    with patch(
+        "transcriber.cli.authenticate_drive",
+        side_effect=OSError("port already in use"),
+    ):
+        result = CliRunner().invoke(app, ["auth", "google-drive"])
+
+    assert result.exit_code == 2
+    assert "authentication failed" in result.stdout.lower()
+
+
+# ── upload command ────────────────────────────────────────────────────────────
+
+def test_upload_missing_file_exits_4(tmp_path: Path) -> None:
+    """`upload` with a path that doesn't exist → exit 4 (local file error).
+
+    Exit 4 matches the established matrix: local-file errors (missing source,
+    ffmpeg failure) all map to 4. The task spec draft said exit 1, but the
+    project matrix is {0, 2, 3, 4} — "file not found" is a local-file error,
+    same category as the ``transcribe`` command's FileNotFoundError → exit 4
+    path.
+    """
+    runner = CliRunner()
+    result = runner.invoke(app, ["upload", str(tmp_path / "nonexistent.md")])
+    assert result.exit_code == 4
+    assert "not found" in result.stdout.lower()
+
+
+def test_upload_no_folder_configured_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`upload` with no folder set → exit 2 with helpful message.
+
+    Uses setattr on the singleton because drive_output_folder_id is a
+    pydantic-settings field baked in at construction time; setenv would
+    not affect a singleton already created (and a teammate with
+    TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID in their .env would see a flaky
+    failure without this explicit override).
+    """
+    md = tmp_path / "session.md"
+    md.write_text("# Transcript")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", None)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upload", str(md)])
+    assert result.exit_code == 2
+    assert "--drive-folder" in result.stdout
+
+
+def test_upload_happy_path_calls_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Happy path: DriveDestination.upload() called with correct args, URL printed.
+
+    Uses setattr on the singleton because drive_output_folder_id is a
+    pydantic-settings field baked in at construction time.
+    """
+    md = tmp_path / "session.md"
+    md.write_text("# Transcript")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-abc")
+
+    mock_dest = MagicMock()
+    mock_dest.upload.return_value = "https://drive.google.com/file/d/xyz/view"
+
+    runner = CliRunner()
+    with patch("transcriber.cli.DriveDestination", return_value=mock_dest) as MockDest:
+        result = runner.invoke(app, ["upload", str(md)])
+
+    assert result.exit_code == 0
+    assert "https://drive.google.com/file/d/xyz/view" in result.stdout
+    MockDest.assert_called_once_with(folder_id="folder-abc")
+    mock_dest.upload.assert_called_once_with(md, "session.md")
+
+
+def test_upload_drive_folder_flag_overrides_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--drive-folder` overrides TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID.
+
+    Uses setattr on the singleton because drive_output_folder_id is a
+    pydantic-settings field baked in at construction time.
+    """
+    md = tmp_path / "out.md"
+    md.write_text("# hi")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "env-folder")
+
+    mock_dest = MagicMock()
+    mock_dest.upload.return_value = "https://drive.google.com/file/d/new/view"
+
+    captured_folder: list[str] = []
+
+    def capture_folder(folder_id: str) -> MagicMock:
+        captured_folder.append(folder_id)
+        return mock_dest
+
+    runner = CliRunner()
+    with patch("transcriber.cli.DriveDestination", side_effect=capture_folder):
+        result = runner.invoke(app, ["upload", str(md), "--drive-folder", "cli-folder"])
+
+    assert result.exit_code == 0
+    assert captured_folder == ["cli-folder"]
+
+
+def test_upload_auth_error_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`upload` when DriveDestination raises AuthError → exit 2 with the error message."""
+    md = tmp_path / "f.md"
+    md.write_text("# hi")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-abc")
+
+    mock_dest = MagicMock()
+    mock_dest.upload.side_effect = AuthError("token expired")
+
+    with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+        result = CliRunner().invoke(app, ["upload", str(md)])
+
+    assert result.exit_code == 2
+    assert "token expired" in result.stdout
+
+
+def test_upload_destination_error_exits_4(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`upload` when DriveDestination raises DestinationError → exit 4 (file preserved).
+
+    Different exit code from AuthError (2 = config to fix) lets scripts
+    distinguish "fix auth" from "transient upload failure, retry".
+    """
+    md = tmp_path / "f.md"
+    md.write_text("# hi")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-abc")
+
+    mock_dest = MagicMock()
+    mock_dest.upload.side_effect = DestinationError("Drive upload failed: 403")
+
+    with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+        result = CliRunner().invoke(app, ["upload", str(md)])
+
+    assert result.exit_code == 4
+    assert "Drive upload failed" in result.stdout
+
+
+@pytest.mark.parametrize("flag_value", ["   ", "\t", "\n  \t"])
+def test_upload_whitespace_only_drive_folder_flag_exits_2(
+    flag_value: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--drive-folder '   '`` is treated as unset → exit 2 with helpful message.
+
+    Without the .strip() in _resolve_drive_folder, a whitespace-only flag
+    would slip past the truthiness check and propagate to DriveDestination,
+    which would raise DestinationError later (after construction).
+    """
+    md = tmp_path / "f.md"
+    md.write_text("# hi")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", None)
+
+    result = CliRunner().invoke(app, ["upload", str(md), "--drive-folder", flag_value])
+    assert result.exit_code == 2
+    assert "--drive-folder" in result.stdout
+
+
+# ── transcribe --upload-to-drive ──────────────────────────────────────────────
+
+def test_transcribe_upload_to_drive_no_folder_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--upload-to-drive` without folder configured → exit 2 before any API call.
+
+    Specifically verifies that extract_audio is NOT called — the fail-fast
+    check fires before any audio or transcription work begins.
+    """
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", None)
+
+    extract_called: list[str] = []
+
+    def _record_extract(*_args: object, **_kwargs: object) -> tuple[object, float]:
+        extract_called.append("called")
+        return (_args[0], 60.0)
+
+    monkeypatch.setattr("transcriber.cli.extract_audio", _record_extract)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"]
+    )
+    assert result.exit_code == 2
+    assert "--drive-folder" in result.stdout
+    assert extract_called == [], "extract_audio must not be called before folder check passes"
+
+
+def test_transcribe_upload_to_drive_auth_failfast_before_paid_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--upload-to-drive` when not authenticated → exit 2 before any API call.
+
+    load_drive_credentials is called early (fail-fast). The budget gate
+    must NOT fire first — the user should not be asked to confirm cost
+    when they haven't authenticated yet.
+    """
+    from transcriber.core.auth import AuthError
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-abc")
+
+    extract_called: list[str] = []
+
+    def _record_extract(*_args: object, **_kwargs: object) -> tuple[object, float]:
+        extract_called.append("called")
+        return (_args[0], 60.0)
+
+    monkeypatch.setattr("transcriber.cli.extract_audio", _record_extract)
+    def _raise_auth() -> None:
+        raise AuthError("Run: ssm-transcriber auth google-drive")
+
+    monkeypatch.setattr("transcriber.cli.load_drive_credentials", _raise_auth)
+
+    result = CliRunner().invoke(
+        app, ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"]
+    )
+
+    assert result.exit_code == 2
+    assert "auth google-drive" in result.stdout
+    assert extract_called == [], "extract_audio must not be called before auth check passes"
+
+
+def test_transcribe_upload_to_drive_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--upload-to-drive` after a successful transcription uploads the .md output."""
+    from transcriber.providers.base import TranscriptResult
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-xyz")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    mock_provider = MagicMock()
+    mock_provider.transcribe.return_value = TranscriptResult(
+        text="Hello world",
+        segments=[],
+        language="en",
+        duration_seconds=60.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    mock_dest = MagicMock()
+    mock_dest.upload.return_value = "https://drive.google.com/file/d/test/view"
+
+    runner = CliRunner()
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+            with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+                result = runner.invoke(
+                    app,
+                    ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+                )
+
+    assert result.exit_code == 0
+    mock_dest.upload.assert_called_once()
+    call_args = mock_dest.upload.call_args
+    uploaded_path: Path = call_args.args[0]
+    assert uploaded_path.suffix == ".md"
+    assert "https://drive.google.com/file/d/test/view" in result.stdout
+
+
+def test_transcribe_upload_to_drive_folder_flag_overrides_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--drive-folder passed to transcribe overrides TRANSCRIBER_DRIVE_OUTPUT_FOLDER_ID."""
+    from transcriber.providers.base import TranscriptResult
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "env-folder")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    mock_provider = MagicMock()
+    mock_provider.transcribe.return_value = TranscriptResult(
+        text="hi",
+        segments=[],
+        language="en",
+        duration_seconds=60.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    captured_folder: list[str] = []
+    mock_dest = MagicMock()
+    mock_dest.upload.return_value = "https://drive.google.com/file/d/x/view"
+
+    def _capture(folder_id: str) -> MagicMock:
+        captured_folder.append(folder_id)
+        return mock_dest
+
+    runner = CliRunner()
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+            with patch("transcriber.cli.DriveDestination", side_effect=_capture):
+                result = runner.invoke(
+                    app,
+                    [
+                        "transcribe", str(src), "--budget", "low",
+                        "--upload-to-drive", "--drive-folder", "cli-folder", "-y",
+                    ],
+                )
+
+    assert result.exit_code == 0, result.output
+    assert captured_folder == ["cli-folder"]
+
+
+def test_transcribe_upload_to_drive_auth_error_post_extract_exits_4(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AuthError raised by upload (after a paid AssemblyAI call) → exit 4, recovery hint printed.
+
+    This is the race-condition path: pre-flight load_drive_credentials
+    succeeded, then the token was revoked between fail-fast and upload. The
+    user has paid for transcription and the .md is on disk — different
+    category from the pre-flight AuthError (exit 2), which is the "config
+    broken, no work done" case.
+    """
+    from transcriber.providers.base import TranscriptResult
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-xyz")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    mock_provider = MagicMock()
+    mock_provider.transcribe.return_value = TranscriptResult(
+        text="Hello world",
+        segments=[],
+        language="en",
+        duration_seconds=60.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    mock_dest = MagicMock()
+    mock_dest.upload.side_effect = AuthError("token expired")
+
+    runner = CliRunner()
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+            with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+                result = runner.invoke(
+                    app,
+                    ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+                )
+
+    assert result.exit_code == 4
+    assert "token expired" in result.stdout
+    # AuthError messages don't include the path; CLI must add the recovery
+    # hint so the user knows where to find the .md they just paid for.
+    md_files = list(tmp_path.glob("*.md"))
+    assert len(md_files) == 1, "Local .md transcript must be preserved on upload failure"
+    assert md_files[0].name in result.stdout, "User must see local .md path on upload failure"
+
+
+def test_transcribe_upload_to_drive_destination_error_exits_4(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DestinationError after transcribe → exit 4, local .md preserved.
+
+    Exit 4 (post-paid recoverable) rather than exit 2 (config). The
+    DestinationError message itself already contains "Transcript saved
+    locally at <path>" so the user knows where to recover from.
+    """
+    from transcriber.providers.base import TranscriptResult
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-xyz")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    mock_provider = MagicMock()
+    mock_provider.transcribe.return_value = TranscriptResult(
+        text="Hello world",
+        segments=[],
+        language="en",
+        duration_seconds=60.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    mock_dest = MagicMock()
+    mock_dest.upload.side_effect = DestinationError(
+        "Drive upload failed: 403. Transcript saved locally at /tmp/x.md"
+    )
+
+    runner = CliRunner()
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+            with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+                result = runner.invoke(
+                    app,
+                    ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+                )
+
+    assert result.exit_code == 4
+    assert "Drive upload failed" in result.stdout
+    md_files = list(tmp_path.glob("*.md"))
+    assert len(md_files) == 1, "Local .md transcript must be preserved on upload failure"
+
+
+def test_transcribe_writes_transcript_before_calling_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Architectural invariant: dest.upload() runs only after the .md is on disk.
+
+    The headline guarantee of the upload feature is "transcript-loss-impossible
+    by construction". Asserting that ``len(md_files) == 1`` post-failure (the
+    other tests do) only proves the file existed at *some* point during the
+    test; this asserts the file existed *at the moment upload was invoked*.
+    """
+    from transcriber.providers.base import TranscriptResult
+
+    src = tmp_path / "x.wav"
+    src.write_bytes(b"")
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake")
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", "folder-xyz")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda _p, _w: (_p, 60.0))
+
+    mock_provider = MagicMock()
+    mock_provider.transcribe.return_value = TranscriptResult(
+        text="hello",
+        segments=[],
+        language="en",
+        duration_seconds=60.0,
+        model="universal-3-pro",
+        job_id="j",
+    )
+
+    file_existed_at_upload: list[bool] = []
+
+    def _check_then_succeed(path: Path, _name: str) -> str:
+        file_existed_at_upload.append(path.exists() and path.stat().st_size > 0)
+        return "https://drive.google.com/file/d/x/view"
+
+    mock_dest = MagicMock()
+    mock_dest.upload.side_effect = _check_then_succeed
+
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.AssemblyAIProvider", return_value=mock_provider):
+            with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+                result = CliRunner().invoke(
+                    app,
+                    ["transcribe", str(src), "--budget", "low", "--upload-to-drive", "-y"],
+                )
+
+    assert result.exit_code == 0, result.output
+    assert file_existed_at_upload == [True], (
+        "transcript must be on disk (non-empty) when dest.upload() is called"
     )

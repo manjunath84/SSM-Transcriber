@@ -441,7 +441,7 @@ def test_transcribe_passthrough_uses_audio_url_and_skips_upload(
         kind="google_drive",
         original_uri="drive://X",
         local_path=None,
-        remote_url="https://drive.google.com/uc?export=download&id=X",
+        remote_url="https://drive.usercontent.google.com/download?id=X&export=download&confirm=t",
         title=None,
         duration_seconds=None,
         workspace=workspace,
@@ -456,7 +456,7 @@ def test_transcribe_passthrough_uses_audio_url_and_skips_upload(
         match=[
             matchers.json_params_matcher(
                 {
-                    "audio_url": "https://drive.google.com/uc?export=download&id=X",
+                    "audio_url": "https://drive.usercontent.google.com/download?id=X&export=download&confirm=t",
                     "speech_models": ["universal-3-pro"],
                     "speaker_labels": True,
                 }
@@ -499,7 +499,7 @@ def test_transcribe_passthrough_polling_error_surfaces_message(
         kind="google_drive",
         original_uri="drive://X",
         local_path=None,
-        remote_url="https://drive.google.com/uc?export=download&id=X",
+        remote_url="https://drive.usercontent.google.com/download?id=X&export=download&confirm=t",
         title=None,
         duration_seconds=None,
         workspace=workspace,
@@ -517,7 +517,7 @@ def test_transcribe_passthrough_polling_error_surfaces_message(
         match=[
             matchers.json_params_matcher(
                 {
-                    "audio_url": "https://drive.google.com/uc?export=download&id=X",
+                    "audio_url": "https://drive.usercontent.google.com/download?id=X&export=download&confirm=t",
                     "speech_models": ["universal-3-pro"],
                     "speaker_labels": True,
                 }

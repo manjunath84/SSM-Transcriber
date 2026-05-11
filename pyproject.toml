@@ -18,6 +18,8 @@ dependencies = [
     "ffmpeg-python>=0.2.0",
     "requests>=2.32.0",
     "tenacity>=8.2.0",
+    "google-api-python-client>=2.130.0",
+    "google-auth-oauthlib>=1.2.0",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +57,18 @@ mypy_path = "src"
 # scattering ``# type: ignore[import-untyped]`` comments at import sites.
 [[tool.mypy.overrides]]
 module = ["ffmpeg"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["google_auth_oauthlib.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["googleapiclient.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["httplib2", "httplib2.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

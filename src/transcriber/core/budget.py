@@ -47,7 +47,7 @@ ASSEMBLYAI_RATE_PER_MINUTE_USD: float = (
 # Above this estimate, ``check`` emits a louder warning. ``--yes`` still
 # bypasses the confirmation prompt; the warning is informational, not a hard
 # gate. The hard gates remain Gate 1 and Gate 2.
-SOFT_CAP_USD: float = 5.0
+SOFT_CAP_USD: float = 1.0
 
 # Budget tier names the CLI/config accept. Unknown values must NOT be
 # treated as "paid authorized" — that would weaken the two-gate spend

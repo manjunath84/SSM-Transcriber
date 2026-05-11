@@ -78,6 +78,49 @@ def test_dotenv_unprefixed_key_visible(
     assert transcriber.config.settings.assemblyai_configured is True
 
 
+def test_google_oauth_configured_true_for_normal_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "client-id-123")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "client-secret-456")
+    from transcriber.config import settings
+
+    assert settings.google_oauth_configured is True
+
+
+def test_google_oauth_configured_false_for_missing_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
+    from transcriber.config import settings
+
+    assert settings.google_oauth_configured is False
+
+
+def test_google_oauth_configured_false_for_whitespace_only_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without stripping, ``"   "`` would pass Gate 1 then fail only after the
+    user has confirmed cost — strip + truthy check prevents that wasted round
+    trip (same defect class as the assemblyai_configured whitespace test)."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "   ")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "   ")
+    from transcriber.config import settings
+
+    assert settings.google_oauth_configured is False
+
+
+def test_google_oauth_configured_false_for_empty_string_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    from transcriber.config import settings
+
+    assert settings.google_oauth_configured is False
+
+
 def test_redacted_dump_excludes_unknown_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """If a future contributor adds a secret-bearing field to the model
     without listing it in the allowlist, ``redacted_dump`` must drop it
@@ -96,6 +139,7 @@ def test_redacted_dump_excludes_unknown_keys(monkeypatch: pytest.MonkeyPatch) ->
         "cache_enabled",
         "keep_temp",
         "llm_model",
+        "drive_output_folder_id",
         "log_level",
     }
     assert set(dump.keys()).issubset(expected)

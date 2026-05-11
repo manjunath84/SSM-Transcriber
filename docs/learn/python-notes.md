@@ -28,6 +28,8 @@
   - [Lazy imports inside functions](#lazy-imports)
 - [External calls and resilience](#external-calls-and-resilience)
   - [`tenacity.retry` decorator](#tenacity-retry)
+- [Function signatures](#function-signatures)
+  - [Keyword-only arguments (`*, kwarg`)](#keyword-only-arguments-kwarg)
 
 ---
 
@@ -519,3 +521,40 @@ the retry loop entirely.
 (`_upload`, `_create_transcript`, `_get_transcript`). Future Phase 5
 provider implementations (Deepgram, OpenAI Whisper) will reuse the
 same shape.
+
+---
+
+## Function signatures
+
+### Keyword-only arguments (`*, kwarg`)
+
+**Java analogue:** Java doesn't have this — positional call sites like
+`method(a, b, true)` are the only option. The closest approximation is the
+builder pattern: `method(arg).withDiarize(false).build()`.
+
+**Python idiom.** A bare `*` in a function signature acts as a separator:
+every parameter after it *must* be passed by keyword, not by position.
+
+```python
+def estimate_assemblyai_cost(
+    duration_seconds: float, *, diarize: bool = True
+) -> float:
+    ...
+
+estimate_assemblyai_cost(3780.0)                 # OK — positional before *
+estimate_assemblyai_cost(3780.0, diarize=False)  # OK — keyword after *
+estimate_assemblyai_cost(3780.0, False)          # TypeError — positional after * not allowed
+```
+
+The `*` has zero runtime cost; it is purely a syntax marker that Python
+enforces at call time.
+
+**When to use it.** Whenever a parameter is optional, boolean, or easy to
+confuse with another positional argument. `diarize=False` is unambiguous at the
+call site; a bare `False` as the second positional argument is not. Python
+stdlib uses this pervasively — `sorted(list, *, key=..., reverse=...)` is a
+canonical example.
+
+**Where it shows up:** [`src/transcriber/core/budget.py:65`](../../src/transcriber/core/budget.py)
+— `estimate_assemblyai_cost(duration_seconds, *, diarize=True)`,
+introduced in PR #18.
