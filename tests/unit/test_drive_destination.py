@@ -117,6 +117,25 @@ def test_upload_propagates_transport_error(tmp_path: Path) -> None:
                 DriveDestination(folder_id="folder-abc").upload(md_file, "out.md")
 
 
+def test_upload_wraps_missing_file_as_destination_error(tmp_path: Path) -> None:
+    """bug_003 regression: MediaFileUpload's __init__ calls open(path, 'rb')
+    eagerly, so a missing/unreadable path raises FileNotFoundError. That
+    constructor must run inside the try block so the resulting OSError is
+    caught and wrapped as DestinationError with the documented 'Transcript
+    saved locally at <path>' recovery hint, not leaked past the
+    AuthError/DestinationError contract.
+
+    Realistic trigger: in the ``upload`` subcommand, ``load_drive_credentials``
+    runs inside ``upload()`` and may do a network token refresh
+    (~hundreds of ms typical), widening the TOCTOU window between the
+    CLI's ``file.is_file()`` check and the MediaFileUpload construction
+    enough for a parallel cleanup process to delete the file."""
+    missing = tmp_path / "vanished.md"  # intentionally never created
+    with patch(_LOAD_CREDS, return_value=MagicMock()):
+        with pytest.raises(DestinationError, match="Transcript saved locally"):
+            DriveDestination(folder_id="folder-abc").upload(missing, "vanished.md")
+
+
 def test_upload_propagates_httplib2_error(tmp_path: Path) -> None:
     """DNS failure / captive-portal hijack raises DestinationError, not a stack trace.
 

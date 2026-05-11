@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import re
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
@@ -30,6 +29,7 @@ from transcriber.core.budget import (
     check as budget_check,
     estimate_assemblyai_cost,
 )
+from transcriber.core.title import title_to_stem, validate_title
 from transcriber.core.workspace import RunWorkspace
 from transcriber.destinations.base import DestinationError
 from transcriber.destinations.drive import DriveDestination
@@ -82,72 +82,12 @@ def _confirm_or_decline(msg: str) -> bool:
 #
 # atomic.write_text_atomic creates parent directories on demand. An
 # unsanitized --title "../foo" would let a user (or a misuse) write outside
-# settings.output_dir. _validate_title rejects path-traversal characters at
+# settings.output_dir. validate_title rejects path-traversal characters at
 # the CLI boundary so the source layer / formatter never see an unsafe value.
-#
-# The helpers are split:
-#   _validate_title -> the display form (whitespace stripped at the edges,
-#                      internal whitespace preserved). This lands in YAML
-#                      frontmatter as ``title:``.
-#   _title_to_stem  -> collapses internal whitespace to ``-`` for use in the
-#                      output filename. Caller is responsible for validating
-#                      first; this helper does no validation of its own.
-
-_TITLE_FORBIDDEN_SUBSTRINGS = ("/", "\\", "\0", "..")
-
-
-def _validate_title(title: str) -> str:
-    """Return the display form of a user-provided ``--title`` value.
-
-    Strips leading/trailing whitespace; preserves internal whitespace so
-    the YAML ``title:`` field round-trips what the user typed. Raises
-    ``ValueError`` with the documented "unsafe filename characters"
-    message on path-traversal characters (``/``, ``\\``, NUL, ``..``),
-    a leading dot (would create a hidden file), or any C0 control
-    character or DEL — those would corrupt YAML frontmatter when written
-    as a ``title:`` flow scalar.
-
-    The ``..`` substring rejection is intentionally conservative
-    (validation case 26a explicitly tests ``"ok..bad"`` as rejected,
-    even though it isn't path traversal alone). Spec policy decision —
-    don't relax without re-opening the spec.
-    """
-    stripped = title.strip()
-    if not stripped:
-        raise ValueError(
-            f"--title contains unsafe filename characters: {title!r}"
-        )
-    if stripped.startswith("."):
-        raise ValueError(
-            f"--title contains unsafe filename characters: {title!r}"
-        )
-    for forbidden in _TITLE_FORBIDDEN_SUBSTRINGS:
-        if forbidden in stripped:
-            raise ValueError(
-                f"--title contains unsafe filename characters: {title!r}"
-            )
-    # C0 control characters (0x00-0x1f) corrupt YAML flow scalars when
-    # written as ``title: ...``: a literal newline splits the value
-    # mid-scalar, a carriage return + line feed pair swaps in unicode
-    # bidi marks. DEL (0x7f) is outside printable ASCII. NUL is already
-    # caught above via _TITLE_FORBIDDEN_SUBSTRINGS, but listing the
-    # complete C0 + DEL range here is the clean way to express the
-    # invariant rather than relying on two overlapping checks.
-    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in stripped):
-        raise ValueError(
-            f"--title contains unsafe filename characters: {title!r}"
-        )
-    return stripped
-
-
-def _title_to_stem(title: str) -> str:
-    """Collapse internal whitespace runs to ``-`` for a filename stem.
-
-    Caller is responsible for validating the title with ``_validate_title``
-    first; this helper does no validation. Splitting the responsibilities
-    keeps the YAML display form separate from the filename-friendly form.
-    """
-    return re.sub(r"\s+", "-", title)
+# See ``transcriber.core.title`` for the shared validate_title +
+# title_to_stem helpers (also used by the Drive source layer to validate
+# auto-resolved filenames from the public download URL's
+# Content-Disposition header).
 
 
 def _resolve_drive_folder(cli_folder: str | None) -> str:
@@ -290,7 +230,7 @@ def transcribe(
             display_title: str | None
             if title is not None:
                 try:
-                    display_title = _validate_title(title)
+                    display_title = validate_title(title)
                 except ValueError as exc:
                     console.print(f"[red]error:[/red] {exc}")
                     raise typer.Exit(code=2) from exc
@@ -446,26 +386,33 @@ def transcribe(
                 if display_title is not None:
                     # User passed --title: collapse whitespace for filename.
                     # YAML title preserves the original (display_title).
-                    stem = _title_to_stem(display_title)
+                    stem = title_to_stem(display_title)
                 elif media.title is not None:
-                    # Local source, no --title: LocalSource.prepare set
-                    # media.title to the original source's stem (e.g.
-                    # ``video`` for ``./video.mp4``). Use it directly —
-                    # source filenames typically don't contain whitespace,
-                    # and Slice 1's behaviour preserved them intact.
+                    # Source-resolved title (LocalSource: file stem;
+                    # DriveSource: auto-resolved from Content-Disposition,
+                    # already validated in the source layer). Route
+                    # through title_to_stem so both the --title path and
+                    # the source-resolved path produce the same on-disk
+                    # filename shape ("Session 17" → Session-17), closing
+                    # the convergence gap flagged by the ultrareview of
+                    # PR #19's Drive-auto title resolution.
                     #
                     # NOTE: cannot use ``media.local_path.stem`` here:
                     # after the C1 dataclasses.replace swap, local_path
                     # points at the workspace WAV (stem ``audio``), not
                     # the source. media.title is the source-stem fallback
                     # LocalSource.prepare populated.
-                    stem = media.title
+                    stem = title_to_stem(media.title)
                 else:
-                    # Drive source, no --title: fall back to the file ID.
-                    # extra['drive_file_id'] is set by DriveSource.prepare;
-                    # missing key is a producer-side bug, not user input.
-                    # Let KeyError bubble with traceback rather than
-                    # silently writing 'untitled-DATE.md' (review I5).
+                    # Drive source with no --title and the CDN title
+                    # probe returned None (file no longer publicly
+                    # shared, hostile filename rejected by
+                    # validate_title, network failure, etc.). Fall back
+                    # to the file ID. extra['drive_file_id'] is set by
+                    # DriveSource.prepare; missing key is a producer-side
+                    # bug, not user input. Let KeyError bubble with
+                    # traceback rather than silently writing
+                    # 'untitled-DATE.md' (review I5).
                     stem = media.extra["drive_file_id"]
                 date_str = date.today().isoformat()
                 output = settings.output_dir / f"{stem}-{date_str}.md"

@@ -223,9 +223,14 @@ def test_eof_on_prompt_treated_as_decline(
 
 
 # ---------------------------------------------------------------------------
-# Title sanitization helpers (Slice 2). _validate_title returns the display
-# form (whitespace stripped at edges, internal preserved). _title_to_stem
-# collapses internal whitespace to '-' for filenames.
+# Title sanitization helpers (Slice 2 + post-PR-#19 follow-up).
+# validate_title returns the display form (whitespace stripped at edges,
+# internal preserved). title_to_stem collapses internal whitespace to '-'
+# for filenames. Both moved from cli.py to core/title.py so the Drive
+# source layer can share them (bug_004 fix — auto-resolved filenames
+# from Content-Disposition headers must hit the same validator the
+# --title path uses, otherwise an uploader-chosen ``foo\nbar.mp4`` from
+# Drive corrupts YAML frontmatter).
 # ---------------------------------------------------------------------------
 
 
@@ -239,9 +244,9 @@ def test_eof_on_prompt_treated_as_decline(
     ],
 )
 def test_validate_title_accepts_safe_titles(title: str, expected: str) -> None:
-    from transcriber.cli import _validate_title
+    from transcriber.core.title import validate_title
 
-    assert _validate_title(title) == expected
+    assert validate_title(title) == expected
 
 
 @pytest.mark.parametrize(
@@ -260,10 +265,10 @@ def test_validate_title_rejects_unsafe_characters(unsafe: str) -> None:
     directories on demand, so an unsanitized --title '../foo' would write
     outside settings.output_dir. Validation case 26a explicitly tests this.
     """
-    from transcriber.cli import _validate_title
+    from transcriber.core.title import validate_title
 
     with pytest.raises(ValueError, match="unsafe filename"):
-        _validate_title(unsafe)
+        validate_title(unsafe)
 
 
 @pytest.mark.parametrize(
@@ -282,17 +287,17 @@ def test_validate_title_rejects_control_characters(unsafe: str) -> None:
     splits the value mid-scalar, a carriage return swaps in unicode
     direction, etc. NUL was already covered by the unsafe-substring
     check; widen to all C0 controls + DEL."""
-    from transcriber.cli import _validate_title
+    from transcriber.core.title import validate_title
 
     with pytest.raises(ValueError, match="unsafe filename"):
-        _validate_title(unsafe)
+        validate_title(unsafe)
 
 
 def test_validate_title_rejects_empty_after_strip() -> None:
-    from transcriber.cli import _validate_title
+    from transcriber.core.title import validate_title
 
     with pytest.raises(ValueError, match="unsafe filename|empty"):
-        _validate_title("   ")
+        validate_title("   ")
 
 
 @pytest.mark.parametrize(
@@ -309,19 +314,19 @@ def test_title_to_stem_collapses_whitespace_to_dashes(
 ) -> None:
     """Whitespace in --title becomes '-' in the filename; YAML title
     preserves the original (validation case 26b)."""
-    from transcriber.cli import _title_to_stem
+    from transcriber.core.title import title_to_stem
 
-    assert _title_to_stem(title) == expected_stem
+    assert title_to_stem(title) == expected_stem
 
 
 def test_title_to_stem_assumes_input_already_validated() -> None:
-    """_title_to_stem does no validation — it expects a string that has
-    already passed _validate_title. Tests document the order so a future
+    """title_to_stem does no validation — it expects a string that has
+    already passed validate_title. Tests document the order so a future
     caller doesn't accidentally swap them."""
-    from transcriber.cli import _title_to_stem
+    from transcriber.core.title import title_to_stem
 
     # No validation happens here; the contract is "validate first, then collapse".
-    assert _title_to_stem("path with spaces") == "path-with-spaces"
+    assert title_to_stem("path with spaces") == "path-with-spaces"
 
 
 # ---------------------------------------------------------------------------
@@ -409,11 +414,19 @@ def test_drive_happy_path_with_title(
 def test_drive_happy_path_no_title_uses_file_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No --title → output filename uses the file ID."""
+    """No --title → CDN title probe returns None (mocked, to keep the
+    unit-test hermetic — see bug_012 in the post-PR-#19 review) → output
+    filename falls back to the file ID."""
     from transcriber.providers.base import Segment, TranscriptResult
 
     monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
     monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    # Without this, DriveSource.prepare() makes a real network call to
+    # drive.usercontent.google.com — bug_012 from the ultrareview.
+    monkeypatch.setattr(
+        "transcriber.sources.google_drive._fetch_drive_filename",
+        lambda _u: None,
+    )
 
     class _OkProvider:
         def __init__(self, *_args: object, **_kwargs: object) -> None: ...
@@ -440,6 +453,51 @@ def test_drive_happy_path_no_title_uses_file_id(
     assert len(written) == 1
 
 
+def test_drive_auto_resolved_title_produces_dash_stem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """bug_004 (CLI side): when DriveSource auto-resolves a title with
+    internal whitespace ('Session 17' from Content-Disposition), the
+    output filename must collapse whitespace to '-' identically to the
+    --title path. Closes the convergence gap where
+    ``--title "Session 17"`` produced ``Session-17-DATE.md`` but the
+    auto-resolved path produced ``Session 17-DATE.md``."""
+    from transcriber.providers.base import Segment, TranscriptResult
+
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr(
+        "transcriber.sources.google_drive._fetch_drive_filename",
+        lambda _u: "Session 17",
+    )
+
+    class _OkProvider:
+        def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def transcribe(self, *_args: object, **_kwargs: object) -> TranscriptResult:
+            return TranscriptResult(
+                text="hi",
+                segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
+                language="en",
+                duration_seconds=1.0,
+                model="universal-3-pro",
+                job_id="drive-job",
+            )
+
+    monkeypatch.setattr("transcriber.cli.AssemblyAIProvider", _OkProvider)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["transcribe", "drive://1Zdp9aYV", "--budget", "low", "-y"],
+    )
+    assert result.exit_code == 0, result.output
+    # Dash-collapsed — matches what --title "Session 17" produces.
+    assert list(tmp_path.glob("Session-17-*.md"))
+    # Literal-space form must not appear.
+    assert not list(tmp_path.glob("Session 17-*.md"))
+
+
 def test_unknown_uri_scheme_exits_2(tmp_path: Path) -> None:
     """transcribe https://example.com/foo → exit 2 with 'URI scheme not
     supported' (NOT a 'file not found' fallthrough to LocalSource)."""
@@ -455,6 +513,13 @@ def test_unknown_uri_scheme_exits_2(tmp_path: Path) -> None:
 def test_drive_budget_free_still_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Drive sources don't bypass Gate 2."""
     monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+    # Mock the CDN title probe — DriveSource.prepare() runs before the
+    # budget gate, so without this the test makes a real network call
+    # (bug_012 from the ultrareview).
+    monkeypatch.setattr(
+        "transcriber.sources.google_drive._fetch_drive_filename",
+        lambda _u: None,
+    )
     runner = CliRunner()
     result = runner.invoke(
         app, ["transcribe", "drive://1Zdp9aYV", "-y"]  # default --budget=free
@@ -475,6 +540,12 @@ def test_drive_no_api_key_still_blocks_at_gate_1(
     set) breaks the suite instead of shipping a silent regression.
     """
     monkeypatch.delenv("ASSEMBLYAI_API_KEY", raising=False)
+    # Mock the CDN title probe — same reason as test_drive_budget_free
+    # above; bug_012 from the ultrareview.
+    monkeypatch.setattr(
+        "transcriber.sources.google_drive._fetch_drive_filename",
+        lambda _u: None,
+    )
     runner = CliRunner()
     result = runner.invoke(
         app,

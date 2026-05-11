@@ -53,8 +53,19 @@ class DriveDestination:
             "parents": [self._folder_id],
         }
         mimetype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-        media = MediaFileUpload(str(path), mimetype=mimetype)
         try:
+            # MediaFileUpload.__init__ calls open(path, "rb") eagerly to
+            # inspect file size, so it can raise FileNotFoundError or
+            # PermissionError (both OSError subclasses) here. Keep it
+            # inside the try so a deleted-mid-upload file is wrapped as
+            # DestinationError with the documented recovery hint instead
+            # of leaking past the contract — bug_003 from the
+            # ultrareview of PR #19. The TOCTOU window is small under
+            # transcribe --upload-to-drive but widens to seconds in the
+            # ``upload`` subcommand when load_drive_credentials() does
+            # a network token refresh between the CLI's is_file() check
+            # and this construction.
+            media = MediaFileUpload(str(path), mimetype=mimetype)
             service = build("drive", "v3", credentials=creds)
             result = (
                 service.files()

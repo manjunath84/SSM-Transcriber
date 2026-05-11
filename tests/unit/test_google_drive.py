@@ -249,6 +249,49 @@ def test_drive_source_prepare_falls_through_on_network_error() -> None:
     assert media.title is None
 
 
+@pytest.mark.parametrize(
+    ("filename", "reason"),
+    [
+        # Uploader-chosen filename with embedded newline corrupts YAML
+        # frontmatter (literal \n splits ``title:`` scalar across lines,
+        # downstream YAML parsers raise ScannerError).
+        ('foo%0Abar.mp4', "newline"),
+        # Leading dot would produce a hidden output file on Unix; the
+        # --title path explicitly rejects this and we must too.
+        ('.hidden.mp4', "leading-dot"),
+        # ``..`` is explicitly rejected on the --title path (validation
+        # spec case 26a). Auto-resolved path must not let it through.
+        ('foo..bar.mp4', "double-dot"),
+        # NUL byte in filename — would corrupt YAML and shell expansion.
+        ('foo%00bar.mp4', "nul"),
+        # DEL (0x7f) — outside printable ASCII, rejected by _validate_title's
+        # control-character check.
+        ('foo%7Fbar.mp4', "del-char"),
+    ],
+)
+@responses.activate
+def test_drive_source_prepare_rejects_hostile_filenames(
+    filename: str, reason: str,
+) -> None:
+    """Anyone-with-link Drive sources mean the uploader is potentially
+    untrusted — the user transcribing a friend's shared video inherits
+    whatever filename the third-party uploader chose. Hostile or quirky
+    values must fail-soft to None (caller falls through to file-ID stem),
+    not corrupt YAML / create hidden files / pass path-traversal markers.
+
+    Mirrors the rejections that ``--title`` already enforces via
+    ``_validate_title`` — keeps the two ingestion paths symmetric."""
+    responses.add(
+        responses.GET,
+        _REMOTE_URL,
+        status=200,
+        headers={"content-disposition": f'attachment; filename="{filename}"'},
+    )
+    workspace = RunWorkspace()
+    media = DriveSource.prepare(f"drive://{_VALID_ID}", workspace)
+    assert media.title is None, f"hostile filename ({reason}) leaked through"
+
+
 @responses.activate
 def test_drive_source_prepare_resolves_via_canonicalised_url() -> None:
     """User pasted a full Drive URL form. prepare() canonicalises to the

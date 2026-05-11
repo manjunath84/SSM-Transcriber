@@ -25,6 +25,7 @@ from urllib.parse import unquote
 
 import requests
 
+from transcriber.core.title import validate_title
 from transcriber.core.workspace import RunWorkspace
 from transcriber.sources.base import PreparedMedia, SourceInputError
 
@@ -90,7 +91,20 @@ def _fetch_drive_filename(remote_url: str) -> str | None:
     if not (match := _CD_FILENAME_RE.search(cd)):
         return None
     stem = Path(unquote(match.group(1))).stem
-    return stem or None
+    if not stem:
+        return None
+    # Validate with the same rules the --title path uses (path-traversal
+    # chars, leading dot, C0 controls, DEL). Anyone-with-link Drive
+    # sources mean the uploader can be a third party — an uploader who
+    # named their file ``foo\nbar.mp4`` would otherwise corrupt YAML
+    # frontmatter via the literal newline in the ``title:`` flow scalar.
+    # ValueError → fall through to the file-ID stem; same outcome as
+    # any other probe failure.
+    try:
+        return validate_title(stem)
+    except ValueError:
+        logger.debug("drive title probe: rejected hostile filename %r", stem)
+        return None
 
 
 def _extract_file_id(uri: str) -> str:
