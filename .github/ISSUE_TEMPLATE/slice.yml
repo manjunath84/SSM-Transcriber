@@ -32,14 +32,17 @@ body:
     id: gates
     attributes:
       label: Slice gates
-      description: Tick each as it's reached. Status field on the Project board moves in lockstep.
+      description: SSM-Transcriber is SDD-style (specs/<date>-<slug>/ folders, separate spec PR + impl PR). Tick each as it's reached; Status field on the Project board moves in lockstep (see docs/ai/runbooks/tracking.md §"PR linking conventions" for which PR keyword to use when).
       value: |
         - [ ] Brainstorm complete
-        - [ ] Spec written (`specs/<date>-<slug>/requirements.md`)
-        - [ ] Implementation plan written
-        - [ ] PR opened
-        - [ ] Review complete (ultrareview if structural / new dependency)
-        - [ ] Merged
+        - [ ] Spec written (`specs/<date>-<slug>/{requirements,plan,validation}.md`)
+        - [ ] Spec PR opened (`Refs #<this-issue>` in body — does NOT auto-close)
+        - [ ] Spec reviewed externally (multi-vendor pass — Gemini / Codex / pr-review-toolkit per repo convention)
+        - [ ] Spec PR merged → manually move board Status from "In Spec" to "In Progress"
+        - [ ] Implementation PR opened (`Closes #<this-issue>` in body)
+        - [ ] Validation evidence captured (`specs/<date>-<slug>/validation.md` or PR description)
+        - [ ] Implementation PR merged → auto-closes this issue, board card moves to Done
+        - [ ] Roadmap status flipped to `done` in `docs/PLAN.md`
     validations:
       required: true
 

@@ -27,25 +27,46 @@ user-visible outcome AND survives across multiple PRs / review rounds.
 | Per PR | Rejected | Too noisy. Drive upload would have been 5+ issues for one feature |
 | Per component / file | Rejected | Issues don't map to user outcomes; degenerates into a todo list |
 
-## Lifecycle
+## Lifecycle (SDD — separate spec PR + implementation PR)
+
+SSM-Transcriber follows Spec-Driven Development: a slice ships as
+**two** PRs (the spec PR and the implementation PR), each with its
+own review cycle. The board reflects this:
 
 1. **Issue opened** when brainstorm starts. Use the
-   `.github/ISSUE_TEMPLATE/slice.yml` template (title format
-   `Phase <N> Slice <M> — <slug>`). Status: **Backlog**.
-2. **Brainstorm complete** → tick the gate, drop a one-line summary into
-   the issue body. Status: **In Spec**.
-3. **Spec written** at `specs/<date>-<slug>/requirements.md` → update the
-   issue's *Spec* field to the path; tick the gate.
-4. **Implementation plan written** (`specs/<date>-<slug>/plan.md` or
-   `execution-plan.md`) → tick the gate. Status stays **In Spec** until
-   code actually starts.
-5. **PR opened** → put `Closes #<issue-number>` in the PR body so merge
-   auto-closes the issue. Status: **In Progress**.
-6. **Review** (`/ultrareview` if the slice is structural or adds a new
-   dependency) → Status: **In Review**. Review-driven follow-up commits
-   land on the **same PR**; do **not** open new issues for them.
-7. **Merged** → PR closes the issue automatically via the `Closes`
-   keyword. Status: **Done**.
+   `.github/ISSUE_TEMPLATE/slice.yml` template. Status: **Backlog**.
+2. **Brainstorm complete** → tick the gate, drop a summary into the
+   issue body. Status: **In Spec**.
+3. **Spec written** at `specs/<date>-<slug>/{requirements,plan,validation}.md`
+   → update the issue's *Spec* field to the path; tick the gate.
+4. **Spec PR opened** with `Refs #<issue>` (not `Closes`) in the body —
+   the slice isn't shipped yet, just specified. Status stays **In Spec**.
+5. **Spec reviewed externally** (multi-vendor pass per the repo's
+   review convention — Gemini / Codex / `/ultrareview`). Tick the gate.
+6. **Spec PR merged** → manually move board Status from **In Spec**
+   to **In Progress**. (The `Refs` keyword doesn't auto-close, by
+   design — the issue stays open until the implementation ships.)
+7. **Implementation PR opened** with `Closes #<issue>` in the body
+   so the implementation merge auto-closes the issue. Status stays
+   **In Progress**.
+8. **Review** (`/ultrareview` for structural / new-dependency slices)
+   → Status: **In Review**. Review-driven follow-up commits land on
+   the **same PR**; do **not** open new issues for them.
+9. **Implementation PR merged** → issue auto-closes via the `Closes`
+   keyword, board card moves to **Done**. Flip the matching entry in
+   `docs/PLAN.md` to reflect the slice as shipped.
+
+## PR linking conventions
+
+| PR type | Keyword | Closes the issue? | Board action |
+|---|---|---|---|
+| Spec PR (merges `specs/<date>-<slug>/`) | `Refs #N` | **No** — slice isn't shipped yet | Manually move Status to **In Progress** after merge |
+| Implementation PR (ships the feature) | `Closes #N` | **Yes** — auto-closes on merge | Card auto-moves to **Done** |
+| Cross-cutting fix / docs-only PR | _(no link)_ | n/a | No issue exists for these; they don't belong on the board |
+
+Mixing these up has real consequences: `Closes #N` on a spec PR
+would auto-close the issue at the spec-merge point, hiding the
+unshipped implementation work from the board entirely.
 
 ## Status columns
 
@@ -60,6 +81,48 @@ gh CLI doesn't expose this on a regular subcommand. If you ever need to
 add another option, the same mutation overwrites the full list, so
 pass all five existing options plus the new one — partial updates
 delete unmentioned options.)
+
+## Verification queries
+
+Two things that look intuitive but silently mislead — pin them here so a
+future verification script doesn't get them wrong:
+
+### Use GraphQL `projectsV2`, NOT the REST `/projects` endpoint
+
+The classic REST endpoint is for the deprecated Projects (classic) and
+returns `404 Not Found` even when a v2 board is linked:
+
+```bash
+# WRONG — always 404 for v2 boards
+gh api repos/manjunath84/SSM-Transcriber/projects
+
+# RIGHT — returns linked v2 projects
+gh api graphql -f query='{ repository(owner: "manjunath84", name: "SSM-Transcriber") { projectsV2(first: 5) { nodes { number title url } } } }'
+```
+
+If a verification script reports "no project linked" but the board
+clearly exists in the UI, you've hit the REST/v2 trap.
+
+### `gh project item-list --format json` lowercases custom field names
+
+A custom field declared as `"Phase"` (capital P) is rendered in the
+JSON output as `"phase"` — lowercased, but otherwise preserved
+(spaces stay as spaces). The default fields keep their canonical
+names (`status`, `title`). A jq path using the original case
+silently returns `null` for every item:
+
+```bash
+# WRONG — every item shows null for Phase
+gh project item-list 3 --owner manjunath84 --format json | jq '.items[] | .Phase'
+
+# RIGHT — lowercase the field name
+gh project item-list 3 --owner manjunath84 --format json | jq '.items[] | .phase'
+```
+
+Worse, the wrong query doesn't error — it just returns nulls — so a
+verification script that checks "all items have Phase set" will
+silently report a fake failure. If field values look unexpectedly
+null, check the case first before assuming a real data problem.
 
 ## Edge cases
 
@@ -90,5 +153,31 @@ delete unmentioned options.)
 - Ultrareview findings as separate issues. Findings land as follow-up
   commits on the open PR; the slice issue covers it.
 - Backlog ideas that aren't yet phase/slice-shaped. Capture those in
-  `docs/PLAN.md` notes; promote to an issue only when concrete.
+  `docs/PLAN.md` notes (or a sibling `backlog/` dir — see below);
+  promote to an issue only when concrete.
 - Personal dev-environment todos. Not what this board is for.
+
+## Optional sibling-folder pattern: `backlog/` for pre-commitment research
+
+SSM-Transcriber does not currently use this pattern, but if research
+on uncommitted ideas starts to clutter `docs/PLAN.md`, adopt this
+split:
+
+| Where it lives | What it is |
+|---|---|
+| `specs/<date>-<slug>/` | Committed slice (already on the roadmap + has a board issue) |
+| `backlog/<date>-<topic>.md` | Pre-commitment research — one file per topic; **no board issue**, **not** on `docs/PLAN.md` |
+
+**Promotion path** when a backlog item gets committed:
+
+1. File stays in `backlog/` (historical record of the thinking).
+2. New entry added to `docs/PLAN.md` under the relevant phase.
+3. New issue created on the board using the template.
+4. New option added to the Project's main `SINGLE_SELECT` field via
+   the GraphQL mutation in the [Status columns](#status-columns)
+   section — pass **all existing options plus the new one**, partial
+   updates delete unmentioned options.
+
+Document this distinction up front if you adopt the pattern, so
+research doesn't accidentally land on the board (or the board doesn't
+become a research scratchpad).
