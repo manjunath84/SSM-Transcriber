@@ -68,6 +68,51 @@ Mixing these up has real consequences: `Closes #N` on a spec PR
 would auto-close the issue at the spec-merge point, hiding the
 unshipped implementation work from the board entirely.
 
+## Required one-time project setup
+
+The lifecycle above (step 9 in particular) assumes the project's built-in
+**"Item closed"** workflow is enabled — that's what moves a card to
+**Done** when an implementation PR with `Closes #N` merges. New
+GitHub Projects ship with all built-in workflows **disabled**, and
+the public GraphQL API does not expose a mutation for editing them
+(verified 2026-05: `updateProjectV2Workflow` doesn't exist;
+`gh project` has no `workflow` subcommand). The toggle is UI-only.
+
+One-time enable at the
+[project's workflows page](https://github.com/users/manjunath84/projects/3/workflows):
+
+| Built-in workflow | Enable? | Why |
+|---|---|---|
+| **Item closed** | **Yes — Status: Done** | The auto-move that step 9 of the lifecycle assumes. |
+| Pull request merged | No | Redundant — impl PRs use `Closes #N`, so the close event already triggers *Item closed*. |
+| Item added to project | Optional — Status: Backlog | Saves a manual click on issue creation; aligns with step 1. |
+| Auto-close issue | No | Reverse direction (board → issue); not part of this lifecycle. |
+| Pull request linked to issue | No | Spec PRs use `Refs` (no auto-close); manually moving to *In Progress* per step 6 is the convention. |
+
+**Symptom check.** If a closed issue's card stays at *In Progress*
+after merge, the cause is almost always *Item closed* being off.
+Verify with:
+
+```bash
+gh api graphql -f query='
+{ user(login: "manjunath84") { projectV2(number: 3) {
+    workflows(first: 20) { nodes { name enabled } } } } }'
+```
+
+As a one-off fix until the workflow is enabled, move the card by API:
+
+```bash
+# Look up the project + field + option IDs once and cache them:
+gh project field-list 3 --owner manjunath84 --format json \
+  | jq '.fields[] | select(.name=="Status").options'
+
+gh project item-edit \
+  --project-id PVT_kwHOAMRl3M4BXaap \
+  --id <PVTI_…item id> \
+  --field-id PVTSSF_lAHOAMRl3M4BXaapzhSnbXM \
+  --single-select-option-id c633b6cf  # Done
+```
+
 ## Status columns
 
 The Project's Status field is configured for the 5-column lifecycle:
