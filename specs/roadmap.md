@@ -32,7 +32,7 @@
 
 ## [Phase 2 — Add YouTube Support](../docs/PLAN.md#phase-2--add-youtube-support)
 
-**Status:** pending.
+**Status:** partial — captions passthrough only (Slice 1: PR #30 spec + this PR's implementation, fetches existing YouTube captions via `youtube-transcript-api`, $0). yt-dlp audio fallback for captionless videos deferred to Slice 2 (issue #21).
 
 ## [Phase 3 — Output Formats + Polish](../docs/PLAN.md#phase-3--output-formats--polish)
 

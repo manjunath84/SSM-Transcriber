@@ -521,32 +521,88 @@ gh pr create --title "Phase 1: local file transcription MVP"
 
 ### Phase 2 — Add YouTube Support
 
-**Goal:** `uv run ssm-transcriber transcribe "https://youtu.be/..."` works.
+Phase 2 split into two slices during the brainstorm for issue #20 —
+captions-only ships first as Slice 1 because most YouTube videos
+already expose human-or-machine-generated captions for free, and
+yt-dlp + local ASR (Slice 2) earns its complexity only on the
+long-tail of videos that don't. See
+[`specs/2026-05-12-youtube-captions-source/requirements.md`](../specs/2026-05-12-youtube-captions-source/requirements.md)
+for the Slice 1 decision record.
 
-Files to create/modify:
-- `src/transcriber/sources/youtube.py` — yt-dlp wrapper: download audio-only to temp dir, return local WAV path + metadata (title, duration)
-- `src/transcriber/sources/local.py` — thin wrapper around local file (mirrors YouTube interface)
-- `src/transcriber/sources/__init__.py` — `resolve_source(uri)`: returns correct source based on URI pattern (URL → YouTube, path → local)
-- `src/transcriber/cli.py` — update `transcribe` to call `resolve_source()` first, then existing pipeline
+#### Phase 2 — Slice 1: YouTube Source (Captions Passthrough)
 
-**Source detection logic** (hostname match — see F2):
-```python
-from urllib.parse import urlparse
-YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+**Goal:** `uv run ssm-transcriber transcribe "https://youtu.be/<ID>"`
+fetches existing YouTube captions via `youtube-transcript-api` and
+emits the same enriched Markdown + YAML frontmatter Slice 1 of Phase 4
+(Drive passthrough) ships. **Cost: $0** (no paid ASR call, no audio
+bandwidth).
 
-def resolve_source(uri: str) -> Source:
-    try:
-        host = urlparse(uri).hostname
-    except ValueError:
-        host = None
-    if host in YOUTUBE_HOSTS:
-        return YouTubeSource()
-    return LocalSource()
-```
-Never match on `http://` / `https://` alone — that collides with Google Drive
-(Phase 4) and any future hosted source. All sources return `PreparedMedia` per F2.
+Files created/modified:
+- `src/transcriber/sources/base.py` — new `PreparedSource` Protocol;
+  new `PreparedTranscript` sibling dataclass; `SourceKind` extended
+  with `"youtube_captions"`.
+- `src/transcriber/sources/youtube.py` — `YouTubeSource.prepare()`
+  + URL parsing + caption resolution (manual preferred over auto)
+  + oembed title probe + tenacity retry on transient network errors.
+- `src/transcriber/sources/__init__.py` — hostname-match arm for
+  YouTube hostnames.
+- `src/transcriber/providers/base.py` — `TranscriptResult` gained
+  `provider: str` (required) and made `model` / `job_id` Optional;
+  `PreparedMedia` import moved under `TYPE_CHECKING` to break the
+  new cycle.
+- `src/transcriber/providers/assemblyai.py` — passes
+  `provider="assemblyai"` on construction.
+- `src/transcriber/formatters/markdown.py` — accepts `PreparedSource`
+  Protocol; reads `result.provider`; inserts `caption_type` field
+  for `youtube_captions` sources; body summary shows
+  `youtube-captions (manual|auto)`.
+- `src/transcriber/cli.py` — branches on
+  `isinstance(media, PreparedTranscript)` before the budget router;
+  library exceptions mapped to documented exit codes via
+  `_handle_youtube_exception` helper; no-captions error points at
+  issue #21 with a yt-dlp + Phase 1 local-ASR workaround.
+- `pyproject.toml` — `youtube-transcript-api>=1.0,<2.0`.
 
-**Verification:** `uv run ssm-transcriber transcribe "https://youtu.be/dQw4w9WgXcQ"` produces a transcript.
+**Track selection policy:** iterate `transcript_list`, prefer
+manually-created over auto-generated. Auto-translated tracks excluded
+by construction (we never call `.translate()`).
+
+**Title resolution:** `--title` flag wins → YouTube oembed (public,
+no auth, fail-soft) → video ID stem fallback.
+
+**Budget gate:** captions path bypasses the router entirely
+(`isinstance(prepared, PreparedTranscript)` branches before
+Gate 1/2). `--budget free` is allowed (the path is $0 by
+construction).
+
+**Verification:** `uv run ssm-transcriber transcribe "https://youtu.be/<ID>"`
+produces a markdown file with `source_kind: youtube_captions`,
+`provider: youtube-captions`, `caption_type: manual|auto`. Exit 0
+for captioned videos; exit 2 with the documented no-captions message
+(pointing at issue #21) for captionless videos.
+
+#### Phase 2 — Slice 2: YouTube Source (yt-dlp Audio Fallback)
+
+**Goal:** for videos that don't expose captions (Slice 1 exit 2),
+download audio with `yt-dlp` and run it through the local ASR path
+shipped in Phase 1 (faster-whisper) — keeping the captions-first,
+audio-fallback ordering that makes the common case free and only
+the long tail expensive.
+
+Files to create/modify (deferred — issue #21):
+- `src/transcriber/sources/youtube.py` — extend the captions-only
+  source with a second mode: when `_pick_transcript` raises
+  `NoTranscriptFound`/`TranscriptsDisabled`, fall through to yt-dlp
+  audio download, return a `PreparedMedia` whose `local_path` points
+  at the extracted WAV. Pipeline reuses the existing local-file ASR
+  path (audio_extractor → faster-whisper / AssemblyAI based on
+  `--budget`).
+- `pyproject.toml` — `yt-dlp` is already a Phase 0 runtime dep;
+  Slice 2 just exercises it.
+
+**Verification:** `uv run ssm-transcriber transcribe "https://youtu.be/<NO_CAPTION_ID>"`
+falls through to audio download + local ASR; output frontmatter
+shows `source_kind: youtube`, `provider: faster_whisper`.
 
 ---
 

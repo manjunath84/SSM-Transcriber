@@ -180,6 +180,38 @@ The interviewer will usually smile when you say this out loud.
 **Pointers:** [`glossary.md#preparedmedia`](glossary.md#preparedmedia),
 [`python-notes.md#frozen-dataclasses`](python-notes.md#frozen-dataclasses).
 
+**Follow-up story: when does additive contract extension stop being additive?**
+Drive Slice 2 (PR #17) extended `PreparedMedia` additively with
+`remote_url: str | None` (for URL passthrough — AssemblyAI fetches
+the public Drive URL itself, no local download). That extension was
+clean: same dataclass, one new optional field, one `__post_init__`
+XOR invariant. YouTube captions (PR #31) would have been a *third*
+extension — `prepared_transcript: TranscriptResult | None` for the
+free captions path where no audio is involved at all. I refused.
+Three modes is one more than two: at three the dataclass name
+("media") was about to lie ("media that's actually just a finished
+transcript"), and the existing fields (`local_path`,
+`duration_seconds`) would semantically mean nothing for the third
+mode. The cleaner refactor: a `PreparedSource` Protocol that
+captures the five shared metadata fields, leave `PreparedMedia`
+unchanged, add a `PreparedTranscript` sibling dataclass with the
+finished `TranscriptResult` inline. The CLI branches on
+`isinstance(prepared, PreparedTranscript)` before the budget router
+fires — captions path is **$0 by construction**, type-narrowed at
+compile time. The provider abstraction stays typed on the concrete
+`PreparedMedia`, so mypy enforces "captions never reaches a
+provider" without a runtime check. Cost: ~80 lines of refactor and
+one ruff/mypy round. Benefit: future caption-emitting sources
+(Otter, NotebookLM exports) reuse `PreparedTranscript` with zero
+contract churn. The lesson worth carrying forward: **additive
+contract extension is a smell when the dataclass name starts
+lying about its contents**. The fix is a Protocol + sibling, not
+yet another optional field.
+
+**Pointers:** [`prs/pr-030-youtube-captions-source-spec.md`](prs/pr-030-youtube-captions-source-spec.md),
+[`prs/pr-031-youtube-captions-source-impl.md`](prs/pr-031-youtube-captions-source-impl.md),
+[`python-notes.md`](python-notes.md) (Protocol vs frozen-dataclass interaction).
+
 ### "Tell me about a time you had to learn something new fast"
 
 **Story: entire project.** You're a Java developer who picked up Python,

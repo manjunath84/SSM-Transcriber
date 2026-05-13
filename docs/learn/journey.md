@@ -11,6 +11,54 @@
 
 ---
 
+## PR #31 — Implementation: YouTube Source (Captions Passthrough)
+
+**Merged:** TBD  |  **Branch:** `feat/youtube-captions-source-impl`
+**Explainer:** [`prs/pr-031-youtube-captions-source-impl.md`](prs/pr-031-youtube-captions-source-impl.md)
+
+PR #31 ships the captions-only YouTube source the spec PR #30 designed.
+The captions path is **$0 by construction** — `youtube-transcript-api`
+fetches existing manual or auto-generated captions, oembed resolves
+the video title via a fail-soft public GET, and the CLI branches on
+`isinstance(media, PreparedTranscript)` *before* the budget router
+fires. No audio download, no paid ASR call. The architectural change
+is the `PreparedSource` Protocol + new `PreparedTranscript` sibling
+dataclass — F2's third source-mode lands as a clean refactor rather
+than a third additive extension to `PreparedMedia` (whose name was
+about to lie). The provider abstraction stays typed on the concrete
+`PreparedMedia`, so mypy enforces "captions never reaches a provider"
+at compile time. Videos without captions exit 2 with a documented
+message that points at issue #21 and offers a copy-paste `yt-dlp` +
+Phase 1 local-ASR workaround. 51 new tests; 261 total project-wide;
+ruff + mypy clean.
+
+---
+
+## PR #30 — Feature spec: YouTube Source (Captions Passthrough)
+
+**Merged:** 2026-05-12  |  **Branch:** `feature/youtube-captions-source-spec`
+**Explainer:** [`prs/pr-030-youtube-captions-source-spec.md`](prs/pr-030-youtube-captions-source-spec.md)
+
+PR #30 committed the spec triple for Phase 2 Slice 1 (issue #20):
+requirements / plan / validation for a captions-only YouTube source.
+Seven design decisions settled in the brainstorm — caption types
+(manual + auto, exclude auto-translated), track-selection policy
+(original-language-first, ignore `--language`), source contract
+(`PreparedSource` Protocol + new `PreparedTranscript` sibling),
+frontmatter (`provider`/Optional `model`/Optional `job_id` on
+`TranscriptResult`; additive `caption_type` field on captions
+frontmatter), library reliability (version pin, no cache, narrow
+retry whitelist, typed error matrix), budget gate (bypassed
+entirely), no-captions error wording (points at issue #21 with a
+yt-dlp workaround). Codex review flagged two P2 internal
+contradictions both fixed inline before merge. The single
+architectural decision worth retelling: the F2 contract had been
+extended additively twice (Drive added `remote_url`); a third
+extension would have made the "media" name dishonest, so Slice 1
+refactors to Protocol + sibling instead.
+
+---
+
 ## PR #19 — Drive Upload: transcript → Google Drive
 
 **Merged:** TBD  |  **Branch:** `feat/drive-upload`
