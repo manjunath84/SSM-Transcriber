@@ -441,10 +441,10 @@ def transcribe(
             # Captions branch: PreparedTranscript carries a finished
             # TranscriptResult — skip the budget gate and provider
             # entirely (validation #50; the captions path is $0 by
-            # construction). Falls through to the shared render + write
-            # + optional upload block at the bottom of this function so
-            # --upload-to-drive is honored for captions sources too
-            # (Codex PR #31 review finding).
+            # construction). Falls through to the shared render +
+            # write + optional upload block so --upload-to-drive
+            # honours captions sources the same way it honours Drive
+            # and local; see test_captions_with_upload_to_drive_*.
             if isinstance(media, PreparedTranscript):
                 if language is not None:
                     logger.info(
@@ -576,11 +576,12 @@ def transcribe(
                     # Source-resolved title (LocalSource: file stem;
                     # DriveSource: auto-resolved from Content-Disposition,
                     # already validated in the source layer). Route
-                    # through title_to_stem so both the --title path and
-                    # the source-resolved path produce the same on-disk
-                    # filename shape ("Session 17" → Session-17), closing
-                    # the convergence gap flagged by the ultrareview of
-                    # PR #19's Drive-auto title resolution.
+                    # through title_to_stem so both the --title path
+                    # and the source-resolved path produce the same
+                    # on-disk filename shape ("Session 17" →
+                    # Session-17) — the test
+                    # test_drive_auto_resolved_title_produces_dash_stem
+                    # locks this convergence.
                     #
                     # NOTE: cannot use ``media.local_path.stem`` here:
                     # after the C1 dataclasses.replace swap, local_path

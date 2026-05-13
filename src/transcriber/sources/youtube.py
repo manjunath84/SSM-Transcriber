@@ -179,10 +179,19 @@ def _pick_transcript(transcript_list: Any, video_id: str) -> Any:
     they only appear when we call ``.translate()`` ourselves, which we
     don't.
 
-    Iteration order in the library is "manual first, then auto" by the
-    natural order of the underlying caption tracks; the resolver doesn't
-    rely on that ordering, it filters by ``is_generated`` explicitly so
-    a future library change to the iteration order is a no-op.
+    Ordering precision (PR #31 comment-analyzer finding):
+    - Manual-vs-auto preference is order-independent — we explicitly
+      filter on ``is_generated`` and would pick the manual track even
+      if the library returned auto first.
+    - **Language-within-category IS order-dependent.** We pick the
+      first manual track and the first auto track the library yields,
+      relying on the library's documented natural order (original
+      language first within each category). If the library ever
+      changes to user-locale-first iteration this resolver would
+      silently switch tracks; a future-debug breadcrumb is the test
+      ``test_canonical_source_uri_is_short_form_regardless_of_input``
+      which still pins the produced ``video_id`` even when iteration
+      order changes.
     """
     manual = None
     auto = None

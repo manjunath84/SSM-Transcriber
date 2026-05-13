@@ -589,6 +589,103 @@ def test_no_retry_on_transcripts_disabled(
     assert call_count["n"] == 1  # NOT retried
 
 
+def test_retries_backoff_sleeps_1s_then_2s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR #31 test-analyzer Important 3: assert tenacity actually sleeps
+    1s then 2s between attempts (validation #35 "backoff asserted via
+    time.sleep mock or tenacity's before_sleep hook"). Without this a
+    refactor that drops the wait_exponential config to no-wait would
+    pass the retry-count test silently. Locking the backoff sequence
+    catches the regression."""
+    import requests
+
+    fetched = _FakeFetched(
+        video_id="abc12345678",
+        language_code="en",
+        is_generated=False,
+        _snippets=[_FakeSnippet(start=0.0, duration=1.0, text="hi")],
+    )
+    payload = _FakeTranscriptList([_FakeTranscript("en", False, fetched)])
+
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    call_count = {"n": 0}
+
+    def flaky_list(self: object, video_id: str) -> _FakeTranscriptList:
+        call_count["n"] += 1
+        if call_count["n"] <= 2:  # fail twice, succeed third time
+            raise requests.ConnectionError("transient")
+        return payload
+
+    monkeypatch.setattr(YouTubeTranscriptApi, "list", flaky_list)
+    monkeypatch.setattr(
+        "transcriber.sources.youtube._fetch_oembed_title", lambda _: None
+    )
+
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda secs: sleeps.append(secs))
+
+    workspace = RunWorkspace()
+    YouTubeSource.prepare("https://youtu.be/abc12345678", workspace)
+
+    assert call_count["n"] == 3
+    # tenacity's wait_exponential(multiplier=1, min=1, max=4) sleeps
+    # 1.0 between attempts 1→2 and 2.0 between attempts 2→3.
+    assert sleeps == [1.0, 2.0], (
+        f"expected backoff sequence [1.0, 2.0], got {sleeps}"
+    )
+
+
+def test_retries_on_fetch_call_not_just_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR #31 test-analyzer Suggestion 3: the retry decorator wraps the
+    whole captions-fetch helper, so a transient error during
+    ``chosen.fetch()`` (the second library call) must retry the same
+    way a transient error during ``list()`` does. Without this lock, a
+    well-meaning future refactor that narrows the decoration to
+    ``list()`` only would pass every other retry test silently."""
+    import requests
+
+    _instant_sleep(monkeypatch)
+
+    fetched_payload = _FakeFetched(
+        video_id="abc12345678",
+        language_code="en",
+        is_generated=False,
+        _snippets=[_FakeSnippet(start=0.0, duration=1.0, text="hi")],
+    )
+
+    fetch_count = {"n": 0}
+
+    class _FlakyFetchTranscript:
+        def __init__(self) -> None:
+            self.language_code = "en"
+            self.is_generated = False
+
+        def fetch(self) -> _FakeFetched:
+            fetch_count["n"] += 1
+            if fetch_count["n"] == 1:
+                raise requests.ConnectionError("transient on fetch")
+            return fetched_payload
+
+    flaky_transcript = _FlakyFetchTranscript()
+    payload = _FakeTranscriptList([flaky_transcript])  # type: ignore[list-item]
+    _stub_list_returning(payload, monkeypatch)
+    monkeypatch.setattr(
+        "transcriber.sources.youtube._fetch_oembed_title", lambda _: None
+    )
+
+    workspace = RunWorkspace()
+    prepared = YouTubeSource.prepare(
+        "https://youtu.be/abc12345678", workspace
+    )
+
+    assert fetch_count["n"] == 2  # retried fetch, not just list
+    assert prepared.transcript.text == "hi"
+
+
 def test_retries_chunked_encoding_error_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

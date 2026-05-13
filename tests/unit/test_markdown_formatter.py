@@ -343,3 +343,72 @@ def test_render_assemblyai_omits_caption_type_field(workspace: RunWorkspace) -> 
 
     assert "caption_type" not in output
     assert "provider: assemblyai" in output  # not "youtube-captions"
+
+
+def test_render_captions_frontmatter_field_order_is_stable(
+    workspace: RunWorkspace,
+) -> None:
+    """PR #31 test-analyzer Suggestion: validation #63 explicitly says
+    "Order matters" for the frontmatter. A refactor that reorders
+    fields (e.g., moves ``caption_type`` before ``model``) passes
+    substring-only assertions silently but breaks ordering-sensitive
+    downstream parsers (Obsidian / NotebookLM front-matter readers
+    that depend on document order rather than key lookup)."""
+    prepared = _captions_prepared(workspace, title="T", caption_type="manual")
+    output = render(prepared.transcript, prepared, created=date(2026, 5, 12))
+
+    # Extract the frontmatter block and parse keys in order.
+    lines = output.splitlines()
+    open_idx = lines.index("---")
+    close_idx = lines.index("---", open_idx + 1)
+    keys_in_order = [
+        line.split(":", 1)[0].strip()
+        for line in lines[open_idx + 1 : close_idx]
+        if ":" in line
+    ]
+
+    assert keys_in_order == [
+        "title",
+        "source_uri",
+        "source_kind",
+        "duration_seconds",
+        "language",
+        "provider",
+        "model",
+        "caption_type",
+        "diarized",
+        "speakers",
+        "assemblyai_job_id",
+        "created",
+    ], f"frontmatter order changed: got {keys_in_order}"
+
+
+def test_render_assemblyai_frontmatter_field_order_is_stable(
+    workspace: RunWorkspace,
+) -> None:
+    """Same invariant for AssemblyAI sources (no ``caption_type`` row)."""
+    media = _drive_media(workspace, title="Session 17")
+    output = render(_result_diarized(), media, created=date(2026, 5, 3))
+
+    lines = output.splitlines()
+    open_idx = lines.index("---")
+    close_idx = lines.index("---", open_idx + 1)
+    keys_in_order = [
+        line.split(":", 1)[0].strip()
+        for line in lines[open_idx + 1 : close_idx]
+        if ":" in line
+    ]
+
+    assert keys_in_order == [
+        "title",
+        "source_uri",
+        "source_kind",
+        "duration_seconds",
+        "language",
+        "provider",
+        "model",
+        "diarized",
+        "speakers",
+        "assemblyai_job_id",
+        "created",
+    ], f"frontmatter order changed: got {keys_in_order}"

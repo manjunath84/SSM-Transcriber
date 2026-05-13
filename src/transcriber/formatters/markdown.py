@@ -80,7 +80,7 @@ def _frontmatter(
     # assemblyai_job_id as the literal YAML ``null`` when the source
     # didn't produce them (YouTube captions has no ASR model, no remote
     # job). Field name ``assemblyai_job_id`` stays for downstream-parser
-    # schema stability; Phase 5 generalizes it to ``provider_job_id``.
+    # schema stability; Phase 5 may rename it to ``provider_job_id``.
     fields: list[tuple[str, str]] = [
         ("title", _yaml_string(title)),
         ("source_uri", _yaml_string(_source_uri(media))),
