@@ -1207,12 +1207,7 @@ def test_captions_happy_path_skips_provider_and_budget(
     """Validation #47: captions URL → PreparedTranscript → output written.
     Budget router NOT called (asserted via a side-effect flag). Provider
     constructor NOT called either."""
-    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
-    # Re-init settings to pick up env override.
-    from transcriber.config import TranscriberSettings
-    monkeypatch.setattr(
-        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
-    )
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
 
     from transcriber.sources.youtube import YouTubeSource
 
@@ -1255,11 +1250,7 @@ def test_captions_with_budget_free_succeeds(
 ) -> None:
     """Validation #50: --budget free is OK on captions sources (it's
     $0 — the gate that rejects Drive under free doesn't fire)."""
-    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
-    from transcriber.config import TranscriberSettings
-    monkeypatch.setattr(
-        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
-    )
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
 
     from transcriber.sources.youtube import YouTubeSource
 
@@ -1280,11 +1271,7 @@ def test_captions_no_captions_exits_2_with_documented_message(
 ) -> None:
     """Validation #53: TranscriptsDisabled → exit 2 with the documented
     no-captions message containing the issue #21 pointer."""
-    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
-    from transcriber.config import TranscriberSettings
-    monkeypatch.setattr(
-        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
-    )
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
 
     from youtube_transcript_api import TranscriptsDisabled
 
@@ -1308,11 +1295,7 @@ def test_captions_ip_blocked_exits_3(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Validation #59: IpBlocked → exit 3 (system-level)."""
-    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
-    from transcriber.config import TranscriberSettings
-    monkeypatch.setattr(
-        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
-    )
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
 
     from youtube_transcript_api import IpBlocked
 
@@ -1336,11 +1319,7 @@ def test_captions_language_flag_ignored_with_info_log(
 ) -> None:
     """Validation #51: --language ignored on captions; INFO log mentions
     'ignored' and the actual returned track language."""
-    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
-    from transcriber.config import TranscriberSettings
-    monkeypatch.setattr(
-        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
-    )
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
 
     from transcriber.sources.youtube import YouTubeSource
 
@@ -1369,11 +1348,7 @@ def test_captions_no_title_falls_back_to_video_id_stem(
 ) -> None:
     """Title=None (oembed failed AND no --title) → output filename uses
     the video ID stem. Frontmatter title is also the video ID."""
-    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
-    from transcriber.config import TranscriberSettings
-    monkeypatch.setattr(
-        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
-    )
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
 
     from transcriber.sources.youtube import YouTubeSource
 
@@ -1390,3 +1365,64 @@ def test_captions_no_title_falls_back_to_video_id_stem(
     written = list(tmp_path.glob("dQw4w9WgXcQ-*.md"))
     assert len(written) == 1
     assert "title: dQw4w9WgXcQ" in written[0].read_text()
+
+
+def test_captions_with_upload_to_drive_uploads_the_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex review finding (PR #31): captions + --upload-to-drive must
+    actually upload the .md output. Silently writing locally and
+    returning without uploading is a regression — the user explicitly
+    asked for upload."""
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr(
+        "transcriber.cli.settings.drive_output_folder_id", "folder-xyz"
+    )
+
+    from transcriber.sources.youtube import YouTubeSource
+
+    monkeypatch.setattr(
+        YouTubeSource,
+        "prepare",
+        staticmethod(
+            lambda uri, ws, *, title=None: _captions_prepared(ws, title="T")
+        ),
+    )
+
+    mock_dest = MagicMock()
+    mock_dest.upload.return_value = "https://drive.google.com/file/d/x/view"
+
+    with patch("transcriber.cli.load_drive_credentials"):
+        with patch("transcriber.cli.DriveDestination", return_value=mock_dest):
+            result = CliRunner().invoke(
+                app,
+                [
+                    "transcribe",
+                    "https://youtu.be/dQw4w9WgXcQ",
+                    "--upload-to-drive",
+                ],
+            )
+
+    assert result.exit_code == 0, result.output
+    mock_dest.upload.assert_called_once()
+    uploaded_path: Path = mock_dest.upload.call_args.args[0]
+    assert uploaded_path.suffix == ".md"
+    assert "https://drive.google.com/file/d/x/view" in result.stdout
+
+
+def test_captions_with_upload_to_drive_no_folder_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pre-flight folder check fires for captions too — same fail-fast
+    invariant as the Drive/local path. Without this, a user without a
+    folder configured would get the captions transcript locally but a
+    cryptic post-fact upload error."""
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setattr("transcriber.cli.settings.drive_output_folder_id", None)
+
+    result = CliRunner().invoke(
+        app,
+        ["transcribe", "https://youtu.be/dQw4w9WgXcQ", "--upload-to-drive"],
+    )
+    assert result.exit_code == 2
+    assert "No Drive folder configured" in result.output

@@ -377,151 +377,124 @@ def transcribe(
                 raise typer.Exit(code=3) from exc
 
             # Captions branch: PreparedTranscript carries a finished
-            # TranscriptResult — skip the provider entirely and skip
-            # both budget gates (the captions path is $0 by construction;
-            # validation #50). Falls through to the formatter + write
-            # block below; output filename derivation uses the same
-            # title-resolution chain as Drive (--title → media.title from
-            # oembed → extra fallback).
+            # TranscriptResult — skip the budget gate and provider
+            # entirely (validation #50; the captions path is $0 by
+            # construction). Falls through to the shared render + write
+            # + optional upload block at the bottom of this function so
+            # --upload-to-drive is honored for captions sources too
+            # (Codex PR #31 review finding).
             if isinstance(media, PreparedTranscript):
-                result = media.transcript
                 if language is not None:
                     logger.info(
                         "captions source: --language ignored, returned track is %s",
-                        result.language,
+                        media.transcript.language,
                     )
-                content = md_formatter.render(
-                    result,
-                    media,
-                    include_speakers=not no_speakers,
-                    include_timestamps=not no_timestamps,
-                )
-                if output is None:
-                    if display_title is not None:
-                        stem = title_to_stem(display_title)
-                    elif media.title is not None:
-                        stem = title_to_stem(media.title)
-                    else:
-                        stem = media.extra["video_id"]
-                    date_str = date.today().isoformat()
-                    output = settings.output_dir / f"{stem}-{date_str}.md"
-                output = atomic.resolve_collision(output)
-                try:
-                    atomic.write_text_atomic(output, content)
-                except OSError as exc:
-                    console.print(
-                        f"[red]error:[/red] failed to write output: {exc}"
-                    )
-                    raise typer.Exit(code=4) from exc
-                console.print(f"[green]✓[/green] Saved to: {output}")
-                # Captions sources don't support --upload-to-drive in
-                # Slice 1 — the user can run ``ssm-transcriber upload`` as
-                # a follow-up if needed (it works on any local file).
-                return
+                result = media.transcript
+            else:
+                # PreparedMedia path — budget gate + provider call.
+                # Drive passthrough skips ffmpeg + per-call cost estimate;
+                # local upload runs both.
+                if media.remote_url is not None:
+                    # Drive variant: Gate 1 + Gate 2 still fire via the
+                    # standard budget_check; the cost-estimate notify is
+                    # overridden via cost_summary because we have no local
+                    # duration to estimate against. Soft-cap silenced too.
+                    try:
+                        proceed = budget_check(
+                            provider_name="AssemblyAI",
+                            budget=budget.value,
+                            key_configured=settings.assemblyai_configured,
+                            cost_usd=0.0,  # unused when cost_summary is set
+                            yes=yes,
+                            prompt=_confirm_or_decline,
+                            notify=lambda msg: console.print(msg),
+                            cost_summary=(
+                                "Provider: AssemblyAI · URL passthrough — "
+                                "AssemblyAI bills per-minute against the public "
+                                "URL; exact cost in the AssemblyAI dashboard "
+                                "after the run."
+                            ),
+                        )
+                    except BudgetError as exc:
+                        console.print(f"[red]error:[/red] {exc}")
+                        raise typer.Exit(code=2) from exc
+                    if not proceed:
+                        console.print(
+                            "[yellow]Cancelled by user; no charge incurred.[/yellow]"
+                        )
+                        raise typer.Exit(code=0)
+                else:
+                    # Local path: existing extract + budget flow.
+                    if media.local_path is None:
+                        # Defence-in-depth: PreparedMedia.__post_init__ guarantees
+                        # exactly-one-of (local_path, remote_url) is set; reaching
+                        # this branch means a Source produced an inconsistent shape.
+                        raise RuntimeError(
+                            "PreparedMedia invariant violated: "
+                            "local source has no local_path."
+                        )
 
-            # Branch: Drive passthrough skips ffmpeg + per-call cost
-            # estimate; local upload runs both.
-            if media.remote_url is not None:
-                # Drive variant: Gate 1 + Gate 2 still fire via the
-                # standard budget_check; the cost-estimate notify is
-                # overridden via cost_summary because we have no local
-                # duration to estimate against. Soft-cap silenced too.
+                    try:
+                        wav_path, duration_seconds = extract_audio(
+                            media.local_path, workspace
+                        )
+                    except AudioExtractError as exc:
+                        console.print(f"[red]error:[/red] {exc}")
+                        raise typer.Exit(code=4) from exc
+
+                    # C1 fix: thread the canonical 16 kHz mono WAV back into
+                    # ``media`` so the provider uploads the extracted audio,
+                    # NOT the original .mp4 / .m4a / etc. Without this swap the
+                    # AssemblyAI upload path silently breaks Slice 1's
+                    # "extract → normalised WAV → upload" contract: the provider
+                    # would receive ``media.local_path`` (= original source) and
+                    # upload it. The follow-up advisor pass caught a second
+                    # concrete cost: ``media.local_path.stem`` in the output-
+                    # filename derivation would land on ``audio`` (the workspace
+                    # WAV's stem) instead of the source's stem. AssemblyAI
+                    # accepts most audio containers, so quality differences
+                    # between original and canonical WAV depend on AssemblyAI's
+                    # internal pipeline and aren't directly verifiable from this
+                    # PR — the contract violation and filename regression are.
+                    media = dataclasses.replace(media, local_path=wav_path)
+
+                    cost_usd = estimate_assemblyai_cost(
+                        duration_seconds, diarize=not no_speakers
+                    )
+                    try:
+                        proceed = budget_check(
+                            provider_name="AssemblyAI",
+                            budget=budget.value,
+                            key_configured=settings.assemblyai_configured,
+                            cost_usd=cost_usd,
+                            yes=yes,
+                            prompt=_confirm_or_decline,
+                            notify=lambda msg: console.print(msg),
+                        )
+                    except BudgetError as exc:
+                        console.print(f"[red]error:[/red] {exc}")
+                        raise typer.Exit(code=2) from exc
+                    if not proceed:
+                        console.print(
+                            "[yellow]Cancelled by user; no charge incurred.[/yellow]"
+                        )
+                        raise typer.Exit(code=0)
+
+                # Provider call (PreparedMedia path only — captions skip this).
+                provider = AssemblyAIProvider(max_wait_seconds=max_wait * 60)
                 try:
-                    proceed = budget_check(
-                        provider_name="AssemblyAI",
-                        budget=budget.value,
-                        key_configured=settings.assemblyai_configured,
-                        cost_usd=0.0,  # unused when cost_summary is set
-                        yes=yes,
-                        prompt=_confirm_or_decline,
-                        notify=lambda msg: console.print(msg),
-                        cost_summary=(
-                            "Provider: AssemblyAI · URL passthrough — "
-                            "AssemblyAI bills per-minute against the public "
-                            "URL; exact cost in the AssemblyAI dashboard "
-                            "after the run."
+                    result = provider.transcribe(
+                        media,
+                        language=language,
+                        diarize=not no_speakers,
+                        speech_model=model,
+                        on_job_id=lambda job_id: console.print(
+                            f"[cyan]AssemblyAI job ID:[/cyan] {job_id}"
                         ),
                     )
-                except BudgetError as exc:
+                except ProviderError as exc:
                     console.print(f"[red]error:[/red] {exc}")
-                    raise typer.Exit(code=2) from exc
-                if not proceed:
-                    console.print(
-                        "[yellow]Cancelled by user; no charge incurred.[/yellow]"
-                    )
-                    raise typer.Exit(code=0)
-            else:
-                # Local path: existing extract + budget flow.
-                if media.local_path is None:
-                    # Defence-in-depth: PreparedMedia.__post_init__ guarantees
-                    # exactly-one-of (local_path, remote_url) is set; reaching
-                    # this branch means a Source produced an inconsistent shape.
-                    raise RuntimeError(
-                        "PreparedMedia invariant violated: "
-                        "local source has no local_path."
-                    )
-
-                try:
-                    wav_path, duration_seconds = extract_audio(
-                        media.local_path, workspace
-                    )
-                except AudioExtractError as exc:
-                    console.print(f"[red]error:[/red] {exc}")
-                    raise typer.Exit(code=4) from exc
-
-                # C1 fix: thread the canonical 16 kHz mono WAV back into
-                # ``media`` so the provider uploads the extracted audio,
-                # NOT the original .mp4 / .m4a / etc. Without this swap the
-                # AssemblyAI upload path silently breaks Slice 1's
-                # "extract → normalised WAV → upload" contract: the provider
-                # would receive ``media.local_path`` (= original source) and
-                # upload it. The follow-up advisor pass caught a second
-                # concrete cost: ``media.local_path.stem`` in the output-
-                # filename derivation would land on ``audio`` (the workspace
-                # WAV's stem) instead of the source's stem. AssemblyAI
-                # accepts most audio containers, so quality differences
-                # between original and canonical WAV depend on AssemblyAI's
-                # internal pipeline and aren't directly verifiable from this
-                # PR — the contract violation and filename regression are.
-                media = dataclasses.replace(media, local_path=wav_path)
-
-                cost_usd = estimate_assemblyai_cost(
-                    duration_seconds, diarize=not no_speakers
-                )
-                try:
-                    proceed = budget_check(
-                        provider_name="AssemblyAI",
-                        budget=budget.value,
-                        key_configured=settings.assemblyai_configured,
-                        cost_usd=cost_usd,
-                        yes=yes,
-                        prompt=_confirm_or_decline,
-                        notify=lambda msg: console.print(msg),
-                    )
-                except BudgetError as exc:
-                    console.print(f"[red]error:[/red] {exc}")
-                    raise typer.Exit(code=2) from exc
-                if not proceed:
-                    console.print(
-                        "[yellow]Cancelled by user; no charge incurred.[/yellow]"
-                    )
-                    raise typer.Exit(code=0)
-
-            # Provider call.
-            provider = AssemblyAIProvider(max_wait_seconds=max_wait * 60)
-            try:
-                result = provider.transcribe(
-                    media,
-                    language=language,
-                    diarize=not no_speakers,
-                    speech_model=model,
-                    on_job_id=lambda job_id: console.print(
-                        f"[cyan]AssemblyAI job ID:[/cyan] {job_id}"
-                    ),
-                )
-            except ProviderError as exc:
-                console.print(f"[red]error:[/red] {exc}")
-                raise typer.Exit(code=3) from exc
+                    raise typer.Exit(code=3) from exc
 
             # Render markdown.
             content = md_formatter.render(
@@ -553,6 +526,15 @@ def transcribe(
                     # the source. media.title is the source-stem fallback
                     # LocalSource.prepare populated.
                     stem = title_to_stem(media.title)
+                elif isinstance(media, PreparedTranscript):
+                    # Captions source with no --title and oembed title
+                    # probe returned None (404 / 401 / hostile title /
+                    # network failure). Fall back to the video ID stem.
+                    # extra['video_id'] is set by YouTubeSource.prepare;
+                    # missing key is a producer-side bug (review I5
+                    # invariant — let KeyError bubble with traceback
+                    # rather than silently writing 'untitled-DATE.md').
+                    stem = media.extra["video_id"]
                 else:
                     # Drive source with no --title and the CDN title
                     # probe returned None (file no longer publicly
