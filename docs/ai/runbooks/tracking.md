@@ -53,8 +53,10 @@ own review cycle. The board reflects this:
    → Status: **In Review**. Review-driven follow-up commits land on
    the **same PR**; do **not** open new issues for them.
 9. **Implementation PR merged** → issue auto-closes via the `Closes`
-   keyword, board card moves to **Done**. Flip the matching entry in
-   `docs/PLAN.md` to reflect the slice as shipped.
+   keyword, and the board card moves to **Done** *(only if the *Item
+   closed* workflow is enabled — see [Required one-time project
+   setup](#required-one-time-project-setup))*. Flip the matching entry
+   in `docs/PLAN.md` to reflect the slice as shipped.
 
 ## PR linking conventions
 
@@ -70,12 +72,13 @@ unshipped implementation work from the board entirely.
 
 ## Required one-time project setup
 
-The lifecycle above (step 9 in particular) assumes the project's built-in
-**"Item closed"** workflow is enabled — that's what moves a card to
-**Done** when an implementation PR with `Closes #N` merges. New
-GitHub Projects ship with all built-in workflows **disabled**, and
-the public GraphQL API does not expose a mutation for editing them
-(verified 2026-05: `updateProjectV2Workflow` doesn't exist;
+The final lifecycle step (issue auto-closes via `Closes` → board card
+moves to **Done**) only works if the project's built-in **"Item
+closed"** workflow is enabled. New GitHub Projects ship with all
+built-in workflows **disabled**, and the public GraphQL API does not
+expose a mutation for editing them — distinct from the field-options
+mutation in [Status columns](#status-columns), which does exist
+(verified 2026-05: `updateProjectV2Workflow` is undefined;
 `gh project` has no `workflow` subcommand). The toggle is UI-only.
 
 One-time enable at the
@@ -83,11 +86,11 @@ One-time enable at the
 
 | Built-in workflow | Enable? | Why |
 |---|---|---|
-| **Item closed** | **Yes — Status: Done** | The auto-move that step 9 of the lifecycle assumes. |
+| **Item closed** | **Yes — Status: Done** | The auto-move the final lifecycle step assumes. |
 | Pull request merged | No | Redundant — impl PRs use `Closes #N`, so the close event already triggers *Item closed*. |
-| Item added to project | Optional — Status: Backlog | Saves a manual click on issue creation; aligns with step 1. |
+| Item added to project | Optional — Status: Backlog | Saves a manual click on issue creation; aligns with the first lifecycle step. |
 | Auto-close issue | No | Reverse direction (board → issue); not part of this lifecycle. |
-| Pull request linked to issue | No | Spec PRs use `Refs` (no auto-close); manually moving to *In Progress* per step 6 is the convention. |
+| Pull request linked to issue | No | Redundant for impl PRs (`Closes` already triggers *Item closed*); spec PRs intentionally stay on *In Spec* until manually moved per the lifecycle. |
 
 **Symptom check.** If a closed issue's card stays at *In Progress*
 after merge, the cause is almost always *Item closed* being off.
@@ -99,16 +102,24 @@ gh api graphql -f query='
     workflows(first: 20) { nodes { name enabled } } } } }'
 ```
 
-As a one-off fix until the workflow is enabled, move the card by API:
+As a one-off fix until the workflow is enabled, move the card by API.
+The project + field + option IDs in the `item-edit` below are durable
+(re-look-up only if the project is recreated); the item ID is per-card
+and ephemeral, so look it up each time:
 
 ```bash
-# Look up the project + field + option IDs once and cache them:
+# Status option IDs (one-time lookup — Backlog / In Spec / In Progress / In Review / Done):
 gh project field-list 3 --owner manjunath84 --format json \
   | jq '.fields[] | select(.name=="Status").options'
 
+# Per-card item ID lookup (re-run when fixing a different card):
+gh project item-list 3 --owner manjunath84 --format json \
+  | jq '.items[] | {id, number: .content.number, title: .content.title}'
+
+# Move the card to Done:
 gh project item-edit \
   --project-id PVT_kwHOAMRl3M4BXaap \
-  --id <PVTI_…item id> \
+  --id <PVTI_…item id from the lookup above> \
   --field-id PVTSSF_lAHOAMRl3M4BXaapzhSnbXM \
   --single-select-option-id c633b6cf  # Done
 ```
