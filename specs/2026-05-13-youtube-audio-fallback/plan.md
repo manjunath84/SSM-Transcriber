@@ -89,7 +89,7 @@ def _probe_metadata(url: str) -> AudioProbe:
     """Single extract_info(download=False) round-trip.
 
     Returns AudioProbe; propagates yt-dlp exceptions for the CLI
-    to map to exit codes via _handle_yt_dlp_exception (§5c).
+    to map to exit codes via _handle_yt_dlp_exception (§4c).
     """
     from yt_dlp import YoutubeDL  # local import — heavy module
     with YoutubeDL(_YDL_OPTS_BASE) as ydl:
@@ -297,10 +297,12 @@ if media.kind == "youtube_audio":
 
 ### 4e. Bypass the existing pipeline's budget_check for `youtube_audio`
 
-`src/transcriber/cli.py` — the existing local-path block at
-`cli.py:489-545` calls `budget_check` after `extract_audio` resolves
-duration from the on-disk file. For `kind="youtube_audio"` we've
-already gated on the probe-derived duration up in §4b — running it
+`src/transcriber/cli.py` — the existing `else:` PreparedMedia
+local-path branch in the transcribe command (the block that runs
+`extract_audio` then `budget_check`) calls `budget_check` after
+`extract_audio` resolves duration from the on-disk file. For
+`kind="youtube_audio"` we've already gated on the probe-derived
+duration up in §4b — running it
 a second time would either re-prompt the user (interactive) or
 unexpectedly cancel non-interactive runs that only provided one
 confirmation. Adding the skip:
@@ -417,7 +419,7 @@ renders.
 - `test_captionless_video_low_budget_yes_flag` — `-y` skips the
   prompt; full flow.
 - `test_yt_dlp_exception_matrix` — parametrized over the 8+ rows
-  in §5c. Each yt-dlp exception subclass produces the expected
+  in §4c. Each yt-dlp exception subclass produces the expected
   exit code and message.
 - `test_captions_then_audio_upload_to_drive` — audio-fallback +
   `--upload-to-drive` happy path (same shared render+write+upload
@@ -463,7 +465,7 @@ Following the convention from PRs #15, #17, #30, #31:
 
 Implementation PR is ready to merge when:
 
-- [ ] All 8 design decisions from the brainstorm visible in the diff
+- [ ] All 7 design decisions from the brainstorm visible in the diff
 - [ ] Slice 1's `_no_captions_message` updated to budget-aware
 - [ ] `extract_audio` pipeline reused unchanged (zero changes to
       `src/transcriber/core/audio.py`)
@@ -474,7 +476,7 @@ Implementation PR is ready to merge when:
 - [ ] PR description carries `Closes #21`
 - [ ] PLAN.md updated (Slice 2 description + new Slice 2b entry)
 - [ ] roadmap.md updated (Slice 2 marked done; Slice 2b appears)
-- [ ] Per-PR teaching artifacts written (§9)
+- [ ] Per-PR teaching artifacts written (§8)
 - [ ] Multi-vendor review pass (Codex / pr-review-toolkit) — same
       convention as PR #31
 

@@ -26,7 +26,7 @@ The slice ships when all of the following are true:
    `assemblyai_job_id` populated, `caption_type` field absent.
 
 5. **Exit-code matrix is correct.** Each row of the matrix in
-   `plan.md` §5c is exercised by a test (parametrized) and produces
+   `plan.md` §4c is exercised by a test (parametrized) and produces
    the expected exit code.
 
 6. **No silent fallback on the wrong exceptions.** The 5 non-trigger
@@ -67,7 +67,7 @@ The slice ships when all of the following are true:
 
 | # | Scenario | Expected |
 |---|---|---|
-| 17 | Download succeeds | File on disk at workspace path; PreparedMedia.local_path points to it |
+| 17 | Download succeeds | File on disk at workspace path; PreparedMedia.local_path points to it; `duration_seconds == float(probe.duration)`; `extra["probe_duration"] == str(probe.duration)` (asserts the `dict[str, str]` stringification — locks in one of the Codex-pass fixes) |
 | 18 | Download raises `DownloadError` (network after retries) | Exception propagates |
 | 19 | Download raises `PostProcessingError` (ffmpeg fail) | Exception propagates |
 | 20 | Download raises `OSError` (disk full simulation) | Exception propagates |
@@ -88,6 +88,7 @@ Parametrized test `test_yt_dlp_exception_matrix`:
 | 28 | `DownloadError` generic | low | 3 | "audio download failed" |
 | 29 | `PostProcessingError` | low | 4 | "ffmpeg failed" |
 | 30 | `OSError` | low | 4 | "local I/O error" |
+| 30b | `ProbeDurationUnknown` (probe returned `None` or `<=0`) | low | 2 | "could not determine video duration" |
 
 ### Unit — CLI integration with Slice 1 flow
 
