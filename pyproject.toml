@@ -72,6 +72,10 @@ ignore_missing_imports = true
 module = ["httplib2", "httplib2.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["yt_dlp", "yt_dlp.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from transcriber.providers.base import TranscriptResult
 
 
-SourceKind = Literal["local", "youtube", "youtube_captions", "google_drive"]
+SourceKind = Literal["local", "youtube_captions", "youtube_audio", "google_drive"]
 
 
 class SourceInputError(ValueError):

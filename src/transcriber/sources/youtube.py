@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
@@ -30,14 +32,122 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
-from youtube_transcript_api import NoTranscriptFound, YouTubeTranscriptApi
+from youtube_transcript_api import (
+    NoTranscriptFound,
+    TranscriptsDisabled,
+    YouTubeTranscriptApi,
+)
 
 from transcriber.core.title import validate_title
 from transcriber.providers.base import Segment, TranscriptResult
-from transcriber.sources.base import PreparedTranscript, SourceInputError
+from transcriber.sources.base import (
+    PreparedMedia,
+    PreparedTranscript,
+    SourceInputError,
+)
 
 if TYPE_CHECKING:
     from transcriber.core.workspace import RunWorkspace
+
+
+@dataclass(frozen=True)
+class AudioProbe:
+    """Result of yt-dlp's metadata-only ``extract_info(download=False)``.
+
+    The two fields the CLI orchestration reads — duration for the cost
+    estimate, title to thread forward to ``PreparedMedia.title`` so we
+    don't re-probe via oembed on the audio path. ``frozen=True`` mirrors
+    ``PreparedMedia`` / ``PreparedTranscript`` and prevents accidental
+    mutation between probe and download.
+    """
+
+    duration: int
+    title: str
+
+
+class NoCaptionsAvailable(Exception):
+    """Raised by ``YouTubeSource.prepare`` when the captions library
+    reports captions are unavailable (``TranscriptsDisabled`` /
+    ``NoTranscriptFound``).
+
+    The original library exception is preserved in ``__cause__`` so the
+    CLI can still distinguish the two reasons when emitting the
+    budget-aware no-captions message. All other captions-library
+    exceptions (``VideoUnavailable``, ``AgeRestricted``, etc.) propagate
+    unchanged.
+    """
+
+
+class ProbeDurationUnknown(Exception):
+    """yt-dlp's probe returned ``None`` or a non-positive duration.
+
+    The realistic cause is a live stream or premiere — content without
+    a fixed duration. Without duration we can't compute a reliable
+    AssemblyAI cost estimate, so the audio fallback exits 2 rather than
+    showing the user a fake ``$0.00`` cost prompt.
+    """
+
+
+# yt-dlp options for both probe (extract_info(download=False)) and
+# download (extract_info(download=True)). The dict is the verbatim
+# reference call captured in
+# ``specs/2026-05-13-youtube-audio-fallback/requirements.md``
+# ``## Reference calls (verbatim)`` — any value change must update
+# the spec first. ``noplaylist`` is defence-in-depth (the URL parser
+# already rejects playlist forms; yt-dlp's auto-playlist behaviour for
+# some edge URLs would otherwise expand a single video into multiple).
+_YDL_OPTS_BASE: dict[str, Any] = {
+    "quiet": True,
+    "no_warnings": True,
+    "format": "bestaudio/best",
+    "retries": 3,
+    "fragment_retries": 3,
+    "socket_timeout": 30,
+    "noplaylist": True,
+}
+
+
+def _probe_metadata(url: str) -> AudioProbe:
+    """yt-dlp metadata round-trip — no download. Returns AudioProbe
+    populated from ``info["title"]`` and ``info["duration"]``.
+
+    Raises ``ProbeDurationUnknown`` when ``duration`` is missing or
+    non-positive (live streams / premieres / malformed metadata). All
+    other yt-dlp exceptions propagate to the CLI for exit-code mapping
+    via ``_handle_yt_dlp_exception``.
+
+    yt-dlp is imported locally because the module is large (~50 MB
+    in-memory after extraction registry init); deferring keeps the
+    captions-only happy path lightweight.
+    """
+    from yt_dlp import YoutubeDL  # noqa: PLC0415 — deferred-import, see docstring
+
+    with YoutubeDL(_YDL_OPTS_BASE) as ydl:
+        info = ydl.extract_info(url, download=False)
+    duration = info.get("duration")
+    if duration is None or duration <= 0:
+        raise ProbeDurationUnknown(url)
+    title = info.get("title") or ""
+    return AudioProbe(duration=int(duration), title=str(title))
+
+
+def _download_audio(url: str, workspace: RunWorkspace) -> Path:
+    """yt-dlp audio download. Returns the on-disk Path of the
+    downloaded artifact (extension picked by yt-dlp via
+    ``bestaudio/best`` — could be m4a, opus, webm, etc.).
+
+    yt-dlp exceptions propagate; the CLI maps them via
+    ``_handle_yt_dlp_exception``.
+    """
+    from yt_dlp import YoutubeDL  # noqa: PLC0415 — see _probe_metadata
+
+    opts = {
+        **_YDL_OPTS_BASE,
+        "outtmpl": str(workspace.path("audio.%(ext)s")),
+    }
+    with YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+    return Path(info["requested_downloads"][0]["filepath"])
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +408,17 @@ class YouTubeSource:
     ) -> PreparedTranscript:
         video_id = _extract_video_id(uri)
 
-        chosen, fetched = _fetch_captions(video_id)
+        try:
+            chosen, fetched = _fetch_captions(video_id)
+        except (TranscriptsDisabled, NoTranscriptFound) as exc:
+            # Slice 2 trigger condition: these two exceptions mean the
+            # video plays but has no captions we can use — the CLI
+            # decides whether to fall through to yt-dlp audio download
+            # based on --budget. All other captions-library exceptions
+            # propagate unchanged (Slice 1 contract preserved).
+            raise NoCaptionsAvailable(
+                f"no captions for {uri!r}: {exc.__class__.__name__}"
+            ) from exc
 
         caption_type = "auto" if chosen.is_generated else "manual"
         logger.info(
@@ -321,4 +441,41 @@ class YouTubeSource:
             title=resolved_title,
             workspace=workspace,
             extra={"video_id": video_id, "caption_type": caption_type},
+        )
+
+    @staticmethod
+    def probe_audio(uri: str) -> AudioProbe:
+        """yt-dlp metadata round-trip for the audio-fallback path.
+
+        Called by the CLI after ``prepare`` raises ``NoCaptionsAvailable``
+        on a ``low+`` budget. Returns duration + title cheaply (single
+        HTTP round-trip) so the budget gate can fire with a real cost
+        estimate before any audio download happens.
+        """
+        video_id = _extract_video_id(uri)
+        return _probe_metadata(f"https://youtu.be/{video_id}")
+
+    @staticmethod
+    def download_audio(
+        uri: str, workspace: RunWorkspace, probe: AudioProbe
+    ) -> PreparedMedia:
+        """yt-dlp audio download — runs only after the CLI confirmed the
+        cost-prompt. Threads the probe-derived title and duration
+        forward so downstream stages don't re-probe.
+        """
+        video_id = _extract_video_id(uri)
+        canonical_url = f"https://youtu.be/{video_id}"
+        audio_path = _download_audio(canonical_url, workspace)
+        return PreparedMedia(
+            kind="youtube_audio",
+            original_uri=canonical_url,
+            local_path=audio_path,
+            title=probe.title,
+            duration_seconds=float(probe.duration),
+            workspace=workspace,
+            extra={
+                "video_id": video_id,
+                "probe_duration": str(probe.duration),
+            },
+            remote_url=None,
         )
