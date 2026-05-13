@@ -1426,3 +1426,140 @@ def test_captions_with_upload_to_drive_no_folder_exits_2(
     )
     assert result.exit_code == 2
     assert "No Drive folder configured" in result.output
+
+
+# ---------------------------------------------------------------------------
+# YouTube exception → exit code matrix (PR #31 test-analyzer Critical 1).
+# Validation cases #53–#62: each library exception subclass must route
+# through _handle_youtube_exception to the documented exit code AND
+# message phrase. Without these tests a branch-order regression in
+# _handle_youtube_exception (e.g., AgeRestricted moved below
+# VideoUnavailable) ships silently.
+# ---------------------------------------------------------------------------
+
+
+def _make_yt_exception(name: str) -> Exception:
+    """Build a library exception with the right constructor signature.
+    Constructors differ — VideoUnplayable needs 3 args, YouTubeRequestFailed
+    needs an HTTPError, NoTranscriptFound takes a TranscriptList. We use
+    minimal stand-ins."""
+    from unittest.mock import MagicMock
+
+    import requests as _requests
+    import youtube_transcript_api as y
+
+    video_id = "dQw4w9WgXcQ"
+    if name == "VideoUnplayable":
+        return y.VideoUnplayable(video_id, "test reason", [])
+    if name == "NoTranscriptFound":
+        return y.NoTranscriptFound(video_id, ["en"], MagicMock())
+    if name == "YouTubeRequestFailed":
+        http_err = _requests.exceptions.HTTPError("503 transient")
+        return y.YouTubeRequestFailed(video_id, http_err)
+    cls = getattr(y, name)
+    return cls(video_id)
+
+
+@pytest.mark.parametrize(
+    "exception_name, expected_exit, expected_substring",
+    [
+        ("TranscriptsDisabled", 2, "no usable captions"),
+        ("NoTranscriptFound", 2, "no usable captions"),
+        ("VideoUnavailable", 2, "Video unavailable"),
+        ("VideoUnplayable", 2, "Video unplayable"),
+        ("InvalidVideoId", 2, "rejected the video ID"),
+        ("AgeRestricted", 2, "age-restricted"),
+        ("PoTokenRequired", 2, "PO-token"),
+        ("IpBlocked", 3, "blocked the request"),
+        ("RequestBlocked", 3, "blocked the request"),
+        ("YouTubeRequestFailed", 3, "transient YouTube response"),
+        ("FailedToCreateConsentCookie", 3, "consent flow"),
+        ("YouTubeDataUnparsable", 3, "Unexpected error"),
+    ],
+)
+def test_captions_library_exception_matrix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_name: str,
+    expected_exit: int,
+    expected_substring: str,
+) -> None:
+    """Every library exception this CLI catches must route to the
+    spec-documented exit code with a user-facing message that contains
+    the documented diagnostic phrase. Branch-order or whitelist-typo
+    regressions break this test, not just user expectations."""
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+
+    from transcriber.sources.youtube import YouTubeSource
+
+    exc = _make_yt_exception(exception_name)
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise exc
+
+    monkeypatch.setattr(YouTubeSource, "prepare", staticmethod(boom))
+
+    result = CliRunner().invoke(
+        app, ["transcribe", "https://youtu.be/dQw4w9WgXcQ"]
+    )
+
+    assert result.exit_code == expected_exit, (
+        f"{exception_name} expected exit {expected_exit}, "
+        f"got {result.exit_code}: {result.output}"
+    )
+    assert expected_substring in result.output, (
+        f"{exception_name}: expected {expected_substring!r} in output, "
+        f"got {result.output!r}"
+    )
+
+
+def test_captions_network_exhaustion_exits_3(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validation #62 + PR #31 test-analyzer Critical 2: when tenacity
+    retries exhaust on the captions fetch, a ``requests.RequestException``
+    escapes ``YouTubeSource.prepare``. The CLI must catch it via the
+    broad ``requests.RequestException`` clause and exit 3 with the
+    documented ``Network error fetching captions`` message — never a
+    raw traceback."""
+    import requests as _requests
+
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+
+    from transcriber.sources.youtube import YouTubeSource
+
+    def network_fail(*_args: object, **_kwargs: object) -> None:
+        raise _requests.Timeout("retries exhausted")
+
+    monkeypatch.setattr(YouTubeSource, "prepare", staticmethod(network_fail))
+
+    result = CliRunner().invoke(
+        app, ["transcribe", "https://youtu.be/dQw4w9WgXcQ"]
+    )
+    assert result.exit_code == 3
+    assert "Network error fetching captions" in result.output
+
+
+def test_captions_chunked_encoding_at_cli_layer_exits_3_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for the silent-failure-hunter Critical finding:
+    a ``ChunkedEncodingError`` (which is NOT a Timeout/ConnectionError
+    subclass but IS a RequestException) must produce a clean exit 3,
+    not a raw traceback. Locks the widened CLI catch."""
+    import requests as _requests
+
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+
+    from transcriber.sources.youtube import YouTubeSource
+
+    def chunked(*_args: object, **_kwargs: object) -> None:
+        raise _requests.exceptions.ChunkedEncodingError("connection cut")
+
+    monkeypatch.setattr(YouTubeSource, "prepare", staticmethod(chunked))
+
+    result = CliRunner().invoke(
+        app, ["transcribe", "https://youtu.be/dQw4w9WgXcQ"]
+    )
+    assert result.exit_code == 3
+    assert "Network error fetching captions" in result.output

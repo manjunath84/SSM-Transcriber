@@ -232,12 +232,21 @@ def _build_transcript_result(fetched: Any) -> TranscriptResult:
     )
 
 
-# Retry policy — mirrors providers/assemblyai.py's _with_retry: 3
-# attempts, exponential backoff (1s/2s/4s), retry ONLY on network-layer
-# exceptions. Library exceptions (TranscriptsDisabled, NoTranscriptFound,
+# Retry policy — 3 attempts, exponential backoff (1s/2s/4s), retry on
+# any ``requests.RequestException`` subclass (covers Timeout,
+# ConnectionError, ChunkedEncodingError, TooManyRedirects,
+# ContentDecodingError, InvalidURL, etc.). The narrower (Timeout,
+# ConnectionError) pool the spec originally listed missed mid-fetch
+# transient errors like ChunkedEncodingError, which then surfaced as a
+# raw traceback at the CLI — silent-failure-hunter finding on PR #31.
+#
+# Library-level exceptions (TranscriptsDisabled, NoTranscriptFound,
 # VideoUnavailable, IpBlocked, RequestBlocked, AgeRestricted, etc.) are
-# deterministic in a single run and propagate immediately. Plan.md §5.
-_RETRYABLE_EXC = (requests.Timeout, requests.ConnectionError)
+# deterministic in a single run and propagate immediately — they are
+# subclasses of ``CouldNotRetrieveTranscript``, NOT of
+# ``RequestException``, so this whitelist does NOT accidentally retry
+# them. Plan.md §5.
+_RETRYABLE_EXC = (requests.RequestException,)
 
 
 @retry(

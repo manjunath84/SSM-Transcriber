@@ -589,6 +589,49 @@ def test_no_retry_on_transcripts_disabled(
     assert call_count["n"] == 1  # NOT retried
 
 
+def test_retries_chunked_encoding_error_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex/PR-review finding: ``ChunkedEncodingError`` and other
+    ``requests.RequestException`` subclasses (``TooManyRedirects``,
+    ``ContentDecodingError``, ``InvalidURL``) are NOT subclasses of
+    ``Timeout`` or ``ConnectionError``. A retry whitelist narrowed
+    to just those two would let mid-fetch errors escape unretried
+    AND surface as a raw traceback at the CLI. Widening to
+    ``RequestException`` covers the family."""
+    import requests
+
+    _instant_sleep(monkeypatch)
+
+    fetched = _FakeFetched(
+        video_id="abc12345678",
+        language_code="en",
+        is_generated=False,
+        _snippets=[_FakeSnippet(start=0.0, duration=1.0, text="hi")],
+    )
+    payload = _FakeTranscriptList([_FakeTranscript("en", False, fetched)])
+
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    call_count = {"n": 0}
+
+    def flaky_list(self: object, video_id: str) -> _FakeTranscriptList:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise requests.exceptions.ChunkedEncodingError("connection cut")
+        return payload
+
+    monkeypatch.setattr(YouTubeTranscriptApi, "list", flaky_list)
+    monkeypatch.setattr(
+        "transcriber.sources.youtube._fetch_oembed_title", lambda _: None
+    )
+
+    workspace = RunWorkspace()
+    YouTubeSource.prepare("https://youtu.be/abc12345678", workspace)
+
+    assert call_count["n"] == 2  # retried — not raised as a traceback
+
+
 def test_no_retry_on_ip_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
     """``IpBlocked`` is terminal in a single run — the IP doesn't unblock
     in 4 seconds, so retrying just wastes time. Validation #37."""

@@ -15,15 +15,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
+import requests
 import typer
-from requests.exceptions import (
-    ConnectionError as _requests_ConnectionError,
-    Timeout as _requests_Timeout,
-)
 from rich.console import Console
 from rich.prompt import Confirm
 from rich.table import Table
-from youtube_transcript_api import CouldNotRetrieveTranscript
+from youtube_transcript_api import YouTubeTranscriptApiException
 
 from transcriber.config import settings
 from transcriber.core import atomic
@@ -101,6 +98,18 @@ def _no_captions_message(source_uri: str) -> str:
     )
 
 
+def _youtube_transcript_api_version() -> str:
+    """Return the installed ``youtube-transcript-api`` version for use
+    in user-facing error messages. Best-effort: returns ``"unknown"`` if
+    metadata isn't available (e.g., editable install without dist info)."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("youtube-transcript-api")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def _handle_youtube_exception(exc: Exception, source_uri: str) -> int:
     """Map a youtube-transcript-api exception to (exit_code) and print
     the documented user-facing message. Returns the exit code so the
@@ -108,24 +117,43 @@ def _handle_youtube_exception(exc: Exception, source_uri: str) -> int:
 
     Exit-code matrix (spec error matrix §Q5d):
     - 2: TranscriptsDisabled, NoTranscriptFound, VideoUnavailable,
-         VideoUnplayable, InvalidVideoId, AgeRestricted (user-facing
-         "your URL / your video" problems that retrying won't help)
-    - 3: IpBlocked, RequestBlocked, generic CouldNotRetrieveTranscript
-         (system / network problems)
+         VideoUnplayable, InvalidVideoId, AgeRestricted,
+         PoTokenRequired (user-facing "your URL / your video / your
+         auth" problems that retrying won't help)
+    - 3: IpBlocked, RequestBlocked, YouTubeRequestFailed,
+         YouTubeDataUnparsable, FailedToCreateConsentCookie, cookie
+         errors, generic catch-all (system / network / library
+         conditions that aren't the user's URL)
     """
     from youtube_transcript_api import (
         AgeRestricted,
+        CookieError,
+        FailedToCreateConsentCookie,
         InvalidVideoId,
-        IpBlocked,
         NoTranscriptFound,
+        PoTokenRequired,
         RequestBlocked,
         TranscriptsDisabled,
         VideoUnavailable,
         VideoUnplayable,
+        YouTubeRequestFailed,
     )
 
     if isinstance(exc, (TranscriptsDisabled, NoTranscriptFound)):
         console.print(f"[red]error:[/red] {_no_captions_message(source_uri)}")
+        return 2
+    if isinstance(exc, PoTokenRequired):
+        # PR-#31 silent-failure-hunter finding: previously routed to the
+        # generic catch-all and told the user the library may need an
+        # update — wrong diagnosis. The user needs cookies / PO-token,
+        # which Slice 2's yt-dlp fallback can supply once it ships.
+        console.print(
+            f"[red]error:[/red] Video requires a PO-token / cookie-based "
+            f"authentication that youtube-transcript-api can't provide:\n"
+            f"  {source_uri}\n\n"
+            f"Slice 2's yt-dlp fallback (issue #21) is the planned path "
+            f"for videos that need browser-cookie auth."
+        )
         return 2
     if isinstance(exc, AgeRestricted):
         console.print(
@@ -154,16 +182,50 @@ def _handle_youtube_exception(exc: Exception, source_uri: str) -> int:
             f"[red]error:[/red] YouTube rejected the video ID:\n  {source_uri}"
         )
         return 2
-    if isinstance(exc, (IpBlocked, RequestBlocked)):
+    if isinstance(exc, RequestBlocked):
+        # IpBlocked is a subclass of RequestBlocked; this branch catches
+        # both. Library version is named so the user can decide whether
+        # to upgrade vs wait the rate-limit out.
         console.print(
             "[red]error:[/red] YouTube blocked the request from this IP. "
-            "Try again later, or run from a different network."
+            "Try again later, or run from a different network. "
+            f"(youtube-transcript-api {_youtube_transcript_api_version()})"
         )
         return 3
-    # Generic CouldNotRetrieveTranscript catch-all.
+    if isinstance(exc, CookieError):
+        # CookieError and its subclasses only fire when cookies are
+        # passed to YouTubeTranscriptApi(...) — Slice 1 doesn't, but
+        # this defensive arm future-proofs Slice 2's cookie path.
+        console.print(
+            f"[red]error:[/red] Cookie configuration error: {exc}\n"
+            f"This is only reachable when --cookies-from-browser or an "
+            f"explicit cookie file is provided; Slice 1 doesn't pass "
+            f"either."
+        )
+        return 3
+    # Diagnostic-neutral catch-all for the remaining
+    # CouldNotRetrieveTranscript subclasses (YouTubeRequestFailed,
+    # YouTubeDataUnparsable, FailedToCreateConsentCookie,
+    # NotTranslatable, TranslationLanguageNotAvailable) — these are a
+    # mix of transient network conditions, YouTube-side response shape
+    # changes, and consent-flow issues. We don't try to disambiguate
+    # them user-facing.
+    if isinstance(exc, (YouTubeRequestFailed, FailedToCreateConsentCookie)):
+        kind = "transient YouTube response" if isinstance(
+            exc, YouTubeRequestFailed
+        ) else "consent flow"
+        console.print(
+            f"[red]error:[/red] {kind} error from youtube-transcript-api "
+            f"{_youtube_transcript_api_version()}: {exc}\n"
+            f"Retrying after a few minutes often resolves these. If it "
+            f"persists, check for a library update or open an issue."
+        )
+        return 3
     console.print(
-        f"[red]error:[/red] Failed to fetch captions: {exc}\n"
-        f"The youtube-transcript-api library may need an update."
+        f"[red]error:[/red] Unexpected error from youtube-transcript-api "
+        f"{_youtube_transcript_api_version()}: {type(exc).__name__}: {exc}\n"
+        f"Rerun with TRANSCRIBER_LOG_LEVEL=DEBUG for more detail, or "
+        f"open an issue if this persists."
     )
     return 3
 
@@ -358,19 +420,19 @@ def transcribe(
             except SourceInputError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
-            except CouldNotRetrieveTranscript as exc:
-                # YouTube captions: library exception → spec-mapped exit code +
-                # user-facing message. Network-layer exceptions (Timeout,
-                # ConnectionError) are NOT subclasses of this — they bubble
-                # to the outer KeyboardInterrupt-and-friends handler below.
+            except YouTubeTranscriptApiException as exc:
+                # YouTube captions: library exception → spec-mapped exit
+                # code + user-facing message. Catches the broad library
+                # base so any new ``CouldNotRetrieveTranscript`` subclass
+                # AND cookie-related exceptions (Slice 2 cookie-path
+                # future-proofing) route through _handle_youtube_exception.
                 code = _handle_youtube_exception(exc, source)
                 raise typer.Exit(code=code) from exc
-            except (
-                _requests_ConnectionError,
-                _requests_Timeout,
-            ) as exc:
+            except requests.RequestException as exc:
                 # Network-layer exhaustion after tenacity retries on the
-                # captions fetch. CLI exit 3.
+                # captions fetch. Catches the broad RequestException so
+                # ChunkedEncodingError, TooManyRedirects, etc. are not
+                # rethrown as raw tracebacks. CLI exit 3.
                 console.print(
                     f"[red]error:[/red] Network error fetching captions: {exc}"
                 )
