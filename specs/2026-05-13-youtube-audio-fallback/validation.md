@@ -96,10 +96,11 @@ Parametrized test `test_yt_dlp_exception_matrix`:
 | 31 | Captioned video + `--budget free` | Captions path; output written; $0 |
 | 32 | Captionless video + `--budget free` | Exit 2; no probe attempted; budget-aware error message |
 | 33 | Captionless video + `--budget low` + user declines | Probe runs; prompt shown; user types "n"; exit 0; no download |
-| 34 | Captionless video + `--budget low` + user confirms | Full flow; output written |
+| 34 | Captionless video + `--budget low` + user confirms | Full flow; output written; **exactly one** budget prompt fires (no double-prompt regression from §4e bypass) |
 | 35 | Captionless video + `--budget low -y` | Prompt skipped; full flow; output written |
 | 36 | Captionless video + `--budget low` + `--upload-to-drive` | Full flow + Drive upload (shared render+write+upload block) |
 | 37 | Captionless video + `--budget low` + `--upload-to-drive` + no folder configured | Exit 2 pre-flight (existing Slice 1/2.5 contract) |
+| 37b | Local file + `--budget low` (regression check) | `kind=local` still hits the post-extract budget_check exactly once — Slice 1 contract for non-YouTube paths preserved |
 
 ### Unit — formatter
 

@@ -118,18 +118,25 @@ later:
 The seven design decisions made during the brainstorm, captured here
 so the impl PR has no room to drift:
 
-1. **One class owns both paths.** `YouTubeSource` exposes two
-   methods: `prepare()` runs the captions path and raises
-   `NoCaptionsAvailable` (a slice-defined exception) on the two
-   trigger conditions; `prepare_audio_fallback(workspace)` runs the
-   probe + download path. The CLI orchestrates between them so the
-   budget gate (which the source must not know about — sources are
-   money-agnostic, matching `LocalSource` / `DriveSource`) fires
-   between captions failure and yt-dlp probe. Output of either
-   method is the existing `PreparedSource` union —
-   `PreparedTranscript` from `prepare()`, `PreparedMedia` from
-   `prepare_audio_fallback`. The dispatcher (`sources/__init__.py`)
-   is unchanged: still hostname-match → `YouTubeSource(uri)`.
+1. **One class owns both paths via three discrete methods.**
+   `YouTubeSource` exposes:
+     - `prepare(workspace) -> PreparedTranscript` — captions path;
+       raises `NoCaptionsAvailable` (slice-defined exception) on the
+       two trigger conditions.
+     - `probe_audio() -> AudioProbe` — yt-dlp `extract_info(download=False)`
+       metadata round-trip; returns duration + title cheaply.
+     - `download_audio(workspace, probe) -> PreparedMedia` — yt-dlp
+       audio download using the prior probe; returns
+       `PreparedMedia(kind="youtube_audio", ...)`.
+
+   The CLI orchestrates between them so the budget gate (which the
+   source must not know about — sources are money-agnostic, matching
+   `LocalSource` / `DriveSource`) fires between probe and download.
+   This is the structural lock for §3 below: three discrete methods,
+   not a single `prepare()` orchestrator, because the budget decision
+   has to slot between captions-failure and audio-download. The
+   dispatcher (`sources/__init__.py`) is unchanged: still
+   hostname-match → `YouTubeSource(uri)`.
 
 2. **Fallback trigger condition is conservative.** Exactly two
    library exceptions flow through to the audio path:
@@ -318,6 +325,7 @@ ydl_opts = {
     "retries": 3,
     "fragment_retries": 3,
     "socket_timeout": 30,
+    "noplaylist": True,
 }
 
 with YoutubeDL(ydl_opts) as ydl:

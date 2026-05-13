@@ -138,16 +138,24 @@ def download_audio(
     self, workspace: RunWorkspace, probe: AudioProbe
 ) -> PreparedMedia:
     audio_path = _download_audio(self._canonical_url, workspace)
+    # PreparedMedia field order matches src/transcriber/sources/base.py
+    # (kind, original_uri, local_path, title, duration_seconds,
+    # workspace, extra, remote_url). duration_seconds is set from the
+    # probe so downstream stages don't need to dig into extra; extra is
+    # typed dict[str, str] so probe_duration is stringified there for
+    # the rare consumer that wants the raw probe value vs ffprobe value.
     return PreparedMedia(
-        original_uri=self._canonical_url,
         kind="youtube_audio",
+        original_uri=self._canonical_url,
         local_path=audio_path,
-        remote_url=None,
         title=probe.title,
+        duration_seconds=float(probe.duration),
+        workspace=workspace,
         extra={
             "video_id": self._video_id,
-            "probe_duration": probe.duration,
+            "probe_duration": str(probe.duration),
         },
+        remote_url=None,
     )
 ```
 
@@ -230,9 +238,14 @@ except NoCaptionsAvailable as exc:
         )
         raise typer.Exit(code=code) from exc
 
-# media is now PreparedTranscript (captions) or PreparedMedia (audio);
-# existing pipeline (extract_audio + budget_check for local path,
-# AssemblyAI call, render, write, optional upload) takes over unchanged.
+# media is now PreparedTranscript (captions) or PreparedMedia (audio).
+# The existing PreparedMedia local-path block runs extract_audio +
+# AssemblyAI + render + write + optional upload — BUT its inline
+# budget_check call must be skipped for kind="youtube_audio" because
+# we already gated on probe-derived cost above (see §4e). Without
+# that skip the user gets a second prompt after download. The skip
+# mirrors how the captions arm skips the budget gate entirely via
+# `isinstance(media, PreparedTranscript)` today.
 ```
 
 The download try/except deliberately appends "no AssemblyAI charge
@@ -281,6 +294,39 @@ if media.kind == "youtube_audio":
     # loud over silent).
     return media.title or media.extra["video_id"]
 ```
+
+### 4e. Bypass the existing pipeline's budget_check for `youtube_audio`
+
+`src/transcriber/cli.py` — the existing local-path block at
+`cli.py:489-545` calls `budget_check` after `extract_audio` resolves
+duration from the on-disk file. For `kind="youtube_audio"` we've
+already gated on the probe-derived duration up in §4b — running it
+a second time would either re-prompt the user (interactive) or
+unexpectedly cancel non-interactive runs that only provided one
+confirmation. Adding the skip:
+
+```python
+# Inside the existing PreparedMedia local-path branch, after
+# extract_audio + dataclasses.replace canonical-WAV swap, before
+# the budget_check call:
+if media.kind == "youtube_audio":
+    # Audio-fallback path already gated on probe-derived cost
+    # (see §4b); skip the redundant budget_check. The probe-vs-
+    # ffprobe duration drift (rounding to int seconds in probe vs
+    # float in ffprobe) is small enough that we trust the user's
+    # earlier authorization. If they diverge by >X% in practice,
+    # that's a follow-up signal to add a confirmation-mode prompt
+    # — out of scope for this slice.
+    proceed = True
+else:
+    # Existing flow: cost_usd from extract_audio's duration,
+    # budget_check fires, user prompted unless -y.
+    ...
+```
+
+Tests must cover both directions: (i) `kind="youtube_audio"` does
+NOT re-prompt; (ii) `kind="local"` does prompt — Slice 1 contract
+intact.
 
 ## 5. Formatter — `_source_uri` and body summary
 
