@@ -151,6 +151,7 @@ def test_atomic_write_oserror_exits_4(
                 segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
                 language="en",
                 duration_seconds=1.0,
+                provider="assemblyai",
                 model="universal-3-pro",
                 job_id="j",
             )
@@ -375,6 +376,7 @@ def test_drive_happy_path_with_title(
                 segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
                 language="en",
                 duration_seconds=1.0,
+                provider="assemblyai",
                 model="universal-3-pro",
                 job_id="drive-job",
             )
@@ -437,6 +439,7 @@ def test_drive_happy_path_no_title_uses_file_id(
                 segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
                 language="en",
                 duration_seconds=1.0,
+                provider="assemblyai",
                 model="universal-3-pro",
                 job_id="drive-job",
             )
@@ -480,6 +483,7 @@ def test_drive_auto_resolved_title_produces_dash_stem(
                 segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
                 language="en",
                 duration_seconds=1.0,
+                provider="assemblyai",
                 model="universal-3-pro",
                 job_id="drive-job",
             )
@@ -609,6 +613,7 @@ def test_local_path_uploads_extracted_wav_not_source_file(
                 segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
                 language="en",
                 duration_seconds=1.0,
+                provider="assemblyai",
                 model="universal-3-pro",
                 job_id="local-job",
             )
@@ -932,6 +937,7 @@ def test_transcribe_upload_to_drive_happy_path(
         segments=[],
         language="en",
         duration_seconds=60.0,
+        provider="assemblyai",
         model="universal-3-pro",
         job_id="j",
     )
@@ -975,6 +981,7 @@ def test_transcribe_upload_to_drive_folder_flag_overrides_config(
         segments=[],
         language="en",
         duration_seconds=60.0,
+        provider="assemblyai",
         model="universal-3-pro",
         job_id="j",
     )
@@ -1029,6 +1036,7 @@ def test_transcribe_upload_to_drive_auth_error_post_extract_exits_4(
         segments=[],
         language="en",
         duration_seconds=60.0,
+        provider="assemblyai",
         model="universal-3-pro",
         job_id="j",
     )
@@ -1078,6 +1086,7 @@ def test_transcribe_upload_to_drive_destination_error_exits_4(
         segments=[],
         language="en",
         duration_seconds=60.0,
+        provider="assemblyai",
         model="universal-3-pro",
         job_id="j",
     )
@@ -1127,6 +1136,7 @@ def test_transcribe_writes_transcript_before_calling_upload(
         segments=[],
         language="en",
         duration_seconds=60.0,
+        provider="assemblyai",
         model="universal-3-pro",
         job_id="j",
     )

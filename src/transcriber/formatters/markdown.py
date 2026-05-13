@@ -82,17 +82,26 @@ def _frontmatter(
 ) -> str:
     """Render the YAML frontmatter block, in stable field order."""
     speakers_value = "null" if speakers_count is None else str(speakers_count)
+    # Phase 2 Slice 1 generalized provider/model/job_id: read provider from
+    # ``result.provider`` (was hardcoded "assemblyai") and render model /
+    # assemblyai_job_id as the literal YAML ``null`` when the source
+    # didn't produce them (YouTube captions has no ASR model, no remote
+    # job). Field name ``assemblyai_job_id`` stays for downstream-parser
+    # schema stability; Phase 5 generalizes it to ``provider_job_id``.
     fields: list[tuple[str, str]] = [
         ("title", _yaml_string(title)),
         ("source_uri", _yaml_string(_source_uri(media))),
         ("source_kind", _yaml_string(media.kind)),
         ("duration_seconds", f"{result.duration_seconds:.1f}"),
         ("language", _yaml_string(result.language)),
-        ("provider", _yaml_string("assemblyai")),
-        ("model", _yaml_string(result.model)),
+        ("provider", _yaml_string(result.provider)),
+        ("model", _yaml_string(result.model) if result.model is not None else "null"),
         ("diarized", "true" if diarized else "false"),
         ("speakers", speakers_value),
-        ("assemblyai_job_id", _yaml_string(result.job_id)),
+        (
+            "assemblyai_job_id",
+            _yaml_string(result.job_id) if result.job_id is not None else "null",
+        ),
         ("created", _yaml_string(created.isoformat())),
     ]
     lines = ["---"] + [f"{k}: {v}" for k, v in fields] + ["---", ""]

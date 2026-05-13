@@ -41,14 +41,22 @@ class Segment:
 
 @dataclass(frozen=True)
 class TranscriptResult:
-    """What the formatter consumes; what the provider returns."""
+    """What the formatter consumes; what the provider returns.
+
+    Phase 2 Slice 1 generalized this to support non-AssemblyAI sources:
+    ``provider`` is the canonical identifier for who produced the
+    transcript (``"assemblyai"``, ``"youtube-captions"``, ...). ``model``
+    and ``job_id`` are ``str | None`` because the captions path has no
+    ASR model identifier and no remote job to reference.
+    """
 
     text: str
     segments: list[Segment]
     language: str
     duration_seconds: float
-    model: str
-    job_id: str
+    provider: str
+    model: str | None
+    job_id: str | None
 
     def __post_init__(self) -> None:
         if self.duration_seconds < 0:

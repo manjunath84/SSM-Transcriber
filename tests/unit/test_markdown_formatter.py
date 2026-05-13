@@ -48,6 +48,7 @@ def _result_diarized() -> TranscriptResult:
         ],
         language="en",
         duration_seconds=28.5,
+        provider="assemblyai",
         model="universal-3-pro",
         job_id="job-abc",
     )
@@ -143,6 +144,7 @@ def test_yaml_frontmatter_quotes_unsafe_titles(
         segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
         language="en",
         duration_seconds=10.0,
+        provider="assemblyai",
         model="universal-3-pro",
         job_id="j",
     )

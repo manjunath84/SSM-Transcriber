@@ -333,6 +333,7 @@ class AssemblyAIProvider(TranscriptionProvider):
             segments=segments,
             language=str(payload.get("language_code") or "auto"),
             duration_seconds=float(payload.get("audio_duration") or 0.0),
+            provider="assemblyai",
             model=speech_model,
             job_id=job_id,
         )
