@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date
 
 from transcriber.providers.base import TranscriptResult
-from transcriber.sources.base import PreparedMedia
+from transcriber.sources.base import PreparedMedia, PreparedSource
 
 # YAML scalars whose bare form would be parsed as a non-string by most YAML
 # loaders. Quoting these keeps the field a string round-trip.
@@ -23,7 +23,7 @@ _YAML_RESERVED_WORDS = frozenset(
 
 def render(
     result: TranscriptResult,
-    media: PreparedMedia,
+    media: PreparedSource,
     *,
     include_speakers: bool = True,
     include_timestamps: bool = True,
@@ -33,24 +33,17 @@ def render(
 
     ``created`` is injectable so golden tests are deterministic; production
     callers leave it ``None`` and the formatter uses today's date.
+
+    Accepts any ``PreparedSource`` — ``PreparedMedia`` (Local / Drive) or
+    ``PreparedTranscript`` (YouTube captions). Source-specific
+    fallbacks for title and ``source_uri`` branch on ``media.kind``.
     """
     if created is None:
         created = date.today()
 
     diarized_speakers: set[str] = {s.speaker for s in result.segments if s.speaker}
     speakers_count = len(diarized_speakers) if diarized_speakers else None
-    if media.title:
-        title = media.title
-    elif media.local_path is not None:
-        title = media.local_path.stem
-    else:
-        # Drive-source path, no --title given: fall back to the file ID.
-        # extra['drive_file_id'] is set by DriveSource.prepare; missing
-        # key is a producer-side bug (a Source implementation that returns
-        # kind='google_drive' without populating extra), not a user error.
-        # Let KeyError propagate rather than silently emitting an
-        # 'untitled-DATE.md' file (review finding I4).
-        title = media.extra["drive_file_id"]
+    title = _resolve_title(media)
 
     frontmatter = _frontmatter(
         title=title,
@@ -74,7 +67,7 @@ def render(
 def _frontmatter(
     *,
     title: str,
-    media: PreparedMedia,
+    media: PreparedSource,
     result: TranscriptResult,
     diarized: bool,
     speakers_count: int | None,
@@ -96,14 +89,23 @@ def _frontmatter(
         ("language", _yaml_string(result.language)),
         ("provider", _yaml_string(result.provider)),
         ("model", _yaml_string(result.model) if result.model is not None else "null"),
-        ("diarized", "true" if diarized else "false"),
-        ("speakers", speakers_value),
-        (
-            "assemblyai_job_id",
-            _yaml_string(result.job_id) if result.job_id is not None else "null",
-        ),
-        ("created", _yaml_string(created.isoformat())),
     ]
+    # Captions-only additive field — omitted entirely for non-captions
+    # sources per the schema-stability invariant in the spec
+    # (downstream parsers see a strict superset, never missing-required).
+    if media.kind == "youtube_captions":
+        fields.append(("caption_type", _yaml_string(media.extra["caption_type"])))
+    fields.extend(
+        [
+            ("diarized", "true" if diarized else "false"),
+            ("speakers", speakers_value),
+            (
+                "assemblyai_job_id",
+                _yaml_string(result.job_id) if result.job_id is not None else "null",
+            ),
+            ("created", _yaml_string(created.isoformat())),
+        ]
+    )
     lines = ["---"] + [f"{k}: {v}" for k, v in fields] + ["---", ""]
     return "\n".join(lines)
 
@@ -111,7 +113,7 @@ def _frontmatter(
 def _body(
     *,
     title: str,
-    media: PreparedMedia,
+    media: PreparedSource,
     result: TranscriptResult,
     include_speakers: bool,
     include_timestamps: bool,
@@ -124,9 +126,16 @@ def _body(
         if diarized_speakers
         else ""
     )
+    # Captions sources show ``youtube-captions (manual|auto)`` in the
+    # summary — there's no useful "model" string for them. Other
+    # providers keep the ``<provider>/<model>`` form.
+    if media.kind == "youtube_captions":
+        provider_label = f"youtube-captions ({media.extra['caption_type']})"
+    else:
+        provider_label = f"{result.provider}/{result.model}"
     summary = (
         f"> Transcribed from `{media.original_uri}` · {minutes:.1f} min · "
-        f"{result.language} · assemblyai/{result.model}{diar_note}."
+        f"{result.language} · {provider_label}{diar_note}."
     )
 
     lines: list[str] = [f"# {title}", "", summary, "", "## Transcript", ""]
@@ -148,15 +157,46 @@ def _body(
     return "\n".join(lines) + "\n"
 
 
-def _source_uri(media: PreparedMedia) -> str:
+def _resolve_title(media: PreparedSource) -> str:
+    """Resolve the display title with source-specific fallbacks.
+
+    Explicit ``media.title`` wins (LocalSource's filename stem,
+    user's ``--title``, oembed result, Drive's Content-Disposition
+    result). Each source-kind has its own fallback when title is
+    None or empty:
+
+    - ``local``: file stem from ``local_path``
+    - ``google_drive``: ``extra['drive_file_id']``
+    - ``youtube_captions``: ``extra['video_id']``
+
+    Missing extra-keys raise ``KeyError`` (producer-side bug; review
+    finding I4 mandates loud failure over silent ``untitled-DATE.md``).
+    """
+    if media.title:
+        return media.title
+    if isinstance(media, PreparedMedia) and media.local_path is not None:
+        return media.local_path.stem
+    if media.kind == "google_drive":
+        return media.extra["drive_file_id"]
+    if media.kind == "youtube_captions":
+        return media.extra["video_id"]
+    raise ValueError(
+        f"cannot resolve title for media kind={media.kind!r}: "
+        "no explicit title and no source-kind fallback configured."
+    )
+
+
+def _source_uri(media: PreparedSource) -> str:
     """Return the canonical ``source_uri`` for the frontmatter field.
 
     For local sources, the absolute ``file:///`` URI of the input.
-    For URL-passthrough sources (Drive in Slice 2), the canonical
-    ``drive://FILE_ID`` form already stored in ``original_uri``.
+    For URL-passthrough sources (Drive Slice 2) and YouTube captions
+    (Phase 2 Slice 1), the canonical short form already stored in
+    ``original_uri`` (``drive://FILE_ID`` and ``https://youtu.be/<ID>``
+    respectively).
     """
     if media.kind == "local":
-        if media.local_path is None:
+        if not isinstance(media, PreparedMedia) or media.local_path is None:
             # PreparedMedia.__post_init__ guarantees a local-kind media has
             # local_path set; reaching this branch means a Source
             # implementation produced an inconsistent shape. Fail loud

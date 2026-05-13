@@ -1162,3 +1162,231 @@ def test_transcribe_writes_transcript_before_calling_upload(
     assert file_existed_at_upload == [True], (
         "transcript must be on disk (non-empty) when dest.upload() is called"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 Slice 1 — YouTube captions CLI integration (validation #47-62).
+# Tests monkeypatch YouTubeSource.prepare to return a PreparedTranscript
+# rather than wiring the library mocks all the way through; library-level
+# behaviour is exhaustively covered in tests/unit/test_youtube_source.py.
+# ---------------------------------------------------------------------------
+
+
+def _captions_prepared(
+    workspace: object,
+    *,
+    title: str | None,
+    caption_type: str = "manual",
+    language: str = "en",
+) -> object:
+    """Build a PreparedTranscript suitable for CLI captions-path tests."""
+    from transcriber.providers.base import Segment, TranscriptResult
+    from transcriber.sources.base import PreparedTranscript
+
+    return PreparedTranscript(
+        kind="youtube_captions",
+        original_uri="https://youtu.be/dQw4w9WgXcQ",
+        transcript=TranscriptResult(
+            text="hello",
+            segments=[Segment(start_ms=0, end_ms=1000, text="hello", speaker=None)],
+            language=language,
+            duration_seconds=1.0,
+            provider="youtube-captions",
+            model=None,
+            job_id=None,
+        ),
+        title=title,
+        workspace=workspace,  # type: ignore[arg-type]
+        extra={"video_id": "dQw4w9WgXcQ", "caption_type": caption_type},
+    )
+
+
+def test_captions_happy_path_skips_provider_and_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validation #47: captions URL → PreparedTranscript → output written.
+    Budget router NOT called (asserted via a side-effect flag). Provider
+    constructor NOT called either."""
+    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
+    # Re-init settings to pick up env override.
+    from transcriber.config import TranscriberSettings
+    monkeypatch.setattr(
+        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
+    )
+
+    from transcriber.sources.youtube import YouTubeSource
+
+    def fake_prepare(uri: str, workspace: object, *, title: str | None = None) -> object:
+        return _captions_prepared(workspace, title=title or "Test Title")
+
+    monkeypatch.setattr(YouTubeSource, "prepare", staticmethod(fake_prepare))
+
+    budget_called = {"yes": False}
+
+    def _track_budget(**_kwargs: object) -> bool:
+        budget_called["yes"] = True
+        return True
+
+    monkeypatch.setattr("transcriber.cli.budget_check", _track_budget)
+
+    provider_called = {"yes": False}
+
+    class _BoomIfProviderUsed:
+        def __init__(self, *_a: object, **_k: object) -> None:
+            provider_called["yes"] = True
+
+    monkeypatch.setattr("transcriber.cli.AssemblyAIProvider", _BoomIfProviderUsed)
+
+    result = CliRunner().invoke(
+        app, ["transcribe", "https://youtu.be/dQw4w9WgXcQ"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert budget_called["yes"] is False, "budget router must NOT fire for captions"
+    assert provider_called["yes"] is False, "provider must NOT be constructed"
+    # Output filename contains the title (whitespace → dash).
+    written = list(tmp_path.glob("Test-Title-*.md"))
+    assert len(written) == 1
+    assert "source_kind: youtube_captions" in written[0].read_text()
+
+
+def test_captions_with_budget_free_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validation #50: --budget free is OK on captions sources (it's
+    $0 — the gate that rejects Drive under free doesn't fire)."""
+    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
+    from transcriber.config import TranscriberSettings
+    monkeypatch.setattr(
+        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
+    )
+
+    from transcriber.sources.youtube import YouTubeSource
+
+    monkeypatch.setattr(
+        YouTubeSource,
+        "prepare",
+        staticmethod(lambda uri, ws, *, title=None: _captions_prepared(ws, title="T")),
+    )
+
+    result = CliRunner().invoke(
+        app, ["transcribe", "https://youtu.be/dQw4w9WgXcQ", "--budget", "free"]
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_captions_no_captions_exits_2_with_documented_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validation #53: TranscriptsDisabled → exit 2 with the documented
+    no-captions message containing the issue #21 pointer."""
+    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
+    from transcriber.config import TranscriberSettings
+    monkeypatch.setattr(
+        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
+    )
+
+    from youtube_transcript_api import TranscriptsDisabled
+
+    from transcriber.sources.youtube import YouTubeSource
+
+    def fake_prepare_raises(*_a: object, **_k: object) -> object:
+        raise TranscriptsDisabled("dQw4w9WgXcQ")
+
+    monkeypatch.setattr(YouTubeSource, "prepare", staticmethod(fake_prepare_raises))
+
+    result = CliRunner().invoke(
+        app, ["transcribe", "https://youtu.be/dQw4w9WgXcQ"]
+    )
+    assert result.exit_code == 2
+    assert "Video has no usable captions" in result.output
+    assert "/issues/21" in result.output
+    assert "uv run yt-dlp" in result.output
+
+
+def test_captions_ip_blocked_exits_3(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validation #59: IpBlocked → exit 3 (system-level)."""
+    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
+    from transcriber.config import TranscriberSettings
+    monkeypatch.setattr(
+        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
+    )
+
+    from youtube_transcript_api import IpBlocked
+
+    from transcriber.sources.youtube import YouTubeSource
+
+    monkeypatch.setattr(
+        YouTubeSource,
+        "prepare",
+        staticmethod(lambda *_a, **_k: (_ for _ in ()).throw(IpBlocked("dQw4w9WgXcQ"))),
+    )
+
+    result = CliRunner().invoke(
+        app, ["transcribe", "https://youtu.be/dQw4w9WgXcQ"]
+    )
+    assert result.exit_code == 3
+    assert "blocked" in result.output.lower()
+
+
+def test_captions_language_flag_ignored_with_info_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Validation #51: --language ignored on captions; INFO log mentions
+    'ignored' and the actual returned track language."""
+    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
+    from transcriber.config import TranscriberSettings
+    monkeypatch.setattr(
+        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
+    )
+
+    from transcriber.sources.youtube import YouTubeSource
+
+    monkeypatch.setattr(
+        YouTubeSource,
+        "prepare",
+        staticmethod(
+            lambda uri, ws, *, title=None: _captions_prepared(ws, title="T", language="es")
+        ),
+    )
+
+    import logging
+    with caplog.at_level(logging.INFO, logger="transcriber.cli"):
+        result = CliRunner().invoke(
+            app, ["transcribe", "https://youtu.be/dQw4w9WgXcQ", "--language", "en"]
+        )
+    assert result.exit_code == 0, result.output
+    assert any(
+        "ignored" in rec.getMessage() and "es" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
+def test_captions_no_title_falls_back_to_video_id_stem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Title=None (oembed failed AND no --title) → output filename uses
+    the video ID stem. Frontmatter title is also the video ID."""
+    monkeypatch.setenv("TRANSCRIBER_OUTPUT_DIR", str(tmp_path))
+    from transcriber.config import TranscriberSettings
+    monkeypatch.setattr(
+        "transcriber.cli.settings", TranscriberSettings(_env_file=None)  # type: ignore[call-arg]
+    )
+
+    from transcriber.sources.youtube import YouTubeSource
+
+    monkeypatch.setattr(
+        YouTubeSource,
+        "prepare",
+        staticmethod(lambda uri, ws, *, title=None: _captions_prepared(ws, title=None)),
+    )
+
+    result = CliRunner().invoke(
+        app, ["transcribe", "https://youtu.be/dQw4w9WgXcQ"]
+    )
+    assert result.exit_code == 0, result.output
+    written = list(tmp_path.glob("dQw4w9WgXcQ-*.md"))
+    assert len(written) == 1
+    assert "title: dQw4w9WgXcQ" in written[0].read_text()

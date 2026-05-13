@@ -59,13 +59,22 @@ class PreparedSource(Protocol):
     while the provider abstraction stays typed on the concrete
     ``PreparedMedia`` — mypy enforces that the captions path never
     reaches a provider call.
+
+    The attributes are declared via ``@property`` so frozen-dataclass
+    fields satisfy the Protocol — bare class-level annotations would
+    be treated as writeable by mypy and conflict with ``frozen=True``.
     """
 
-    kind: SourceKind
-    original_uri: str
-    title: str | None
-    workspace: RunWorkspace
-    extra: dict[str, str]
+    @property
+    def kind(self) -> SourceKind: ...
+    @property
+    def original_uri(self) -> str: ...
+    @property
+    def title(self) -> str | None: ...
+    @property
+    def workspace(self) -> RunWorkspace: ...
+    @property
+    def extra(self) -> dict[str, str]: ...
 
 
 @dataclass(frozen=True)

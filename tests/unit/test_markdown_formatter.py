@@ -16,7 +16,7 @@ import pytest
 from transcriber.core.workspace import RunWorkspace
 from transcriber.formatters.markdown import render
 from transcriber.providers.base import Segment, TranscriptResult
-from transcriber.sources.base import PreparedMedia
+from transcriber.sources.base import PreparedMedia, PreparedTranscript
 
 GOLDEN_PATH = Path(__file__).resolve().parent.parent / "fixtures" / "golden" / "sample.md"
 
@@ -248,3 +248,98 @@ def test_source_uri_raises_for_local_kind_with_none_local_path(
     object.__setattr__(valid, "local_path", None)
     with pytest.raises(ValueError, match="source-implementation bug"):
         _source_uri(valid)
+
+
+# ---------------------------------------------------------------------------
+# YouTube captions rendering — Phase 2 Slice 1 frontmatter & body.
+# ---------------------------------------------------------------------------
+
+
+def _captions_transcript_result(provider: str = "youtube-captions") -> TranscriptResult:
+    return TranscriptResult(
+        text="hello world",
+        segments=[
+            Segment(start_ms=0, end_ms=1500, text="hello", speaker=None),
+            Segment(start_ms=1500, end_ms=3500, text="world", speaker=None),
+        ],
+        language="en",
+        duration_seconds=3.5,
+        provider=provider,
+        model=None,
+        job_id=None,
+    )
+
+
+def _captions_prepared(
+    workspace: RunWorkspace,
+    *,
+    title: str | None,
+    caption_type: str,
+) -> PreparedTranscript:
+    return PreparedTranscript(
+        kind="youtube_captions",
+        original_uri="https://youtu.be/dQw4w9WgXcQ",
+        transcript=_captions_transcript_result(),
+        title=title,
+        workspace=workspace,
+        extra={"video_id": "dQw4w9WgXcQ", "caption_type": caption_type},
+    )
+
+
+def test_render_captions_manual_frontmatter(workspace: RunWorkspace) -> None:
+    """Captions source renders provider/model/job_id from result; adds
+    caption_type field; source_uri is the canonical short YouTube URL."""
+    prepared = _captions_prepared(workspace, title="Test Title", caption_type="manual")
+    output = render(prepared.transcript, prepared, created=date(2026, 5, 12))
+
+    assert "source_uri: https://youtu.be/dQw4w9WgXcQ" in output
+    assert "source_kind: youtube_captions" in output
+    assert "provider: youtube-captions" in output
+    assert "model: null" in output
+    assert "caption_type: manual" in output
+    assert "diarized: false" in output
+    assert "speakers: null" in output
+    assert "assemblyai_job_id: null" in output
+    assert "title: Test Title" in output
+
+
+def test_render_captions_auto_caption_type_shown(workspace: RunWorkspace) -> None:
+    prepared = _captions_prepared(workspace, title="T", caption_type="auto")
+    output = render(prepared.transcript, prepared, created=date(2026, 5, 12))
+
+    assert "caption_type: auto" in output
+
+
+def test_render_captions_body_summary_uses_youtube_captions_string(
+    workspace: RunWorkspace,
+) -> None:
+    """Body summary shows ``youtube-captions (manual|auto)`` — not
+    ``assemblyai/<model>``."""
+    prepared = _captions_prepared(workspace, title="T", caption_type="manual")
+    output = render(prepared.transcript, prepared, created=date(2026, 5, 12))
+
+    assert "youtube-captions (manual)" in output
+    assert "assemblyai/" not in output
+
+
+def test_render_captions_falls_back_to_video_id_when_no_title(
+    workspace: RunWorkspace,
+) -> None:
+    """No title (oembed failed AND no --title): fall back to the video
+    ID from extras. Mirrors the Drive file_id fallback pattern."""
+    prepared = _captions_prepared(workspace, title=None, caption_type="manual")
+    output = render(prepared.transcript, prepared, created=date(2026, 5, 12))
+
+    assert "title: dQw4w9WgXcQ" in output
+    assert "# dQw4w9WgXcQ" in output
+
+
+def test_render_assemblyai_omits_caption_type_field(workspace: RunWorkspace) -> None:
+    """Regression: caption_type is captions-only. AssemblyAI/local +
+    AssemblyAI/Drive outputs must NOT contain ``caption_type:`` —
+    that's the additive-schema-change invariant in the spec."""
+    media = _drive_media(workspace, title="Session 17")
+    output = render(_result_diarized(), media, created=date(2026, 5, 3))
+
+    assert "caption_type" not in output
+    assert "provider: assemblyai" in output  # not "youtube-captions"

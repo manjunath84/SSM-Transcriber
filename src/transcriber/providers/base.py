@@ -11,9 +11,16 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from transcriber.errors import TranscriberError
-from transcriber.sources.base import PreparedMedia
+
+if TYPE_CHECKING:
+    # Type-only import to break the cycle:
+    #   providers.base ← sources.base ← sources.__init__ ← sources.youtube ← providers.base
+    # YouTubeSource added this loop in Phase 2 Slice 1; resolving via
+    # TYPE_CHECKING keeps the abstract base typed without runtime import.
+    from transcriber.sources.base import PreparedMedia
 
 
 def _noop(_: str) -> None:

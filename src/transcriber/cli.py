@@ -16,9 +16,14 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from requests.exceptions import (
+    ConnectionError as _requests_ConnectionError,
+    Timeout as _requests_Timeout,
+)
 from rich.console import Console
 from rich.prompt import Confirm
 from rich.table import Table
+from youtube_transcript_api import CouldNotRetrieveTranscript
 
 from transcriber.config import settings
 from transcriber.core import atomic
@@ -37,7 +42,7 @@ from transcriber.formatters import markdown as md_formatter
 from transcriber.providers.assemblyai import AssemblyAIProvider
 from transcriber.providers.base import ProviderError
 from transcriber.sources import resolve_source
-from transcriber.sources.base import SourceInputError
+from transcriber.sources.base import PreparedTranscript, SourceInputError
 
 
 class Budget(StrEnum):
@@ -59,6 +64,7 @@ logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="ssm-transcriber",
@@ -76,6 +82,90 @@ def _confirm_or_decline(msg: str) -> bool:
         return Confirm.ask(msg, default=False, console=console)
     except EOFError:
         return False
+
+
+def _no_captions_message(source_uri: str) -> str:
+    """Build the documented no-captions error pointing at issue #21
+    + offering a copy-paste yt-dlp workaround using Phase 1's free
+    local path. Spec validation #53/#54."""
+    return (
+        f"Video has no usable captions:\n"
+        f"  {source_uri}\n\n"
+        f"Either the creator disabled captions or no auto-generated "
+        f"track is available. Audio-download fallback (yt-dlp + local "
+        f"ASR) is planned for Phase 2 Slice 2 — tracked at:\n"
+        f"  https://github.com/manjunath84/SSM-Transcriber/issues/21\n\n"
+        f"Workaround today (uses Phase 1 local ASR, $0):\n\n"
+        f"  uv run yt-dlp -x --audio-format wav -o /tmp/audio.wav '{source_uri}'\n"
+        f"  uv run ssm-transcriber transcribe /tmp/audio.wav"
+    )
+
+
+def _handle_youtube_exception(exc: Exception, source_uri: str) -> int:
+    """Map a youtube-transcript-api exception to (exit_code) and print
+    the documented user-facing message. Returns the exit code so the
+    caller can ``raise typer.Exit(code=...)`` cleanly.
+
+    Exit-code matrix (spec error matrix §Q5d):
+    - 2: TranscriptsDisabled, NoTranscriptFound, VideoUnavailable,
+         VideoUnplayable, InvalidVideoId, AgeRestricted (user-facing
+         "your URL / your video" problems that retrying won't help)
+    - 3: IpBlocked, RequestBlocked, generic CouldNotRetrieveTranscript
+         (system / network problems)
+    """
+    from youtube_transcript_api import (
+        AgeRestricted,
+        InvalidVideoId,
+        IpBlocked,
+        NoTranscriptFound,
+        RequestBlocked,
+        TranscriptsDisabled,
+        VideoUnavailable,
+        VideoUnplayable,
+    )
+
+    if isinstance(exc, (TranscriptsDisabled, NoTranscriptFound)):
+        console.print(f"[red]error:[/red] {_no_captions_message(source_uri)}")
+        return 2
+    if isinstance(exc, AgeRestricted):
+        console.print(
+            f"[red]error:[/red] Video is age-restricted and requires "
+            f"authentication that youtube-transcript-api doesn't support:\n"
+            f"  {source_uri}\n\n"
+            f"Slice 2's yt-dlp fallback can be configured with browser "
+            f"cookies for age-restricted videos (--cookies-from-browser) "
+            f"once that ships (issue #21)."
+        )
+        return 2
+    if isinstance(exc, VideoUnavailable):
+        console.print(
+            f"[red]error:[/red] Video unavailable (gone, private, or "
+            f"never existed):\n  {source_uri}"
+        )
+        return 2
+    if isinstance(exc, VideoUnplayable):
+        reason = getattr(exc, "reason", "no further detail")
+        console.print(
+            f"[red]error:[/red] Video unplayable: {reason}\n  {source_uri}"
+        )
+        return 2
+    if isinstance(exc, InvalidVideoId):
+        console.print(
+            f"[red]error:[/red] YouTube rejected the video ID:\n  {source_uri}"
+        )
+        return 2
+    if isinstance(exc, (IpBlocked, RequestBlocked)):
+        console.print(
+            "[red]error:[/red] YouTube blocked the request from this IP. "
+            "Try again later, or run from a different network."
+        )
+        return 3
+    # Generic CouldNotRetrieveTranscript catch-all.
+    console.print(
+        f"[red]error:[/red] Failed to fetch captions: {exc}\n"
+        f"The youtube-transcript-api library may need an update."
+    )
+    return 3
 
 
 # ── --title sanitization (Slice 2) ───────────────────────────────────────────
@@ -268,6 +358,66 @@ def transcribe(
             except SourceInputError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
+            except CouldNotRetrieveTranscript as exc:
+                # YouTube captions: library exception → spec-mapped exit code +
+                # user-facing message. Network-layer exceptions (Timeout,
+                # ConnectionError) are NOT subclasses of this — they bubble
+                # to the outer KeyboardInterrupt-and-friends handler below.
+                code = _handle_youtube_exception(exc, source)
+                raise typer.Exit(code=code) from exc
+            except (
+                _requests_ConnectionError,
+                _requests_Timeout,
+            ) as exc:
+                # Network-layer exhaustion after tenacity retries on the
+                # captions fetch. CLI exit 3.
+                console.print(
+                    f"[red]error:[/red] Network error fetching captions: {exc}"
+                )
+                raise typer.Exit(code=3) from exc
+
+            # Captions branch: PreparedTranscript carries a finished
+            # TranscriptResult — skip the provider entirely and skip
+            # both budget gates (the captions path is $0 by construction;
+            # validation #50). Falls through to the formatter + write
+            # block below; output filename derivation uses the same
+            # title-resolution chain as Drive (--title → media.title from
+            # oembed → extra fallback).
+            if isinstance(media, PreparedTranscript):
+                result = media.transcript
+                if language is not None:
+                    logger.info(
+                        "captions source: --language ignored, returned track is %s",
+                        result.language,
+                    )
+                content = md_formatter.render(
+                    result,
+                    media,
+                    include_speakers=not no_speakers,
+                    include_timestamps=not no_timestamps,
+                )
+                if output is None:
+                    if display_title is not None:
+                        stem = title_to_stem(display_title)
+                    elif media.title is not None:
+                        stem = title_to_stem(media.title)
+                    else:
+                        stem = media.extra["video_id"]
+                    date_str = date.today().isoformat()
+                    output = settings.output_dir / f"{stem}-{date_str}.md"
+                output = atomic.resolve_collision(output)
+                try:
+                    atomic.write_text_atomic(output, content)
+                except OSError as exc:
+                    console.print(
+                        f"[red]error:[/red] failed to write output: {exc}"
+                    )
+                    raise typer.Exit(code=4) from exc
+                console.print(f"[green]✓[/green] Saved to: {output}")
+                # Captions sources don't support --upload-to-drive in
+                # Slice 1 — the user can run ``ssm-transcriber upload`` as
+                # a follow-up if needed (it works on any local file).
+                return
 
             # Branch: Drive passthrough skips ffmpeg + per-call cost
             # estimate; local upload runs both.
