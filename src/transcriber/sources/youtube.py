@@ -1,0 +1,306 @@
+"""YouTube captions source — Phase 2 Slice 1.
+
+Pulls existing YouTube captions via ``youtube-transcript-api`` and emits
+a finished ``PreparedTranscript`` directly. No audio download, no paid
+provider call. Captions cover the common "I want to read what they said"
+case at $0; the yt-dlp audio fallback for videos without captions lands
+in Slice 2 (issue #21).
+
+The library is an unofficial scraper of YouTube's frontend; we pin a
+range and document the trade-off in the spec under "Constraints". The
+library ≥1.0 API surface is the binding contract — see the verbatim
+reference in
+``specs/2026-05-12-youtube-captions-source/requirements.md``
+§"Reference calls (verbatim)".
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qs, urlparse
+
+import requests
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+from youtube_transcript_api import NoTranscriptFound, YouTubeTranscriptApi
+
+from transcriber.core.title import validate_title
+from transcriber.providers.base import Segment, TranscriptResult
+from transcriber.sources.base import PreparedTranscript, SourceInputError
+
+if TYPE_CHECKING:
+    from transcriber.core.workspace import RunWorkspace
+
+logger = logging.getLogger(__name__)
+
+# Oembed probe — fail-soft GET against YouTube's public title endpoint.
+# Mirrors the Drive Slice 2 ``Content-Disposition`` filename-probe
+# pattern: one unauthenticated round-trip, parsed defensively, returns
+# ``None`` on any failure so the caller falls through to the video ID
+# stem. Verified verbatim 2026-05-12 against a real YouTube URL — see
+# specs §"Reference calls (verbatim)".
+_OEMBED_URL = "https://www.youtube.com/oembed"
+_OEMBED_TIMEOUT_SECONDS = 10.0
+
+# YouTube video IDs are exactly 11 chars, URL-safe base64 (A-Z, a-z, 0-9, -, _).
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+# Path-form keywords whose immediately-following segment is the video ID.
+# ``/embed/<ID>``, ``/shorts/<ID>``, ``/live/<ID>`` — all three are
+# accepted; ``/watch`` is handled separately because the ID lives in
+# the query string, not the path.
+_PATH_KEYWORDS = ("embed", "shorts", "live")
+
+_YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
+_YOUTU_BE_HOSTS = {"youtu.be"}
+
+
+def _validate_id(candidate: str) -> str:
+    """Return the candidate ID if it matches the 11-char regex, else raise."""
+    if not _VIDEO_ID_RE.fullmatch(candidate):
+        raise SourceInputError(
+            f"could not extract a video ID from the URL: "
+            f"{candidate!r} is not a valid YouTube video ID "
+            "(expected exactly 11 characters of [A-Za-z0-9_-])."
+        )
+    return candidate
+
+
+def _extract_video_id(uri: str) -> str:
+    """Extract the 11-char video ID from any of the eight accepted forms.
+
+    Raises ``SourceInputError`` (subclass of ``ValueError`` for back-compat
+    with existing ``pytest.raises(ValueError, ...)`` tests) on any
+    rejected form — playlist, channel, channel-handle, homepage,
+    malformed IDs. The CLI maps this to exit 2.
+    """
+    parsed = urlparse(uri)
+    host = (parsed.hostname or "").lower()
+
+    if host in _YOUTU_BE_HOSTS:
+        # ``youtu.be/<ID>`` — path is ``/<ID>``; strip leading slash.
+        candidate = parsed.path.lstrip("/")
+        return _validate_id(candidate)
+
+    if host in _YOUTUBE_HOSTS:
+        path = parsed.path
+        if path == "/watch":
+            # ``?v=<ID>`` query parameter.
+            qs = parse_qs(parsed.query)
+            v_values = qs.get("v", [])
+            if not v_values:
+                raise SourceInputError(
+                    f"could not extract a video ID from {uri!r}: "
+                    "/watch URL is missing the ?v=<ID> parameter."
+                )
+            return _validate_id(v_values[0])
+
+        # Path-keyword forms: /embed/<ID>, /shorts/<ID>, /live/<ID>.
+        # ``path.split("/")`` on ``/embed/abc`` yields ``["", "embed", "abc"]``.
+        parts = path.strip("/").split("/")
+        if len(parts) >= 2 and parts[0] in _PATH_KEYWORDS:
+            return _validate_id(parts[1])
+
+        # Playlist / channel / homepage / @handle / anything else.
+        raise SourceInputError(
+            f"could not extract a video ID from {uri!r}: "
+            "supply a single video URL (watch?v=..., youtu.be/..., "
+            "embed/, shorts/, or live/ form). Playlist, channel, and "
+            "channel-handle URLs are not supported."
+        )
+
+    raise SourceInputError(
+        f"could not extract a video ID from {uri!r}: "
+        "expected a YouTube hostname (youtube.com, youtu.be, m.youtube.com)."
+    )
+
+
+def _fetch_oembed_title(video_id: str) -> str | None:
+    """Return the YouTube video title via the public oembed endpoint, or
+    ``None`` on any failure path.
+
+    No auth required; the endpoint is YouTube's documented title-resolution
+    surface. Parallels Drive's ``_fetch_drive_filename`` — one fail-soft
+    GET, defended against every error mode (network, non-200, malformed
+    JSON, missing key, hostile creator-controlled title).
+    """
+    watch_url = f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        response = requests.get(
+            _OEMBED_URL,
+            params={"url": watch_url, "format": "json"},
+            timeout=_OEMBED_TIMEOUT_SECONDS,
+        )
+    except requests.RequestException as exc:
+        logger.debug("oembed probe failed: %s", exc)
+        return None
+
+    if response.status_code != 200:
+        logger.debug(
+            "oembed probe returned %d for video=%s", response.status_code, video_id
+        )
+        return None
+
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        logger.debug("oembed probe: malformed JSON: %s", exc)
+        return None
+
+    raw_title = payload.get("title") if isinstance(payload, dict) else None
+    if not isinstance(raw_title, str) or not raw_title:
+        return None
+
+    # Creator-controlled metadata can carry path-traversal characters or
+    # YAML-corrupting control characters; same defence as Drive's filename
+    # probe (validation case 46).
+    try:
+        return validate_title(raw_title)
+    except ValueError:
+        logger.debug(
+            "oembed probe: rejected hostile title %r for video=%s",
+            raw_title,
+            video_id,
+        )
+        return None
+
+
+def _pick_transcript(transcript_list: Any, video_id: str) -> Any:
+    """Iterate ``transcript_list``, prefer manually-created over
+    auto-generated. Auto-translated tracks are excluded by construction —
+    they only appear when we call ``.translate()`` ourselves, which we
+    don't.
+
+    Iteration order in the library is "manual first, then auto" by the
+    natural order of the underlying caption tracks; the resolver doesn't
+    rely on that ordering, it filters by ``is_generated`` explicitly so
+    a future library change to the iteration order is a no-op.
+    """
+    manual = None
+    auto = None
+    for transcript in transcript_list:
+        if not transcript.is_generated and manual is None:
+            manual = transcript
+        elif transcript.is_generated and auto is None:
+            auto = transcript
+    chosen = manual if manual is not None else auto
+    if chosen is None:
+        raise NoTranscriptFound(video_id, ["<original language>"], transcript_list)
+    return chosen
+
+
+def _build_transcript_result(fetched: Any) -> TranscriptResult:
+    """Map a library ``FetchedTranscript`` to the codebase's
+    ``TranscriptResult``.
+
+    Snippet ``start`` and ``duration`` are seconds (float); ``Segment``
+    stores integer milliseconds. ``duration_seconds`` is the end of the
+    last segment — the Q4b decision: oembed has no duration field
+    (verified by real curl 2026-05-12), and last-caption-end is the
+    cheapest honest approximation.
+    """
+    snippets = list(fetched)
+    segments = [
+        Segment(
+            start_ms=int(s.start * 1000),
+            end_ms=int((s.start + s.duration) * 1000),
+            text=s.text,
+            speaker=None,
+        )
+        for s in snippets
+    ]
+    duration_seconds = (
+        max(s.start + s.duration for s in snippets) if snippets else 0.0
+    )
+    text = " ".join(s.text for s in snippets)
+    return TranscriptResult(
+        text=text,
+        segments=segments,
+        language=fetched.language_code,
+        duration_seconds=duration_seconds,
+        provider="youtube-captions",
+        model=None,
+        job_id=None,
+    )
+
+
+# Retry policy — mirrors providers/assemblyai.py's _with_retry: 3
+# attempts, exponential backoff (1s/2s/4s), retry ONLY on network-layer
+# exceptions. Library exceptions (TranscriptsDisabled, NoTranscriptFound,
+# VideoUnavailable, IpBlocked, RequestBlocked, AgeRestricted, etc.) are
+# deterministic in a single run and propagate immediately. Plan.md §5.
+_RETRYABLE_EXC = (requests.Timeout, requests.ConnectionError)
+
+
+@retry(
+    retry=retry_if_exception_type(_RETRYABLE_EXC),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    before_sleep=before_sleep_log(logger, logging.INFO),
+    reraise=True,
+)
+def _fetch_captions(video_id: str) -> Any:
+    """Network-touching captions fetch: list tracks, pick one, fetch
+    snippets. Wrapped with tenacity so transient connection errors retry
+    without re-running URL parsing or oembed.
+
+    Both ``list()`` and ``fetch()`` can raise transient network errors;
+    decorating the whole helper retries the entire fetch atomically.
+    """
+    ytt_api = YouTubeTranscriptApi()
+    transcript_list = ytt_api.list(video_id)
+    chosen = _pick_transcript(transcript_list, video_id)
+    fetched = chosen.fetch()
+    return chosen, fetched
+
+
+class YouTubeSource:
+    """Fetch YouTube captions and emit a ``PreparedTranscript``.
+
+    The captions path produces a finished transcript directly — no audio,
+    no provider call, no budget gate. The CLI branches on
+    ``isinstance(prepared, PreparedTranscript)`` before reaching the
+    budget router.
+    """
+
+    @staticmethod
+    def prepare(
+        uri: str,
+        workspace: RunWorkspace,
+        *,
+        title: str | None = None,
+    ) -> PreparedTranscript:
+        video_id = _extract_video_id(uri)
+
+        chosen, fetched = _fetch_captions(video_id)
+
+        caption_type = "auto" if chosen.is_generated else "manual"
+        logger.info(
+            "YouTube captions source: video=%s lang=%s caption_type=%s",
+            video_id,
+            fetched.language_code,
+            caption_type,
+        )
+
+        # Title resolution: explicit ``--title`` wins; otherwise probe
+        # oembed (fail-soft → None falls through to the video ID stem
+        # at the CLI's filename-derivation layer).
+        resolved_title = title if title is not None else _fetch_oembed_title(video_id)
+
+        result = _build_transcript_result(fetched)
+        return PreparedTranscript(
+            kind="youtube_captions",
+            original_uri=f"https://youtu.be/{video_id}",
+            transcript=result,
+            title=resolved_title,
+            workspace=workspace,
+            extra={"video_id": video_id, "caption_type": caption_type},
+        )
