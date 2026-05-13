@@ -14,6 +14,7 @@ import pytest
 from transcriber.sources import resolve_source
 from transcriber.sources.google_drive import DriveSource
 from transcriber.sources.local import LocalSource
+from transcriber.sources.youtube import YouTubeSource
 
 
 def test_resolve_drive_uri() -> None:
@@ -34,10 +35,23 @@ def test_resolve_local_path_absolute() -> None:
     assert resolve_source("/Users/foo/video.mp4") is LocalSource
 
 
-def test_resolve_rejects_unknown_scheme_youtube() -> None:
-    """YouTube lands in Phase 2; until then, reject-not-swallow."""
-    with pytest.raises(ValueError, match="URI scheme not supported"):
-        resolve_source("https://youtube.com/watch?v=abc")
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://youtu.be/dQw4w9WgXcQ",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+        "https://www.youtube.com/embed/dQw4w9WgXcQ",
+    ],
+)
+def test_resolve_youtube_hostnames(uri: str) -> None:
+    """All YouTube hostnames route to YouTubeSource. F2's hostname-match
+    rule. Phase 2 Slice 1 — captions-only path. Slice 2 (yt-dlp audio
+    fallback) reuses the same dispatch arm; the captions-vs-audio
+    routing lives inside the source itself."""
+    assert resolve_source(uri) is YouTubeSource
 
 
 def test_resolve_rejects_unknown_https_host() -> None:
@@ -48,3 +62,10 @@ def test_resolve_rejects_unknown_https_host() -> None:
 def test_resolve_rejects_other_scheme() -> None:
     with pytest.raises(ValueError, match="URI scheme not supported"):
         resolve_source("s3://bucket/key")
+
+
+def test_resolve_rejects_vimeo() -> None:
+    """Vimeo isn't on the roadmap; reject-not-swallow keeps the failure
+    mode loud rather than letting a "file not found" mislead."""
+    with pytest.raises(ValueError, match="URI scheme not supported"):
+        resolve_source("https://vimeo.com/123456")

@@ -203,3 +203,120 @@ Add to the PR's verification evidence:
   (must be **no**).
 
 If anything diverges from "Expected", do **not** mark Slice 2 done.
+
+---
+
+# Manual end-to-end runbook — YouTube Captions Passthrough (Phase 2 Slice 1)
+
+This is the single real-API verification step for Phase 2 Slice 1
+(issue #20). **It costs $0** — the captions path skips AssemblyAI
+entirely and uses `youtube-transcript-api` (free, unofficial scraper)
+plus one fail-soft GET to YouTube's public oembed endpoint for the
+title. The only "real-API" verification is "does this work against a
+real public YouTube video the captions API actually responds to."
+
+## Prerequisites
+
+- A public YouTube video the user knows has captions (manual or
+  auto-generated). Pick a short video to keep the test cheap — `say`
+  + `ffmpeg` can produce a fixture, but for captions verification a
+  real YouTube URL the user has watched works better.
+- A second public YouTube URL the user knows does NOT have captions
+  (creator disabled them, or no auto-generated track). This verifies
+  the no-captions error wording in real CLI output.
+
+## Steps
+
+1. Test URL parsing rejection paths first (no network call):
+
+   ```bash
+   uv run ssm-transcriber transcribe "https://www.youtube.com/playlist?list=PL123"
+   echo "exit: $?"
+   ```
+
+   **Expected**: exit code `2`, message containing "supply a single
+   video URL". No network call fired.
+
+2. Real run against a captioned video:
+
+   ```bash
+   uv run ssm-transcriber transcribe "https://youtu.be/<CAPTIONED_ID>"
+   echo "exit: $?"
+   ```
+
+   **Expected**:
+   - INFO log line: `YouTube captions source: video=<ID>
+     lang=<en|hi|...> caption_type=<manual|auto>`.
+   - `✓ Saved to: ./output/<oembed-title-or-video-id>-YYYY-MM-DD.md`.
+   - Exit code `0`.
+   - **No** budget gate prompt, **no** AssemblyAI job ID line, **no**
+     polling spinner — the captions path skips all three.
+
+3. Open the output file and verify:
+   - YAML frontmatter `source_kind: youtube_captions`.
+   - `source_uri: https://youtu.be/<VIDEO_ID>` (canonical short form,
+     NOT the full watch URL).
+   - `provider: youtube-captions`.
+   - `model: null`.
+   - `caption_type: manual` (or `auto`).
+   - `diarized: false`, `speakers: null`, `assemblyai_job_id: null`.
+   - `duration_seconds` populated (end of last caption segment).
+   - `language: <ISO code>` matching the caption track YouTube
+     returned.
+   - Body summary contains `youtube-captions (manual)` or
+     `youtube-captions (auto)`, **not** `assemblyai/<anything>`.
+   - Transcript lines have `[mm:ss]` timestamps but **no**
+     `**Speaker A:**` prefixes (captions have no speakers).
+
+4. Real run against a captionless video:
+
+   ```bash
+   uv run ssm-transcriber transcribe "https://youtu.be/<NO_CAPTION_ID>"
+   echo "exit: $?"
+   ```
+
+   **Expected**: exit code `2`, error output contains:
+   - "Video has no usable captions" (literal phrase).
+   - `https://github.com/manjunath84/SSM-Transcriber/issues/21` (the
+     Slice 2 pointer).
+   - The copy-paste `uv run yt-dlp -x --audio-format wav ...` +
+     `uv run ssm-transcriber transcribe /tmp/audio.wav` workaround.
+
+5. `--title` override sanity check:
+
+   ```bash
+   uv run ssm-transcriber transcribe \
+     "https://youtu.be/<CAPTIONED_ID>" \
+     --title "My Custom Title"
+   ```
+
+   **Expected**: output filename uses `My-Custom-Title-YYYY-MM-DD.md`
+   (whitespace → dash in filename, preserved in YAML frontmatter
+   `title: "My Custom Title"`).
+
+6. `--budget free` sanity check (validation #50):
+
+   ```bash
+   uv run ssm-transcriber transcribe "https://youtu.be/<CAPTIONED_ID>" --budget free
+   echo "exit: $?"
+   ```
+
+   **Expected**: exit code `0`. Captions path bypasses the budget
+   gate entirely — `--budget free` is allowed because the path is $0
+   by construction. The Drive variant of this command would exit 2;
+   the captions variant should succeed.
+
+## Recording the result
+
+Add to the PR's verification evidence:
+
+- Exit codes observed for steps 1, 2, 4, 5, 6.
+- The output filename produced for step 2.
+- The exact error output for step 4 (verifies the no-captions
+  message wording).
+- Whether oembed returned a title for step 2 (compare the filename
+  against the video ID stem — if they differ, oembed worked; if
+  the filename is the bare video ID, oembed failed soft).
+
+If anything diverges from "Expected", do **not** mark Phase 2
+Slice 1 done.

@@ -201,9 +201,14 @@ Each case uses
     null`; `model: null`. Budget router NOT called (assert via
     mock).
 48. Same command with `--title "Custom Title"` → output filename
-    contains `Custom-Title`; frontmatter `title: "Custom Title"`;
-    oembed result still fetched (for telemetry) but ignored for
-    title.
+    contains `Custom-Title`; frontmatter `title: "Custom Title"`.
+    **oembed is NOT fetched** when `--title` is provided — the
+    user has supplied the canonical title, so the network round
+    trip would be pure waste. The
+    `test_prepare_skips_oembed_when_explicit_title_provided` test
+    locks this; the earlier draft of the spec (asserting "fetched
+    for telemetry") was reconciled to match the implementation
+    during PR #31's test-analyzer review.
 49. Same command, oembed mock returns 404 → output filename uses
     the video ID stem (e.g., `dQw4w9WgXcQ-{date}.md`); frontmatter
     `title` is the video ID.
@@ -307,11 +312,14 @@ once during the manual runbook or by inspection.
    auto-generated original-language track and raises
    `NoTranscriptFound`. The user gets the standard no-captions
    message + Slice 2 pointer.
-3. **Snippet object lacks `.duration` attribute.** Library may
-   expose snippets as objects with only `start` and `text` plus a
-   dict accessor via `to_raw_data()`. Implementation falls back to
-   `to_raw_data()` and reads each dict's `"duration"` key.
-   Verified at impl time.
+3. **Snippet attribute access.** Resolved at impl time 2026-05-13:
+   `FetchedTranscriptSnippet`'s constructor signature is
+   `(text: str, start: float, duration: float)` — all three are
+   real instance attributes. The implementation accesses them
+   directly; no `to_raw_data()` fallback is required. If a future
+   library release changes the snippet class shape, the
+   `test_segment_mapping_uses_milliseconds_and_last_segment_duration`
+   test catches the regression.
 4. **Video has captions but oembed returns 404** (private video
    that YouTube still serves captions for somehow, or a deletion
    race). Captions render with the video ID stem as title;

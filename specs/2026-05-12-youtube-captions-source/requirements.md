@@ -226,9 +226,14 @@ fetched = manual.fetch()
 
 Iteration order of `transcript_list` is the API's natural order (manual
 tracks first; within each category, the original language is typically
-first). Our resolver does NOT rely on this ordering; it iterates the
-full list, filters by `is_generated`, and picks the first matching
-candidate — manual preferred over auto.
+first). Our resolver explicitly filters on `is_generated`, so
+**manual-vs-auto preference is order-independent**. The
+**language-within-category pick is order-dependent**, however — we
+take the first manual track and the first auto track the library
+yields, which relies on the library's documented "original-language
+first" natural order. If a library upgrade ever switches to
+user-locale-first iteration, this resolver must change in lockstep
+(no language-aware filter).
 
 #### Fetching and consuming a transcript
 
@@ -254,11 +259,13 @@ raw_data = transcript.to_raw_data()  # [{"text": ..., "start": ..., "duration": 
 
 **Snippet attributes used by the implementation:**
 - `snippet.start: float` — start time in seconds
-- `snippet.duration: float` — duration in seconds (verified via
-  `to_raw_data()` shape; if the attribute name differs on the Snippet
-  object, the implementation uses `to_raw_data()` to access it as a
-  dict)
+- `snippet.duration: float` — duration in seconds
 - `snippet.text: str` — caption text
+
+Verified against `youtube_transcript_api._transcripts.FetchedTranscriptSnippet`
+on 2026-05-13: the constructor signature is `(text: str, start: float,
+duration: float)`. No `to_raw_data()` fallback is needed; the
+implementation accesses these as instance attributes directly.
 
 **Important:** `ytt_api.fetch(video_id)` with no `languages=[]` arg
 **defaults to English**, not original language. Our resolver MUST

@@ -44,9 +44,48 @@ def test_transcript_result_rejects_negative_duration() -> None:
             segments=[],
             language="auto",
             duration_seconds=-1.0,
+            provider="assemblyai",
             model="universal-3-pro",
             job_id="x",
         )
+
+
+def test_transcript_result_carries_provider_for_youtube_captions() -> None:
+    """Phase 2 Slice 1: TranscriptResult.provider is required; model and
+    job_id are Optional[str] because the YouTube captions path has no
+    ASR model (auto-captions don't expose the underlying engine) and no
+    remote job ID (the transcript is fetched directly, no provider job
+    is created)."""
+    result = TranscriptResult(
+        text="hello world",
+        segments=[],
+        language="en",
+        duration_seconds=1.5,
+        provider="youtube-captions",
+        model=None,
+        job_id=None,
+    )
+    assert result.provider == "youtube-captions"
+    assert result.model is None
+    assert result.job_id is None
+
+
+def test_transcript_result_assemblyai_shape_still_works() -> None:
+    """Regression: AssemblyAI's TranscriptResult (provider+model+job_id
+    all strings) keeps validating identically. This guards against the
+    Optional migration accidentally relaxing the AssemblyAI side too."""
+    result = TranscriptResult(
+        text="x",
+        segments=[],
+        language="en",
+        duration_seconds=1.0,
+        provider="assemblyai",
+        model="universal-3-pro",
+        job_id="abc123",
+    )
+    assert result.provider == "assemblyai"
+    assert result.model == "universal-3-pro"
+    assert result.job_id == "abc123"
 
 
 def test_provider_errors_inherit_from_transcriber_error() -> None:
@@ -122,3 +161,73 @@ def test_source_input_error_is_value_error_subclass() -> None:
     SourceInputError. The CLI uses the subtype to distinguish user
     input from PreparedMedia invariant violations (review I7)."""
     assert issubclass(SourceInputError, ValueError)
+
+
+# ---------------------------------------------------------------------------
+# PreparedTranscript (sources/base.py) — F2 contract Phase 2 Slice 1 extension.
+# Sibling dataclass to PreparedMedia for sources that produce a finished
+# TranscriptResult without going through a provider (YouTube captions).
+# ---------------------------------------------------------------------------
+
+
+def test_prepared_transcript_carries_finished_transcript() -> None:
+    """The captions path emits a PreparedTranscript with a
+    TranscriptResult already in hand; no provider, no audio."""
+    from transcriber.core.workspace import RunWorkspace
+    from transcriber.sources.base import PreparedTranscript
+
+    workspace = RunWorkspace()
+    result = TranscriptResult(
+        text="hi",
+        segments=[],
+        language="en",
+        duration_seconds=1.0,
+        provider="youtube-captions",
+        model=None,
+        job_id=None,
+    )
+    pt = PreparedTranscript(
+        kind="youtube_captions",
+        original_uri="https://youtu.be/abc",
+        transcript=result,
+        title="Test Title",
+        workspace=workspace,
+        extra={"video_id": "abc", "caption_type": "manual"},
+    )
+    assert pt.kind == "youtube_captions"
+    assert pt.original_uri == "https://youtu.be/abc"
+    assert pt.transcript is result
+    assert pt.title == "Test Title"
+    assert pt.extra["caption_type"] == "manual"
+
+
+def test_prepared_source_protocol_structural_conformance() -> None:
+    """Both PreparedMedia and PreparedTranscript expose the five shared
+    attributes the PreparedSource Protocol declares. ``hasattr`` rather
+    than ``isinstance(x, PreparedSource)`` because the Protocol's primary
+    purpose is static mypy typing, not runtime dispatch (we'd need
+    ``@runtime_checkable`` for isinstance, and gain nothing from it)."""
+    from transcriber.core.workspace import RunWorkspace
+    from transcriber.sources.base import PreparedTranscript
+
+    workspace = RunWorkspace()
+    media = PreparedMedia(**_media_kwargs())  # type: ignore[arg-type]
+    transcript_obj = PreparedTranscript(
+        kind="youtube_captions",
+        original_uri="https://youtu.be/abc",
+        transcript=TranscriptResult(
+            text="",
+            segments=[],
+            language="en",
+            duration_seconds=0.0,
+            provider="youtube-captions",
+            model=None,
+            job_id=None,
+        ),
+        title=None,
+        workspace=workspace,
+        extra={},
+    )
+    for obj in (media, transcript_obj):
+        for attr in ("kind", "original_uri", "title", "workspace", "extra"):
+            assert hasattr(obj, attr), f"{type(obj).__name__} missing {attr!r}"

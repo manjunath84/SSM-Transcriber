@@ -30,6 +30,8 @@
 | #17 | Implementation: Drive Source (URL passthrough) | feature (impl) | [`pr-017-drive-source-passthrough-impl.md`](pr-017-drive-source-passthrough-impl.md) |
 | #18 | Fix AssemblyAI rate constant + factor in diarization | fix | [`pr-018-assemblyai-rate-constant-fix.md`](pr-018-assemblyai-rate-constant-fix.md) |
 | #19 | Drive Upload: transcript → Google Drive | feature (impl) | [`pr-019-drive-upload.md`](pr-019-drive-upload.md) |
+| #30 | Feature spec: YouTube Source (Captions Passthrough) | 2 (spec) | [`pr-030-youtube-captions-source-spec.md`](pr-030-youtube-captions-source-spec.md) |
+| #31 | Implementation: YouTube Source (Captions Passthrough) | 2 (impl) | [`pr-031-youtube-captions-source-impl.md`](pr-031-youtube-captions-source-impl.md) |
 
 ## Conventions
 

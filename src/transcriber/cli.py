@@ -15,10 +15,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
+import requests
 import typer
 from rich.console import Console
 from rich.prompt import Confirm
 from rich.table import Table
+from youtube_transcript_api import YouTubeTranscriptApiException
 
 from transcriber.config import settings
 from transcriber.core import atomic
@@ -37,7 +39,7 @@ from transcriber.formatters import markdown as md_formatter
 from transcriber.providers.assemblyai import AssemblyAIProvider
 from transcriber.providers.base import ProviderError
 from transcriber.sources import resolve_source
-from transcriber.sources.base import SourceInputError
+from transcriber.sources.base import PreparedTranscript, SourceInputError
 
 
 class Budget(StrEnum):
@@ -59,6 +61,7 @@ logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="ssm-transcriber",
@@ -76,6 +79,155 @@ def _confirm_or_decline(msg: str) -> bool:
         return Confirm.ask(msg, default=False, console=console)
     except EOFError:
         return False
+
+
+def _no_captions_message(source_uri: str) -> str:
+    """Build the documented no-captions error pointing at issue #21
+    + offering a copy-paste yt-dlp workaround using Phase 1's free
+    local path. Spec validation #53/#54."""
+    return (
+        f"Video has no usable captions:\n"
+        f"  {source_uri}\n\n"
+        f"Either the creator disabled captions or no auto-generated "
+        f"track is available. Audio-download fallback (yt-dlp + local "
+        f"ASR) is planned for Phase 2 Slice 2 — tracked at:\n"
+        f"  https://github.com/manjunath84/SSM-Transcriber/issues/21\n\n"
+        f"Workaround today (uses Phase 1 local ASR, $0):\n\n"
+        f"  uv run yt-dlp -x --audio-format wav -o /tmp/audio.wav '{source_uri}'\n"
+        f"  uv run ssm-transcriber transcribe /tmp/audio.wav"
+    )
+
+
+def _youtube_transcript_api_version() -> str:
+    """Return the installed ``youtube-transcript-api`` version for use
+    in user-facing error messages. Best-effort: returns ``"unknown"`` if
+    metadata isn't available (e.g., editable install without dist info)."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("youtube-transcript-api")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _handle_youtube_exception(exc: Exception, source_uri: str) -> int:
+    """Map a youtube-transcript-api exception to (exit_code) and print
+    the documented user-facing message. Returns the exit code so the
+    caller can ``raise typer.Exit(code=...)`` cleanly.
+
+    Exit-code matrix (spec error matrix §Q5d):
+    - 2: TranscriptsDisabled, NoTranscriptFound, VideoUnavailable,
+         VideoUnplayable, InvalidVideoId, AgeRestricted,
+         PoTokenRequired (user-facing "your URL / your video / your
+         auth" problems that retrying won't help)
+    - 3: IpBlocked, RequestBlocked, YouTubeRequestFailed,
+         YouTubeDataUnparsable, FailedToCreateConsentCookie, cookie
+         errors, generic catch-all (system / network / library
+         conditions that aren't the user's URL)
+    """
+    from youtube_transcript_api import (
+        AgeRestricted,
+        CookieError,
+        FailedToCreateConsentCookie,
+        InvalidVideoId,
+        NoTranscriptFound,
+        PoTokenRequired,
+        RequestBlocked,
+        TranscriptsDisabled,
+        VideoUnavailable,
+        VideoUnplayable,
+        YouTubeRequestFailed,
+    )
+
+    if isinstance(exc, (TranscriptsDisabled, NoTranscriptFound)):
+        console.print(f"[red]error:[/red] {_no_captions_message(source_uri)}")
+        return 2
+    if isinstance(exc, PoTokenRequired):
+        # PR-#31 silent-failure-hunter finding: previously routed to the
+        # generic catch-all and told the user the library may need an
+        # update — wrong diagnosis. The user needs cookies / PO-token,
+        # which Slice 2's yt-dlp fallback can supply once it ships.
+        console.print(
+            f"[red]error:[/red] Video requires a PO-token / cookie-based "
+            f"authentication that youtube-transcript-api can't provide:\n"
+            f"  {source_uri}\n\n"
+            f"Slice 2's yt-dlp fallback (issue #21) is the planned path "
+            f"for videos that need browser-cookie auth."
+        )
+        return 2
+    if isinstance(exc, AgeRestricted):
+        console.print(
+            f"[red]error:[/red] Video is age-restricted and requires "
+            f"authentication that youtube-transcript-api doesn't support:\n"
+            f"  {source_uri}\n\n"
+            f"Slice 2's yt-dlp fallback can be configured with browser "
+            f"cookies for age-restricted videos (--cookies-from-browser) "
+            f"once that ships (issue #21)."
+        )
+        return 2
+    if isinstance(exc, VideoUnavailable):
+        console.print(
+            f"[red]error:[/red] Video unavailable (gone, private, or "
+            f"never existed):\n  {source_uri}"
+        )
+        return 2
+    if isinstance(exc, VideoUnplayable):
+        reason = getattr(exc, "reason", "no further detail")
+        console.print(
+            f"[red]error:[/red] Video unplayable: {reason}\n  {source_uri}"
+        )
+        return 2
+    if isinstance(exc, InvalidVideoId):
+        console.print(
+            f"[red]error:[/red] YouTube rejected the video ID:\n  {source_uri}"
+        )
+        return 2
+    if isinstance(exc, RequestBlocked):
+        # IpBlocked is a subclass of RequestBlocked; this branch catches
+        # both. Library version is named so the user can decide whether
+        # to upgrade vs wait the rate-limit out.
+        console.print(
+            "[red]error:[/red] YouTube blocked the request from this IP. "
+            "Try again later, or run from a different network. "
+            f"(youtube-transcript-api {_youtube_transcript_api_version()})"
+        )
+        return 3
+    if isinstance(exc, CookieError):
+        # CookieError and its subclasses only fire when cookies are
+        # passed to YouTubeTranscriptApi(...) — Slice 1 doesn't, but
+        # this defensive arm future-proofs Slice 2's cookie path.
+        console.print(
+            f"[red]error:[/red] Cookie configuration error: {exc}\n"
+            f"This is only reachable when --cookies-from-browser or an "
+            f"explicit cookie file is provided; Slice 1 doesn't pass "
+            f"either."
+        )
+        return 3
+    # Diagnostic-neutral catch-all for the remaining
+    # CouldNotRetrieveTranscript subclasses (YouTubeRequestFailed,
+    # YouTubeDataUnparsable, FailedToCreateConsentCookie,
+    # NotTranslatable, TranslationLanguageNotAvailable) — these are a
+    # mix of transient network conditions, YouTube-side response shape
+    # changes, and consent-flow issues. We don't try to disambiguate
+    # them user-facing.
+    if isinstance(exc, (YouTubeRequestFailed, FailedToCreateConsentCookie)):
+        kind = "transient YouTube response" if isinstance(
+            exc, YouTubeRequestFailed
+        ) else "consent flow"
+        console.print(
+            f"[red]error:[/red] {kind} error from youtube-transcript-api "
+            f"{_youtube_transcript_api_version()}: {exc}\n"
+            f"Retrying after a few minutes often resolves these. If it "
+            f"persists, check for a library update or open an issue."
+        )
+        return 3
+    console.print(
+        f"[red]error:[/red] Unexpected error from youtube-transcript-api "
+        f"{_youtube_transcript_api_version()}: {type(exc).__name__}: {exc}\n"
+        f"Rerun with TRANSCRIBER_LOG_LEVEL=DEBUG for more detail, or "
+        f"open an issue if this persists."
+    )
+    return 3
 
 
 # ── --title sanitization (Slice 2) ───────────────────────────────────────────
@@ -268,110 +420,143 @@ def transcribe(
             except SourceInputError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
+            except YouTubeTranscriptApiException as exc:
+                # YouTube captions: library exception → spec-mapped exit
+                # code + user-facing message. Catches the broad library
+                # base so any new ``CouldNotRetrieveTranscript`` subclass
+                # AND cookie-related exceptions (Slice 2 cookie-path
+                # future-proofing) route through _handle_youtube_exception.
+                code = _handle_youtube_exception(exc, source)
+                raise typer.Exit(code=code) from exc
+            except requests.RequestException as exc:
+                # Network-layer exhaustion after tenacity retries on the
+                # captions fetch. Catches the broad RequestException so
+                # ChunkedEncodingError, TooManyRedirects, etc. are not
+                # rethrown as raw tracebacks. CLI exit 3.
+                console.print(
+                    f"[red]error:[/red] Network error fetching captions: {exc}"
+                )
+                raise typer.Exit(code=3) from exc
 
-            # Branch: Drive passthrough skips ffmpeg + per-call cost
-            # estimate; local upload runs both.
-            if media.remote_url is not None:
-                # Drive variant: Gate 1 + Gate 2 still fire via the
-                # standard budget_check; the cost-estimate notify is
-                # overridden via cost_summary because we have no local
-                # duration to estimate against. Soft-cap silenced too.
+            # Captions branch: PreparedTranscript carries a finished
+            # TranscriptResult — skip the budget gate and provider
+            # entirely (validation #50; the captions path is $0 by
+            # construction). Falls through to the shared render +
+            # write + optional upload block so --upload-to-drive
+            # honours captions sources the same way it honours Drive
+            # and local; see test_captions_with_upload_to_drive_*.
+            if isinstance(media, PreparedTranscript):
+                if language is not None:
+                    logger.info(
+                        "captions source: --language ignored, returned track is %s",
+                        media.transcript.language,
+                    )
+                result = media.transcript
+            else:
+                # PreparedMedia path — budget gate + provider call.
+                # Drive passthrough skips ffmpeg + per-call cost estimate;
+                # local upload runs both.
+                if media.remote_url is not None:
+                    # Drive variant: Gate 1 + Gate 2 still fire via the
+                    # standard budget_check; the cost-estimate notify is
+                    # overridden via cost_summary because we have no local
+                    # duration to estimate against. Soft-cap silenced too.
+                    try:
+                        proceed = budget_check(
+                            provider_name="AssemblyAI",
+                            budget=budget.value,
+                            key_configured=settings.assemblyai_configured,
+                            cost_usd=0.0,  # unused when cost_summary is set
+                            yes=yes,
+                            prompt=_confirm_or_decline,
+                            notify=lambda msg: console.print(msg),
+                            cost_summary=(
+                                "Provider: AssemblyAI · URL passthrough — "
+                                "AssemblyAI bills per-minute against the public "
+                                "URL; exact cost in the AssemblyAI dashboard "
+                                "after the run."
+                            ),
+                        )
+                    except BudgetError as exc:
+                        console.print(f"[red]error:[/red] {exc}")
+                        raise typer.Exit(code=2) from exc
+                    if not proceed:
+                        console.print(
+                            "[yellow]Cancelled by user; no charge incurred.[/yellow]"
+                        )
+                        raise typer.Exit(code=0)
+                else:
+                    # Local path: existing extract + budget flow.
+                    if media.local_path is None:
+                        # Defence-in-depth: PreparedMedia.__post_init__ guarantees
+                        # exactly-one-of (local_path, remote_url) is set; reaching
+                        # this branch means a Source produced an inconsistent shape.
+                        raise RuntimeError(
+                            "PreparedMedia invariant violated: "
+                            "local source has no local_path."
+                        )
+
+                    try:
+                        wav_path, duration_seconds = extract_audio(
+                            media.local_path, workspace
+                        )
+                    except AudioExtractError as exc:
+                        console.print(f"[red]error:[/red] {exc}")
+                        raise typer.Exit(code=4) from exc
+
+                    # C1 fix: thread the canonical 16 kHz mono WAV back into
+                    # ``media`` so the provider uploads the extracted audio,
+                    # NOT the original .mp4 / .m4a / etc. Without this swap the
+                    # AssemblyAI upload path silently breaks Slice 1's
+                    # "extract → normalised WAV → upload" contract: the provider
+                    # would receive ``media.local_path`` (= original source) and
+                    # upload it. The follow-up advisor pass caught a second
+                    # concrete cost: ``media.local_path.stem`` in the output-
+                    # filename derivation would land on ``audio`` (the workspace
+                    # WAV's stem) instead of the source's stem. AssemblyAI
+                    # accepts most audio containers, so quality differences
+                    # between original and canonical WAV depend on AssemblyAI's
+                    # internal pipeline and aren't directly verifiable from this
+                    # PR — the contract violation and filename regression are.
+                    media = dataclasses.replace(media, local_path=wav_path)
+
+                    cost_usd = estimate_assemblyai_cost(
+                        duration_seconds, diarize=not no_speakers
+                    )
+                    try:
+                        proceed = budget_check(
+                            provider_name="AssemblyAI",
+                            budget=budget.value,
+                            key_configured=settings.assemblyai_configured,
+                            cost_usd=cost_usd,
+                            yes=yes,
+                            prompt=_confirm_or_decline,
+                            notify=lambda msg: console.print(msg),
+                        )
+                    except BudgetError as exc:
+                        console.print(f"[red]error:[/red] {exc}")
+                        raise typer.Exit(code=2) from exc
+                    if not proceed:
+                        console.print(
+                            "[yellow]Cancelled by user; no charge incurred.[/yellow]"
+                        )
+                        raise typer.Exit(code=0)
+
+                # Provider call (PreparedMedia path only — captions skip this).
+                provider = AssemblyAIProvider(max_wait_seconds=max_wait * 60)
                 try:
-                    proceed = budget_check(
-                        provider_name="AssemblyAI",
-                        budget=budget.value,
-                        key_configured=settings.assemblyai_configured,
-                        cost_usd=0.0,  # unused when cost_summary is set
-                        yes=yes,
-                        prompt=_confirm_or_decline,
-                        notify=lambda msg: console.print(msg),
-                        cost_summary=(
-                            "Provider: AssemblyAI · URL passthrough — "
-                            "AssemblyAI bills per-minute against the public "
-                            "URL; exact cost in the AssemblyAI dashboard "
-                            "after the run."
+                    result = provider.transcribe(
+                        media,
+                        language=language,
+                        diarize=not no_speakers,
+                        speech_model=model,
+                        on_job_id=lambda job_id: console.print(
+                            f"[cyan]AssemblyAI job ID:[/cyan] {job_id}"
                         ),
                     )
-                except BudgetError as exc:
+                except ProviderError as exc:
                     console.print(f"[red]error:[/red] {exc}")
-                    raise typer.Exit(code=2) from exc
-                if not proceed:
-                    console.print(
-                        "[yellow]Cancelled by user; no charge incurred.[/yellow]"
-                    )
-                    raise typer.Exit(code=0)
-            else:
-                # Local path: existing extract + budget flow.
-                if media.local_path is None:
-                    # Defence-in-depth: PreparedMedia.__post_init__ guarantees
-                    # exactly-one-of (local_path, remote_url) is set; reaching
-                    # this branch means a Source produced an inconsistent shape.
-                    raise RuntimeError(
-                        "PreparedMedia invariant violated: "
-                        "local source has no local_path."
-                    )
-
-                try:
-                    wav_path, duration_seconds = extract_audio(
-                        media.local_path, workspace
-                    )
-                except AudioExtractError as exc:
-                    console.print(f"[red]error:[/red] {exc}")
-                    raise typer.Exit(code=4) from exc
-
-                # C1 fix: thread the canonical 16 kHz mono WAV back into
-                # ``media`` so the provider uploads the extracted audio,
-                # NOT the original .mp4 / .m4a / etc. Without this swap the
-                # AssemblyAI upload path silently breaks Slice 1's
-                # "extract → normalised WAV → upload" contract: the provider
-                # would receive ``media.local_path`` (= original source) and
-                # upload it. The follow-up advisor pass caught a second
-                # concrete cost: ``media.local_path.stem`` in the output-
-                # filename derivation would land on ``audio`` (the workspace
-                # WAV's stem) instead of the source's stem. AssemblyAI
-                # accepts most audio containers, so quality differences
-                # between original and canonical WAV depend on AssemblyAI's
-                # internal pipeline and aren't directly verifiable from this
-                # PR — the contract violation and filename regression are.
-                media = dataclasses.replace(media, local_path=wav_path)
-
-                cost_usd = estimate_assemblyai_cost(
-                    duration_seconds, diarize=not no_speakers
-                )
-                try:
-                    proceed = budget_check(
-                        provider_name="AssemblyAI",
-                        budget=budget.value,
-                        key_configured=settings.assemblyai_configured,
-                        cost_usd=cost_usd,
-                        yes=yes,
-                        prompt=_confirm_or_decline,
-                        notify=lambda msg: console.print(msg),
-                    )
-                except BudgetError as exc:
-                    console.print(f"[red]error:[/red] {exc}")
-                    raise typer.Exit(code=2) from exc
-                if not proceed:
-                    console.print(
-                        "[yellow]Cancelled by user; no charge incurred.[/yellow]"
-                    )
-                    raise typer.Exit(code=0)
-
-            # Provider call.
-            provider = AssemblyAIProvider(max_wait_seconds=max_wait * 60)
-            try:
-                result = provider.transcribe(
-                    media,
-                    language=language,
-                    diarize=not no_speakers,
-                    speech_model=model,
-                    on_job_id=lambda job_id: console.print(
-                        f"[cyan]AssemblyAI job ID:[/cyan] {job_id}"
-                    ),
-                )
-            except ProviderError as exc:
-                console.print(f"[red]error:[/red] {exc}")
-                raise typer.Exit(code=3) from exc
+                    raise typer.Exit(code=3) from exc
 
             # Render markdown.
             content = md_formatter.render(
@@ -391,11 +576,12 @@ def transcribe(
                     # Source-resolved title (LocalSource: file stem;
                     # DriveSource: auto-resolved from Content-Disposition,
                     # already validated in the source layer). Route
-                    # through title_to_stem so both the --title path and
-                    # the source-resolved path produce the same on-disk
-                    # filename shape ("Session 17" → Session-17), closing
-                    # the convergence gap flagged by the ultrareview of
-                    # PR #19's Drive-auto title resolution.
+                    # through title_to_stem so both the --title path
+                    # and the source-resolved path produce the same
+                    # on-disk filename shape ("Session 17" →
+                    # Session-17) — the test
+                    # test_drive_auto_resolved_title_produces_dash_stem
+                    # locks this convergence.
                     #
                     # NOTE: cannot use ``media.local_path.stem`` here:
                     # after the C1 dataclasses.replace swap, local_path
@@ -403,6 +589,15 @@ def transcribe(
                     # the source. media.title is the source-stem fallback
                     # LocalSource.prepare populated.
                     stem = title_to_stem(media.title)
+                elif isinstance(media, PreparedTranscript):
+                    # Captions source with no --title and oembed title
+                    # probe returned None (404 / 401 / hostile title /
+                    # network failure). Fall back to the video ID stem.
+                    # extra['video_id'] is set by YouTubeSource.prepare;
+                    # missing key is a producer-side bug (review I5
+                    # invariant — let KeyError bubble with traceback
+                    # rather than silently writing 'untitled-DATE.md').
+                    stem = media.extra["video_id"]
                 else:
                     # Drive source with no --title and the CDN title
                     # probe returned None (file no longer publicly
