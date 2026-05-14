@@ -127,8 +127,24 @@ def _probe_metadata(url: str) -> AudioProbe:
     duration = info.get("duration")
     if duration is None or duration <= 0:
         raise ProbeDurationUnknown(url)
-    title = info.get("title") or ""
-    return AudioProbe(duration=int(duration), title=str(title))
+    # probe.title is creator-controlled metadata that downstream CLI
+    # uses as the default filename stem after only whitespace
+    # collapsing. Run it through validate_title (mirrors the oembed
+    # fail-soft pattern: validation failure → empty string → CLI/
+    # formatter fall back to extra["video_id"]) so a hostile title
+    # like ``../outside`` or ``subdir/name`` can't redirect the write
+    # outside settings.output_dir. Codex P1.
+    raw_title = info.get("title") or ""
+    try:
+        title = validate_title(str(raw_title)) if raw_title else ""
+    except ValueError:
+        logger.debug(
+            "yt-dlp probe: rejected hostile title %r for url=%s",
+            raw_title,
+            url,
+        )
+        title = ""
+    return AudioProbe(duration=int(duration), title=title)
 
 
 def _download_audio(url: str, workspace: RunWorkspace) -> Path:
@@ -457,20 +473,31 @@ class YouTubeSource:
 
     @staticmethod
     def download_audio(
-        uri: str, workspace: RunWorkspace, probe: AudioProbe
+        uri: str,
+        workspace: RunWorkspace,
+        probe: AudioProbe,
+        *,
+        title: str | None = None,
     ) -> PreparedMedia:
         """yt-dlp audio download — runs only after the CLI confirmed the
         cost-prompt. Threads the probe-derived title and duration
         forward so downstream stages don't re-probe.
+
+        ``title`` (Codex P2): when the user supplied ``--title``, the CLI
+        passes that validated string here so PreparedMedia.title (used
+        by the formatter for the frontmatter + H1) honours it. Without
+        the override, the probe title is used — same as the captions
+        arm's behaviour with oembed.
         """
         video_id = _extract_video_id(uri)
         canonical_url = f"https://youtu.be/{video_id}"
         audio_path = _download_audio(canonical_url, workspace)
+        resolved_title = title if title is not None else probe.title
         return PreparedMedia(
             kind="youtube_audio",
             original_uri=canonical_url,
             local_path=audio_path,
-            title=probe.title,
+            title=resolved_title,
             duration_seconds=float(probe.duration),
             workspace=workspace,
             extra={

@@ -137,6 +137,13 @@ def _handle_yt_dlp_exception(
     inspected for an "age-restricted" / "members" substring to route the
     auth-required variant separately from the generic extractor failure.
 
+    Codex P2: ``YoutubeDL.extract_info`` often routes extractor failures
+    through ``report_error()``, which raises ``DownloadError`` with the
+    original ``ExtractorError``-family exception preserved in
+    ``__cause__``. Without unwrapping, those user-actionable failures
+    (private video, age-restricted, geo-restricted) would be misclassified
+    as exit-3 network failures. Recurse on ``__cause__`` first.
+
     Exit code matrix (mirrors Slice 1's captions exception matrix):
     - 2: user-actionable video-level / auth issues yt-dlp can't bypass
     - 3: network exhaustion after yt-dlp's internal retries
@@ -150,6 +157,16 @@ def _handle_yt_dlp_exception(
         UnavailableVideoError,
         UnsupportedError,
     )
+
+    # If the outer exception is a DownloadError wrapping an extractor-
+    # family error, classify by the cause. Bounded recursion: a wrapped
+    # DownloadError-in-DownloadError would re-enter this branch and the
+    # innermost ExtractorError eventually decides the exit code.
+    if isinstance(exc, DownloadError) and isinstance(
+        exc.__cause__,
+        (ExtractorError, UnavailableVideoError, UnsupportedError),
+    ):
+        return _handle_yt_dlp_exception(exc.__cause__, source_uri)
 
     if isinstance(exc, ProbeDurationUnknown):
         return 2, (
@@ -545,6 +562,20 @@ def transcribe(
                 cost_usd = estimate_assemblyai_cost(
                     probe.duration, diarize=not no_speakers
                 )
+                # Codex P2: previously this passed cost_summary to
+                # budget_check, which suppresses BOTH the real $X.XX
+                # estimate line AND the soft-cap warning. Now we
+                # surface the audio-fallback context up-front via
+                # notify(), then let budget_check render the
+                # dollar-amount + soft-cap lines on its own. User
+                # gets context AND the real number.
+                console.print(
+                    "[dim]No captions available for this video; "
+                    "the audio fallback will download the audio and "
+                    "transcribe it via AssemblyAI. Cost estimated from "
+                    "yt-dlp probe duration; AssemblyAI's per-minute "
+                    "bill is final.[/dim]"
+                )
                 try:
                     proceed = budget_check(
                         provider_name="AssemblyAI",
@@ -554,13 +585,6 @@ def transcribe(
                         yes=yes,
                         prompt=_confirm_or_decline,
                         notify=lambda msg: console.print(msg),
-                        cost_summary=(
-                            "Provider: AssemblyAI · YouTube audio "
-                            "fallback — captions unavailable for this "
-                            "video; transcribing the downloaded audio. "
-                            "Estimated cost based on probe duration; "
-                            "AssemblyAI's per-minute bill is final."
-                        ),
                     )
                 except BudgetError as budget_exc:
                     console.print(f"[red]error:[/red] {budget_exc}")
@@ -573,7 +597,7 @@ def transcribe(
 
                 try:
                     media = YouTubeSource.download_audio(
-                        source, workspace, probe
+                        source, workspace, probe, title=display_title
                     )
                 except (YoutubeDLError, OSError) as dl_exc:
                     code, message = _handle_yt_dlp_exception(dl_exc, source)

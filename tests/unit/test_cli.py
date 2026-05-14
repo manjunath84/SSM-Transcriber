@@ -1705,6 +1705,160 @@ def test_yt_dlp_exception_matrix(
     )
 
 
+def test_captionless_low_budget_shows_dollar_estimate_and_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex P2: the original implementation passed ``cost_summary`` to
+    budget_check, which suppresses the duration-derived ``$X.XX``
+    estimate AND the soft-cap warning. The user was being asked to
+    authorise a paid call without seeing the actual cost. Verify the
+    new flow: emit the audio-fallback context via notify(); let
+    budget_check render the real estimate + soft-cap warning.
+
+    The audio-fallback decline path is the cheapest place to assert
+    the output: probe runs, prompt would fire, decline cancels — all
+    the budget_check output is captured."""
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+
+    from transcriber.sources.youtube import (
+        AudioProbe,
+        NoCaptionsAvailable,
+        YouTubeSource,
+    )
+
+    def captions_boom(*_a: object, **_k: object) -> None:
+        raise NoCaptionsAvailable("no captions")
+
+    # 600 seconds = 10 min → ~$0.10 at AssemblyAI's universal-3 rate
+    # (~$0.65/hr after the PR #18 rate-correction). Doesn't matter for
+    # the substring check; we only care that *some* dollar amount and
+    # the context line appear.
+    def fake_probe(_uri: str) -> AudioProbe:
+        return AudioProbe(duration=600, title="t")
+
+    monkeypatch.setattr(YouTubeSource, "prepare", staticmethod(captions_boom))
+    monkeypatch.setattr(YouTubeSource, "probe_audio", staticmethod(fake_probe))
+    monkeypatch.setattr(
+        "transcriber.cli._confirm_or_decline", lambda _msg: False
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["transcribe", "https://youtu.be/dQw4w9WgXcQ", "--budget", "low"],
+    )
+
+    assert result.exit_code == 0, result.output
+    # The audio-fallback context line is now emitted via notify() so
+    # the user knows WHY the prompt is firing.
+    collapsed = " ".join(result.output.split())
+    assert "audio fallback" in collapsed.lower()
+    # And budget_check's own estimate line fires too, showing the
+    # actual dollar amount.
+    assert "Estimated cost" in result.output
+    assert "$" in result.output
+
+
+def test_captionless_video_explicit_title_overrides_probe_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex P2: --title is documented as 'Frontmatter + filename
+    stem' (per the CLI help). The audio-fallback path was passing the
+    probe title into PreparedMedia.title unconditionally, so the
+    frontmatter + H1 always showed the probe title even when the user
+    supplied --title. Filename used --title (correct) but the rendered
+    content used probe title (wrong). Verify both surfaces honour
+    --title."""
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+
+    from transcriber.core.workspace import RunWorkspace
+    from transcriber.providers.base import Segment, TranscriptResult
+    from transcriber.sources.base import PreparedMedia
+    from transcriber.sources.youtube import (
+        AudioProbe,
+        NoCaptionsAvailable,
+        YouTubeSource,
+    )
+
+    workspace = RunWorkspace()
+    audio = workspace.path("audio.m4a")
+    audio.write_bytes(b"")
+
+    def captions_boom(*_a: object, **_k: object) -> None:
+        raise NoCaptionsAvailable("no captions")
+
+    def fake_probe(_uri: str) -> AudioProbe:
+        return AudioProbe(duration=300, title="Probe Title")
+
+    captured: dict[str, str | None] = {"download_title_kwarg": None}
+
+    def fake_download(
+        _u: str,
+        ws: RunWorkspace,
+        p: AudioProbe,
+        *,
+        title: str | None = None,
+    ) -> PreparedMedia:
+        captured["download_title_kwarg"] = title
+        return PreparedMedia(
+            kind="youtube_audio",
+            original_uri="https://youtu.be/dQw4w9WgXcQ",
+            local_path=audio,
+            title=title if title is not None else p.title,
+            duration_seconds=float(p.duration),
+            workspace=ws,
+            extra={"video_id": "dQw4w9WgXcQ", "probe_duration": str(p.duration)},
+            remote_url=None,
+        )
+
+    monkeypatch.setattr(YouTubeSource, "prepare", staticmethod(captions_boom))
+    monkeypatch.setattr(YouTubeSource, "probe_audio", staticmethod(fake_probe))
+    monkeypatch.setattr(YouTubeSource, "download_audio", staticmethod(fake_download))
+    monkeypatch.setattr("transcriber.cli.extract_audio", lambda p, _w: (p, 300.0))
+
+    class _OkProvider:
+        def __init__(self, *_a: object, **_k: object) -> None: ...
+
+        def transcribe(self, *_a: object, **_k: object) -> TranscriptResult:
+            return TranscriptResult(
+                text="hi",
+                segments=[Segment(start_ms=0, end_ms=1000, text="hi", speaker=None)],
+                language="en",
+                duration_seconds=300.0,
+                provider="assemblyai",
+                model="universal-3-pro",
+                job_id="j",
+            )
+
+    monkeypatch.setattr("transcriber.cli.AssemblyAIProvider", _OkProvider)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "transcribe",
+            "https://youtu.be/dQw4w9WgXcQ",
+            "--budget", "low", "-y",
+            "--title", "Custom Title",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    # --title flows into download_audio as a keyword arg so the
+    # source assigns it to PreparedMedia.title.
+    assert captured["download_title_kwarg"] == "Custom Title", (
+        f"download_audio received title={captured['download_title_kwarg']!r}; "
+        f"expected 'Custom Title'"
+    )
+    # Frontmatter + H1 use the --title value, NOT the probe title.
+    output_files = list(tmp_path.glob("*.md"))
+    assert len(output_files) == 1
+    content = output_files[0].read_text()
+    assert "title: Custom Title" in content
+    assert "# Custom Title" in content
+    assert "Probe Title" not in content
+
+
 def test_captionless_low_budget_fires_exactly_one_budget_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1735,7 +1889,13 @@ def test_captionless_low_budget_fires_exactly_one_budget_prompt(
     def fake_probe(_uri: str) -> AudioProbe:
         return AudioProbe(duration=300, title="Test Video")
 
-    def fake_download(_u: str, ws: RunWorkspace, p: AudioProbe) -> PreparedMedia:
+    def fake_download(
+        _u: str,
+        ws: RunWorkspace,
+        p: AudioProbe,
+        *,
+        title: str | None = None,
+    ) -> PreparedMedia:
         return PreparedMedia(
             kind="youtube_audio",
             original_uri="https://youtu.be/dQw4w9WgXcQ",
@@ -1867,7 +2027,13 @@ def test_captionless_empty_probe_title_falls_back_to_video_id_filename(
     def fake_probe(_uri: str) -> AudioProbe:
         return AudioProbe(duration=300, title="")  # empty title!
 
-    def fake_download(_u: str, ws: RunWorkspace, p: AudioProbe) -> PreparedMedia:
+    def fake_download(
+        _u: str,
+        ws: RunWorkspace,
+        p: AudioProbe,
+        *,
+        title: str | None = None,
+    ) -> PreparedMedia:
         return PreparedMedia(
             kind="youtube_audio",
             original_uri="https://youtu.be/dQw4w9WgXcQ",
@@ -1910,6 +2076,72 @@ def test_captionless_empty_probe_title_falls_back_to_video_id_filename(
     assert len(output_files) == 1
     # Falls back to video_id stem, NOT a leading-dash filename.
     assert output_files[0].name.startswith("dQw4w9WgXcQ-"), output_files[0].name
+
+
+@pytest.mark.parametrize(
+    "inner_name, inner_message, expected_exit, expected_substring",
+    [
+        ("GeoRestrictedError", "blocked in your region", 2, "geo-restricted"),
+        ("UnavailableVideoError", "Private video", 2, "unavailable for download"),
+        ("UnsupportedError", "no extractor", 2, "not supported by yt-dlp"),
+        ("ExtractorError", "Sign in to confirm your age", 2, "requires authentication"),
+        ("ExtractorError", "something else", 2, "audio extraction failed"),
+    ],
+)
+def test_yt_dlp_exception_matrix_unwraps_download_error_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inner_name: str,
+    inner_message: str,
+    expected_exit: int,
+    expected_substring: str,
+) -> None:
+    """Codex P2: yt-dlp's ``YoutubeDL.extract_info`` routes many
+    extractor failures through ``report_error()``, which raises
+    ``DownloadError`` with the original ``ExtractorError``-family
+    exception in ``__cause__``. Without unwrapping, our matrix would
+    classify those as exit 3 network failures instead of the
+    user-actionable exit 2 cases.
+
+    Verify that wrapped causes get the right exit code based on the
+    inner exception, not the outer DownloadError class."""
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+
+    from yt_dlp.utils import DownloadError
+
+    from transcriber.sources.youtube import (
+        AudioProbe,
+        NoCaptionsAvailable,
+        YouTubeSource,
+    )
+
+    def captions_boom(*_a: object, **_k: object) -> None:
+        raise NoCaptionsAvailable("no captions")
+
+    inner_exc = _make_yt_dlp_exception(inner_name, inner_message)
+    outer_exc = DownloadError("yt-dlp report_error wrapped this")
+    outer_exc.__cause__ = inner_exc
+
+    def probe_boom(_uri: str) -> AudioProbe:
+        raise outer_exc
+
+    monkeypatch.setattr(YouTubeSource, "prepare", staticmethod(captions_boom))
+    monkeypatch.setattr(YouTubeSource, "probe_audio", staticmethod(probe_boom))
+
+    result = CliRunner().invoke(
+        app,
+        ["transcribe", "https://youtu.be/dQw4w9WgXcQ", "--budget", "low", "-y"],
+    )
+
+    assert result.exit_code == expected_exit, (
+        f"DownloadError(__cause__={inner_name}): "
+        f"expected exit {expected_exit}, got {result.exit_code}: {result.output}"
+    )
+    assert expected_substring.lower() in result.output.lower(), (
+        f"DownloadError(__cause__={inner_name}({inner_message!r})): "
+        f"expected {expected_substring!r}; got: {result.output}"
+    )
 
 
 def test_yt_dlp_download_failure_calls_out_no_charge(
@@ -1990,7 +2222,11 @@ def test_captionless_video_low_budget_yes_flag_runs_full_flow(
         return AudioProbe(duration=300, title="Test Video")
 
     def fake_download(
-        _uri: str, ws: RunWorkspace, probe: AudioProbe
+        _uri: str,
+        ws: RunWorkspace,
+        probe: AudioProbe,
+        *,
+        title: str | None = None,
     ) -> PreparedMedia:
         return PreparedMedia(
             kind="youtube_audio",

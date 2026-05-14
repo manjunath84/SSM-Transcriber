@@ -1096,6 +1096,53 @@ def test_probe_metadata_handles_missing_title(
     assert probe.title == ""
 
 
+@pytest.mark.parametrize(
+    "hostile_title",
+    [
+        "../outside",
+        "subdir/name",
+        "C:\\windows\\system32",
+        ".",
+        "..",
+        "..\\evilevil",
+    ],
+)
+def test_probe_metadata_validates_title_against_path_traversal(
+    hostile_title: str, _yt_dlp_mock: type[_FakeYoutubeDL]
+) -> None:
+    """Codex P1: ``probe.title`` is creator-controlled YouTube metadata.
+    The CLI later uses any truthy ``media.title`` as the filename stem,
+    so an unvalidated probe title like ``../outside`` could write the
+    transcript outside ``settings.output_dir``. Mirror the oembed
+    fail-soft pattern: run probe title through ``validate_title`` and
+    fall back to empty string on rejection so ``extra['video_id']``
+    becomes the stem instead."""
+    from transcriber.sources.youtube import _probe_metadata
+
+    _yt_dlp_mock.probe_info = {"title": hostile_title, "duration": 100}
+    probe = _probe_metadata("https://youtu.be/abc12345678")
+    assert probe.title == "", (
+        f"hostile title {hostile_title!r} must be rejected, "
+        f"got {probe.title!r}"
+    )
+
+
+def test_probe_metadata_keeps_safe_titles_with_whitespace_and_unicode(
+    _yt_dlp_mock: type[_FakeYoutubeDL],
+) -> None:
+    """Validation must not over-reject legitimate titles. A title with
+    spaces, punctuation, or unicode passes through unchanged (or
+    slightly normalised by validate_title's canonical-NFC pass)."""
+    from transcriber.sources.youtube import _probe_metadata
+
+    _yt_dlp_mock.probe_info = {
+        "title": "RAG Explained in 12 Minutes — Part 1",
+        "duration": 727,
+    }
+    probe = _probe_metadata("https://youtu.be/abc12345678")
+    assert "RAG Explained in 12 Minutes" in probe.title
+
+
 def test_probe_metadata_passes_base_opts(
     _yt_dlp_mock: type[_FakeYoutubeDL],
 ) -> None:
