@@ -32,7 +32,7 @@
 
 ## [Phase 2 — Add YouTube Support](../docs/PLAN.md#phase-2--add-youtube-support)
 
-**Status:** partial — captions passthrough only (Slice 1: PR #30 spec + this PR's implementation, fetches existing YouTube captions via `youtube-transcript-api`, $0). yt-dlp audio fallback for captionless videos deferred to Slice 2 (issue #21).
+**Status:** complete (paid path) — Slice 1 (captions passthrough; PR #30 spec + PR #31 impl, $0 via `youtube-transcript-api`) + Slice 2 (yt-dlp audio fallback; PR #34 spec + this PR's impl, captionless videos route through AssemblyAI on `--budget low+`). Slice 2b (faster-whisper provider, the local $0 path for captionless videos) is deferred to its own slice — see PLAN.md.
 
 ## [Phase 3 — Output Formats + Polish](../docs/PLAN.md#phase-3--output-formats--polish)
 

@@ -320,3 +320,109 @@ Add to the PR's verification evidence:
 
 If anything diverges from "Expected", do **not** mark Phase 2
 Slice 1 done.
+
+---
+
+## Phase 2 Slice 2 — yt-dlp audio fallback (captionless videos)
+
+These tests exercise the audio-fallback path Slice 2 adds. They
+require a captionless YouTube URL — YouTube Shorts are the most
+common captionless content type, but verify before running by
+opening the URL in a browser and confirming the captions button
+shows "No captions available" (or equivalent). Save the chosen URL
+as `<NO_CAPTION_ID>` for the steps below.
+
+Set `ASSEMBLYAI_API_KEY` for steps that use `--budget low`. The
+captioned-video regression check at the top of this doc must still
+produce byte-identical output to PR #31's run.
+
+1. Captionless video on `--budget free` — short-circuit, no
+   download attempted:
+
+   ```bash
+   uv run ssm-transcriber transcribe "https://youtu.be/<NO_CAPTION_ID>"
+   echo "exit: $?"
+   ```
+
+   **Expected**: exit `2` with a message that names the video,
+   says captions are unavailable, and points the user at
+   `--budget low`. No yt-dlp probe or download should occur. Total
+   wall time should be a few seconds (just the captions library
+   round-trip).
+
+2. Captionless video on `--budget low` + decline — probe runs,
+   prompt fires, user types `n`, no download:
+
+   ```bash
+   uv run ssm-transcriber transcribe "https://youtu.be/<NO_CAPTION_ID>" --budget low
+   # When prompted "Estimated cost ~$X.XX — proceed?", type "n".
+   echo "exit: $?"
+   ```
+
+   **Expected**: exit `0`. The cost prompt shows a real dollar
+   estimate based on the probed duration (NOT `$0.00`). The output
+   includes `Cancelled by user; no charge incurred.` No `output/*.md`
+   is produced.
+
+3. Captionless video on `--budget low -y` — full audio-fallback
+   happy path:
+
+   ```bash
+   uv run ssm-transcriber transcribe "https://youtu.be/<NO_CAPTION_ID>" --budget low -y
+   echo "exit: $?"
+   ```
+
+   **Expected**: exit `0`, with an `output/<title>-YYYY-MM-DD.md`
+   file. Frontmatter must show:
+
+   ```yaml
+   source_kind: youtube_audio
+   source_uri: https://youtu.be/<NO_CAPTION_ID>   # canonical short form
+   provider: assemblyai
+   model: universal-3-pro                           # or whatever AAI default
+   assemblyai_job_id: <real job id>                 # NOT null
+   # NO caption_type field for this kind
+   ```
+
+   No `file://` URI should appear in the frontmatter. Body summary
+   reads `assemblyai/universal-3-pro` (NOT `youtube-captions
+   (...)`). The workspace audio file should be cleaned up after
+   the run (no leftover `audio.*` files outside the workspace).
+
+4. Captioned video regression — Slice 1 path still wins:
+
+   Re-run step 2 from the Phase 2 Slice 1 section above with the
+   captioned URL you used for PR #31's verification. Expected
+   output must be byte-identical to that earlier run except for
+   the date in the filename and frontmatter. The audio-fallback
+   path must NOT fire when captions exist.
+
+5. (Optional) Invalid / private video on `--budget low` —
+   exit-code matrix sanity:
+
+   ```bash
+   uv run ssm-transcriber transcribe "https://youtu.be/00000000000" --budget low
+   echo "exit: $?"
+   ```
+
+   **Expected**: exit `2`. The `00000000000` video doesn't exist
+   so the captions library raises `VideoUnavailable` *before*
+   `NoCaptionsAvailable` is ever produced. This validates that
+   "video doesn't exist" is NOT silently routed into the audio
+   fallback (which couldn't help either).
+
+### Recording Slice 2 results
+
+Add to the PR's verification evidence:
+
+- The captionless `<NO_CAPTION_ID>` you chose and a one-line
+  confirmation that it actually had no captions.
+- Exit codes observed for each of steps 1–5.
+- The output filename produced for step 3.
+- A 5–10-line excerpt of the step 3 frontmatter showing
+  `source_kind: youtube_audio` and a populated `assemblyai_job_id`.
+- The cost-estimate dollar amount shown in step 2 (and 3 if the
+  prompt is rendered above the `-y` skip — depends on terminal
+  width). Verifies the probe-derived duration was used.
+
+If anything diverges, do **not** mark Phase 2 Slice 2 done.
