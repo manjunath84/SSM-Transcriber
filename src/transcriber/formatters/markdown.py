@@ -162,18 +162,28 @@ def _resolve_title(media: PreparedSource) -> str:
 
     Explicit ``media.title`` wins (LocalSource's filename stem,
     user's ``--title``, oembed result, Drive's Content-Disposition
-    result). Each source-kind has its own fallback when title is
-    None or empty:
+    result, yt-dlp probe title). Each source-kind has its own
+    fallback when title is None or empty:
 
     - ``local``: file stem from ``local_path``
     - ``google_drive``: ``extra['drive_file_id']``
     - ``youtube_captions``: ``extra['video_id']``
+    - ``youtube_audio``: ``extra['video_id']``
+
+    ``youtube_audio`` is checked before the generic PreparedMedia
+    ``local_path.stem`` branch: yt-dlp downloads land at a workspace
+    path with stem ``audio``, which would otherwise become the
+    transcript's title — a misleading value for a real YouTube video.
+    Falling back to the video ID is the same fallback Slice 1's
+    captions arm uses.
 
     Missing extra-keys raise ``KeyError`` (producer-side bug; review
     finding I4 mandates loud failure over silent ``untitled-DATE.md``).
     """
     if media.title:
         return media.title
+    if media.kind == "youtube_audio":
+        return media.extra["video_id"]
     if isinstance(media, PreparedMedia) and media.local_path is not None:
         return media.local_path.stem
     if media.kind == "google_drive":

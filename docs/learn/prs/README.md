@@ -32,6 +32,8 @@
 | #19 | Drive Upload: transcript → Google Drive | feature (impl) | [`pr-019-drive-upload.md`](pr-019-drive-upload.md) |
 | #30 | Feature spec: YouTube Source (Captions Passthrough) | 2 (spec) | [`pr-030-youtube-captions-source-spec.md`](pr-030-youtube-captions-source-spec.md) |
 | #31 | Implementation: YouTube Source (Captions Passthrough) | 2 (impl) | [`pr-031-youtube-captions-source-impl.md`](pr-031-youtube-captions-source-impl.md) |
+| #34 | Feature spec: YouTube Source (yt-dlp Audio Fallback) | 2 (spec) | [`pr-034-youtube-audio-fallback-spec.md`](pr-034-youtube-audio-fallback-spec.md) |
+| #35 | Implementation: YouTube Source (yt-dlp Audio Fallback) | 2 (impl) | [`pr-035-youtube-audio-fallback-impl.md`](pr-035-youtube-audio-fallback-impl.md) |
 
 ## Conventions
 

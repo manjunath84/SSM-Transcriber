@@ -11,6 +11,99 @@
 
 ---
 
+## PR #35 — Implementation: YouTube Source (yt-dlp Audio Fallback)
+
+**Merged:** TBD  |  **Branch:** `feat/youtube-audio-fallback-impl`
+**Explainer:** [`prs/pr-035-youtube-audio-fallback-impl.md`](prs/pr-035-youtube-audio-fallback-impl.md)
+
+PR #35 closes the YouTube coverage gap Slice 1 left open: when
+captions are missing or disabled, `yt-dlp` downloads audio and the
+existing local-file pipeline transcribes it via AssemblyAI. After
+this lands, every viewable YouTube URL produces a usable transcript.
+Captioned videos remain `$0` (the captions-first ordering is the
+source's identity); captionless videos cost real money but only
+after explicit consent at the budget gate.
+
+The interesting bit isn't the yt-dlp wrapper — it's the orchestration.
+`YouTubeSource` exposes three discrete methods (`prepare`,
+`probe_audio`, `download_audio`) that the CLI sequences with the
+budget gate inserted between probe and download. That structural
+choice keeps the source class money-agnostic (matches `LocalSource` /
+`DriveSource`) while putting the real cost estimate in front of the
+user before any bandwidth is committed. On `--budget free`, the
+captionless path short-circuits before the probe even runs — no
+network beyond the captions library call, exit 2 with a budget-aware
+message.
+
+Two bugs caught mid-impl that the test surface paid for:
+`UnavailableVideoError` and `PostProcessingError` are siblings of
+`ExtractorError` / `DownloadError` (all inherit `YoutubeDLError`
+directly), not subclasses — a narrow `(ExtractorError, DownloadError)`
+except tuple would have silently let them through to exit 1. The
+parametrized 10-row exit-code matrix surfaced this as an exit-1-
+instead-of-2 failure; the fix was switching to the common base
+`YoutubeDLError + OSError`. Plus `workspace.path` is a method, not
+an attribute — caught by a TypeError on a download-audio test, fixed
+in both spec and code before merge.
+
+Followed Phase A → B → C → D order from the spec, one TDD cycle per
+sub-group. 39 new tests across `test_youtube_source.py`,
+`test_cli.py`, `test_markdown_formatter.py`. The Codex review on the
+spec PR caught four real contract-level bugs (wrong `PreparedMedia`
+constructor shape, double-budget-prompt regression, missing
+`noplaylist` in the probe reference, stale architecture description)
+*before* any code was written — exactly the scenario the SDD
+two-PR split is designed for.
+
+---
+
+## PR #34 — Spec: YouTube Source (yt-dlp Audio Fallback)
+
+**Merged:** 2026-05-13  |  **Branch:** `feature/youtube-audio-fallback-spec`
+**Explainer:** [`prs/pr-034-youtube-audio-fallback-spec.md`](prs/pr-034-youtube-audio-fallback-spec.md)
+
+PR #34 is the spec PR for the audio-fallback that completes Phase 2.
+It exists because the brainstorm caught a scope drift between
+PLAN.md ("Slice 2 = yt-dlp + faster-whisper local ASR") and the
+codebase reality (no `providers/faster_whisper.py`; only the config
+default points at it). Three subsystems — new source, new provider,
+new budget router — in one slice would dilute all three. The spec
+splits as Slice 2 (yt-dlp + AssemblyAI) and a new Slice 2b
+(faster-whisper provider for the `$0` captionless path). Caught
+before any code was written, when scope audits are cheapest.
+
+The architecture: `YouTubeSource` owns three discrete methods that
+the CLI orchestrates. Source class stays money-agnostic. Budget gate
+fires *between* probe and download so the user sees a real cost
+estimate before bandwidth commits. Conservative fallback triggers —
+only `TranscriptsDisabled` and `NoTranscriptFound` flow into audio;
+every other captions-library exit-2 preserves Slice 1's exit codes
+1:1. Symmetric `youtube_audio` source-kind label paired with Slice
+1's `youtube_captions`. yt-dlp's built-in retries (not a tenacity
+wrapper — different library, different policy). The exit-code matrix
+mirrors Slice 1's 2 / 3 / 4 categories.
+
+Two review rounds caught ten findings before merge. Codex (P2 ×4):
+the `PreparedMedia` constructor example was unbuildable
+(missing `duration_seconds` + `workspace`, wrong `extra` type); the
+new pre-download budget_check would double-prompt with the existing
+pipeline's gate; the probe reference was missing `noplaylist`,
+contradicting the plan; the architecture section still described an
+earlier two-method draft. pr-review-toolkit (5 Important + 1
+self-caught): three `§5c → §4c` reference rots, an off-by-one
+design-decisions count, a brittle `cli.py:489-545` line range, a
+missing `probe_duration` stringification test, a missing
+`ProbeDurationUnknown` matrix row, and a self-referential `§9 → §8`.
+All fixed before merge. None of these would have been catchable on
+the impl PR — they're contract-level bugs that look correct in
+isolation.
+
+The bigger lesson: spec reviews are the cheap test of the spec's
+correctness. The impl review then only verifies the spec was
+followed, not whether the spec was self-consistent.
+
+---
+
 ## PR #31 — Implementation: YouTube Source (Captions Passthrough)
 
 **Merged:** TBD  |  **Branch:** `feat/youtube-captions-source-impl`

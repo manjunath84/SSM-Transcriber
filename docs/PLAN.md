@@ -559,8 +559,11 @@ Files created/modified:
 - `src/transcriber/cli.py` — branches on
   `isinstance(media, PreparedTranscript)` before the budget router;
   library exceptions mapped to documented exit codes via
-  `_handle_youtube_exception` helper; no-captions error points at
-  issue #21 with a yt-dlp + Phase 1 local-ASR workaround.
+  `_handle_youtube_exception` helper. Post-Slice-2 update: the no-
+  captions trigger exceptions (`TranscriptsDisabled`,
+  `NoTranscriptFound`) now wrap into a new `NoCaptionsAvailable`
+  exception that the CLI routes through the budget-aware audio-
+  fallback handler rather than `_handle_youtube_exception`.
 - `pyproject.toml` — `youtube-transcript-api>=1.0,<2.0`.
 
 **Track selection policy:** iterate `transcript_list`, prefer
@@ -578,31 +581,75 @@ construction).
 **Verification:** `uv run ssm-transcriber transcribe "https://youtu.be/<ID>"`
 produces a markdown file with `source_kind: youtube_captions`,
 `provider: youtube-captions`, `caption_type: manual|auto`. Exit 0
-for captioned videos; exit 2 with the documented no-captions message
-(pointing at issue #21) for captionless videos.
+for captioned videos; for captionless videos the behaviour depends on
+`--budget` (Slice 2 contract — see below).
 
 #### Phase 2 — Slice 2: YouTube Source (yt-dlp Audio Fallback)
 
-**Goal:** for videos that don't expose captions (Slice 1 exit 2),
-download audio with `yt-dlp` and run it through the local ASR path
-shipped in Phase 1 (faster-whisper) — keeping the captions-first,
+**Goal:** for videos that don't expose captions (Slice 1's
+`TranscriptsDisabled` / `NoTranscriptFound` paths), download audio
+with `yt-dlp` and route it through the existing local-file pipeline
+(`extract_audio` → AssemblyAI) — keeping the captions-first /
 audio-fallback ordering that makes the common case free and only
 the long tail expensive.
 
-Files to create/modify (deferred — issue #21):
-- `src/transcriber/sources/youtube.py` — extend the captions-only
-  source with a second mode: when `_pick_transcript` raises
-  `NoTranscriptFound`/`TranscriptsDisabled`, fall through to yt-dlp
-  audio download, return a `PreparedMedia` whose `local_path` points
-  at the extracted WAV. Pipeline reuses the existing local-file ASR
-  path (audio_extractor → faster-whisper / AssemblyAI based on
-  `--budget`).
-- `pyproject.toml` — `yt-dlp` is already a Phase 0 runtime dep;
-  Slice 2 just exercises it.
+A scope audit at brainstorm time caught that PLAN.md originally
+bundled this slice with the `faster_whisper` provider (config defaults
+to `transcription_provider: "faster_whisper"` but no provider module
+exists yet). Three subsystems in one slice would dilute all three;
+the slice splits as below. Slice 2 ships yt-dlp + AssemblyAI;
+faster-whisper moves to a new Slice 2b entry below.
 
-**Verification:** `uv run ssm-transcriber transcribe "https://youtu.be/<NO_CAPTION_ID>"`
-falls through to audio download + local ASR; output frontmatter
-shows `source_kind: youtube`, `provider: faster_whisper`.
+Architecture (from PR #34's spec at
+[`specs/2026-05-13-youtube-audio-fallback/`](../specs/2026-05-13-youtube-audio-fallback/)):
+- `YouTubeSource` exposes three discrete methods orchestrated by
+  the CLI: `prepare()` (captions; raises new
+  `NoCaptionsAvailable` on the two trigger exceptions),
+  `probe_audio()` (yt-dlp `extract_info(download=False)`,
+  metadata-only round-trip), `download_audio()` (`bestaudio/best`
+  download). CLI inserts the budget gate between probe and download
+  so the cost prompt fires with a real duration-derived estimate
+  before any bandwidth is spent.
+- New `SourceKind = "youtube_audio"`. Symmetric pair with Slice 1's
+  `youtube_captions`. The bare `"youtube"` value was dead code in
+  Slice 1 and is removed.
+- `_handle_yt_dlp_exception` maps yt-dlp exceptions to the same
+  exit-code matrix (2 / 3 / 4) Slice 1 established. Critical
+  finding mid-impl: `UnavailableVideoError` and `PostProcessingError`
+  are siblings of `ExtractorError` / `DownloadError` (all inherit
+  `YoutubeDLError`), so the catch-all is `YoutubeDLError + OSError`
+  rather than a narrow tuple.
+
+**Verification:** `uv run ssm-transcriber transcribe "https://youtu.be/<NO_CAPTION_ID>" --budget low`
+on a real captionless video falls through to audio download +
+AssemblyAI; output frontmatter shows `source_kind: youtube_audio`,
+`provider: assemblyai`, `model: universal-3-pro`,
+`assemblyai_job_id` populated. `--budget free` on the same video
+exits 2 with a budget-aware message pointing the user at `--budget
+low`. Captioned videos behave byte-identically to Slice 1.
+
+#### Phase 2 — Slice 2b: `faster_whisper` provider + local-budget routing (deferred)
+
+Split out of Slice 2 mid-brainstorm. Adds the local ASR provider that
+config has been pointing at since Phase 0. Once it lands,
+`--budget free` on a captionless video runs faster-whisper instead of
+exiting 2.
+
+Files to create/modify (deferred — own issue):
+- `src/transcriber/providers/faster_whisper.py` — new provider
+  module wrapping `faster_whisper.WhisperModel` with the same
+  `transcribe(media, *, language, diarize) -> TranscriptResult`
+  contract `AssemblyAIProvider` implements.
+- `src/transcriber/core/budget.py` (or sibling router) — route
+  `--budget free` to faster-whisper when the source produces
+  `PreparedMedia` (local files, Drive WAVs, youtube_audio downloads
+  all qualify). `--budget low+` keeps routing to AssemblyAI for now.
+- Model download UX, device autodetect (`device="auto"` → cuda /
+  metal / cpu fallback), per-call quality knob.
+
+**Verification:** `uv run ssm-transcriber transcribe "https://youtu.be/<NO_CAPTION_ID>" --budget free`
+runs faster-whisper end-to-end; frontmatter shows `provider:
+faster_whisper`, `model: base` (or the configured model size); $0.
 
 ---
 
