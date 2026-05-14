@@ -40,6 +40,11 @@ from transcriber.providers.assemblyai import AssemblyAIProvider
 from transcriber.providers.base import ProviderError
 from transcriber.sources import resolve_source
 from transcriber.sources.base import PreparedTranscript, SourceInputError
+from transcriber.sources.youtube import (
+    NoCaptionsAvailable,
+    ProbeDurationUnknown,
+    YouTubeSource,
+)
 
 
 class Budget(StrEnum):
@@ -81,20 +86,30 @@ def _confirm_or_decline(msg: str) -> bool:
         return False
 
 
-def _no_captions_message(source_uri: str) -> str:
-    """Build the documented no-captions error pointing at issue #21
-    + offering a copy-paste yt-dlp workaround using Phase 1's free
-    local path. Spec validation #53/#54."""
-    return (
-        f"Video has no usable captions:\n"
-        f"  {source_uri}\n\n"
-        f"Either the creator disabled captions or no auto-generated "
-        f"track is available. Audio-download fallback (yt-dlp + local "
-        f"ASR) is planned for Phase 2 Slice 2 — tracked at:\n"
-        f"  https://github.com/manjunath84/SSM-Transcriber/issues/21\n\n"
-        f"Workaround today (uses Phase 1 local ASR, $0):\n\n"
-        f"  uv run yt-dlp -x --audio-format wav -o /tmp/audio.wav '{source_uri}'\n"
-        f"  uv run ssm-transcriber transcribe /tmp/audio.wav"
+def _no_captions_message(source_uri: str, budget: str) -> str:
+    """Build the budget-aware no-captions error message.
+
+    On ``free`` budget the audio fallback is gated off (it costs real
+    money via AssemblyAI); the message tells the user how to enable it.
+    On ``low``/``best`` the audio fallback fires silently and the budget
+    gate's cost prompt is the user-visible signal — this function is
+    never called on those budgets; the ``else`` branch is a defensive
+    assertion against a caller-side regression.
+    """
+    if budget == "free":
+        return (
+            f"Video has no usable captions:\n"
+            f"  {source_uri}\n\n"
+            f"Either the creator disabled captions or no auto-generated "
+            f"track is available. The audio fallback (yt-dlp + AssemblyAI) "
+            f"is available on paid budgets — re-run with:\n\n"
+            f"  uv run ssm-transcriber transcribe '{source_uri}' --budget low\n\n"
+            f"You'll be prompted to confirm the estimated cost before "
+            f"anything is downloaded or billed."
+        )
+    raise RuntimeError(
+        f"_no_captions_message called with budget={budget!r}; expected 'free'. "
+        "On paid budgets the audio fallback runs silently."
     )
 
 
@@ -108,6 +123,86 @@ def _youtube_transcript_api_version() -> str:
         return version("youtube-transcript-api")
     except PackageNotFoundError:
         return "unknown"
+
+
+def _handle_yt_dlp_exception(
+    exc: Exception, source_uri: str
+) -> tuple[int, str]:
+    """Map a yt-dlp exception (plus our slice-local ``ProbeDurationUnknown``
+    and stdlib ``OSError``) to ``(exit_code, message)`` per spec plan §4c.
+
+    Subclass-order matters: ``GeoRestrictedError``, ``UnavailableVideoError``,
+    ``UnsupportedError`` all derive from ``ExtractorError`` — the specific
+    arms must precede the parent. ``ExtractorError``'s message is
+    inspected for an "age-restricted" / "members" substring to route the
+    auth-required variant separately from the generic extractor failure.
+
+    Exit code matrix (mirrors Slice 1's captions exception matrix):
+    - 2: user-actionable video-level / auth issues yt-dlp can't bypass
+    - 3: network exhaustion after yt-dlp's internal retries
+    - 4: local I/O (ffmpeg post-processing, disk full / permissions)
+    """
+    from yt_dlp.utils import (
+        DownloadError,
+        ExtractorError,
+        GeoRestrictedError,
+        PostProcessingError,
+        UnavailableVideoError,
+        UnsupportedError,
+    )
+
+    if isinstance(exc, ProbeDurationUnknown):
+        return 2, (
+            f"could not determine video duration from yt-dlp probe for:\n"
+            f"  {source_uri}\n\n"
+            "The video may be a live stream, premiere, or otherwise have "
+            "no fixed duration. Audio fallback requires a duration to "
+            "estimate cost — not supported for live content."
+        )
+    if isinstance(exc, GeoRestrictedError):
+        return 2, (
+            f"Video is geo-restricted in your region:\n"
+            f"  {source_uri}\n\n"
+            "Audio fallback can't bypass geo-restriction. A VPN or "
+            "different region is required."
+        )
+    if isinstance(exc, UnavailableVideoError):
+        return 2, (
+            f"Video unavailable for download (gone, private, or "
+            f"region-blocked):\n  {source_uri}"
+        )
+    if isinstance(exc, UnsupportedError):
+        return 2, (
+            f"YouTube URL form is not supported by yt-dlp:\n"
+            f"  {source_uri}"
+        )
+    if isinstance(exc, ExtractorError):
+        message_text = str(exc).lower()
+        if any(
+            marker in message_text
+            for marker in ("age-restricted", "age restricted", "members", "sign in")
+        ):
+            return 2, (
+                f"Video requires authentication (age-restricted, "
+                f"member-only, or paid):\n  {source_uri}\n\n"
+                "Audio fallback can't download authenticated content "
+                "without cookies."
+            )
+        return 2, f"Audio extraction failed: {exc}"
+    if isinstance(exc, DownloadError):
+        message_text = str(exc).lower()
+        if "network" in message_text or "timed out" in message_text:
+            return 3, (
+                "Network failure downloading audio after yt-dlp's "
+                f"retries:\n  {source_uri}\n\nTry again later."
+            )
+        return 3, f"Audio download failed: {exc}"
+    if isinstance(exc, PostProcessingError):
+        return 4, f"ffmpeg failed processing downloaded audio: {exc}"
+    if isinstance(exc, OSError):
+        return 4, f"Local I/O error during audio download: {exc}"
+    # Caller-side bug: should be unreachable.
+    return 3, f"Unexpected yt-dlp error: {exc!r}"
 
 
 def _handle_youtube_exception(exc: Exception, source_uri: str) -> int:
@@ -130,18 +225,17 @@ def _handle_youtube_exception(exc: Exception, source_uri: str) -> int:
         CookieError,
         FailedToCreateConsentCookie,
         InvalidVideoId,
-        NoTranscriptFound,
         PoTokenRequired,
         RequestBlocked,
-        TranscriptsDisabled,
         VideoUnavailable,
         VideoUnplayable,
         YouTubeRequestFailed,
     )
 
-    if isinstance(exc, (TranscriptsDisabled, NoTranscriptFound)):
-        console.print(f"[red]error:[/red] {_no_captions_message(source_uri)}")
-        return 2
+    # Phase 2 Slice 2: TranscriptsDisabled and NoTranscriptFound are now
+    # wrapped in NoCaptionsAvailable by YouTubeSource.prepare() and
+    # routed through the budget-aware audio-fallback handler in the
+    # transcribe command directly. They never reach this function.
     if isinstance(exc, PoTokenRequired):
         # PR-#31 silent-failure-hunter finding: previously routed to the
         # generic catch-all and told the user the library may need an
@@ -420,6 +514,78 @@ def transcribe(
             except SourceInputError as exc:
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
+            except NoCaptionsAvailable as exc:
+                # Phase 2 Slice 2 — YouTube captions missing. Free budget
+                # short-circuits to exit 2 with a budget-aware message;
+                # paid budgets fall through to the yt-dlp audio fallback
+                # (probe + cost gate + download). Spec §4b.
+                if budget.value == "free":
+                    console.print(
+                        f"[red]error:[/red] {_no_captions_message(source, 'free')}"
+                    )
+                    raise typer.Exit(code=2) from exc
+
+                # Paid budget: metadata probe → cost gate → download.
+                # Catch yt-dlp's common base ``YoutubeDLError`` (covers
+                # ExtractorError, DownloadError, UnavailableVideoError,
+                # PostProcessingError, and any future subclasses — the
+                # exception hierarchy has siblings rather than a single
+                # chain so a narrow tuple silently misses entries). Plus
+                # our slice-local ``ProbeDurationUnknown``. The matrix
+                # decision happens in ``_handle_yt_dlp_exception`` (§4c).
+                from yt_dlp.utils import YoutubeDLError
+
+                try:
+                    probe = YouTubeSource.probe_audio(source)
+                except (YoutubeDLError, ProbeDurationUnknown) as probe_exc:
+                    code, message = _handle_yt_dlp_exception(probe_exc, source)
+                    console.print(f"[red]error:[/red] {message}")
+                    raise typer.Exit(code=code) from probe_exc
+
+                cost_usd = estimate_assemblyai_cost(
+                    probe.duration, diarize=not no_speakers
+                )
+                try:
+                    proceed = budget_check(
+                        provider_name="AssemblyAI",
+                        budget=budget.value,
+                        key_configured=settings.assemblyai_configured,
+                        cost_usd=cost_usd,
+                        yes=yes,
+                        prompt=_confirm_or_decline,
+                        notify=lambda msg: console.print(msg),
+                        cost_summary=(
+                            "Provider: AssemblyAI · YouTube audio "
+                            "fallback — captions unavailable for this "
+                            "video; transcribing the downloaded audio. "
+                            "Estimated cost based on probe duration; "
+                            "AssemblyAI's per-minute bill is final."
+                        ),
+                    )
+                except BudgetError as budget_exc:
+                    console.print(f"[red]error:[/red] {budget_exc}")
+                    raise typer.Exit(code=2) from budget_exc
+                if not proceed:
+                    console.print(
+                        "[yellow]Cancelled by user; no charge incurred.[/yellow]"
+                    )
+                    raise typer.Exit(code=0) from None
+
+                try:
+                    media = YouTubeSource.download_audio(
+                        source, workspace, probe
+                    )
+                except (YoutubeDLError, OSError) as dl_exc:
+                    code, message = _handle_yt_dlp_exception(dl_exc, source)
+                    # Spec edge case: probe + cost auth succeeded, then
+                    # download failed. No AssemblyAI call ever fired so
+                    # the user wasn't charged — call that out so they
+                    # don't worry about phantom billing.
+                    console.print(
+                        f"[red]error:[/red] {message} "
+                        "[dim](no AssemblyAI charge incurred)[/dim]"
+                    )
+                    raise typer.Exit(code=code) from dl_exc
             except YouTubeTranscriptApiException as exc:
                 # YouTube captions: library exception → spec-mapped exit
                 # code + user-facing message. Catches the broad library
@@ -520,27 +686,39 @@ def transcribe(
                     # PR — the contract violation and filename regression are.
                     media = dataclasses.replace(media, local_path=wav_path)
 
-                    cost_usd = estimate_assemblyai_cost(
-                        duration_seconds, diarize=not no_speakers
-                    )
-                    try:
-                        proceed = budget_check(
-                            provider_name="AssemblyAI",
-                            budget=budget.value,
-                            key_configured=settings.assemblyai_configured,
-                            cost_usd=cost_usd,
-                            yes=yes,
-                            prompt=_confirm_or_decline,
-                            notify=lambda msg: console.print(msg),
+                    # Phase 2 Slice 2 §4e: skip the budget gate for the
+                    # audio-fallback path. The pre-download budget_check
+                    # earlier in the NoCaptionsAvailable handler already
+                    # gated the user on the probe-derived cost estimate;
+                    # re-firing here would double-prompt (or silently
+                    # cancel under non-interactive runs that only supplied
+                    # one confirmation). The probe-vs-ffprobe duration
+                    # drift is small (int seconds vs float seconds) so
+                    # the user's earlier authorization is trusted; if
+                    # divergence ever becomes a real problem a follow-up
+                    # confirmation mode can be added.
+                    if media.kind != "youtube_audio":
+                        cost_usd = estimate_assemblyai_cost(
+                            duration_seconds, diarize=not no_speakers
                         )
-                    except BudgetError as exc:
-                        console.print(f"[red]error:[/red] {exc}")
-                        raise typer.Exit(code=2) from exc
-                    if not proceed:
-                        console.print(
-                            "[yellow]Cancelled by user; no charge incurred.[/yellow]"
-                        )
-                        raise typer.Exit(code=0)
+                        try:
+                            proceed = budget_check(
+                                provider_name="AssemblyAI",
+                                budget=budget.value,
+                                key_configured=settings.assemblyai_configured,
+                                cost_usd=cost_usd,
+                                yes=yes,
+                                prompt=_confirm_or_decline,
+                                notify=lambda msg: console.print(msg),
+                            )
+                        except BudgetError as exc:
+                            console.print(f"[red]error:[/red] {exc}")
+                            raise typer.Exit(code=2) from exc
+                        if not proceed:
+                            console.print(
+                                "[yellow]Cancelled by user; no charge incurred.[/yellow]"
+                            )
+                            raise typer.Exit(code=0)
 
                 # Provider call (PreparedMedia path only — captions skip this).
                 provider = AssemblyAIProvider(max_wait_seconds=max_wait * 60)
@@ -572,14 +750,18 @@ def transcribe(
                     # User passed --title: collapse whitespace for filename.
                     # YAML title preserves the original (display_title).
                     stem = title_to_stem(display_title)
-                elif media.title is not None:
+                elif media.title:
+                    # Truthy check (NOT ``is not None``) so an empty
+                    # string from a probe failure falls through to the
+                    # source-kind fallback rather than producing a
+                    # leading-dash filename like ``-2026-05-13.md``.
                     # Source-resolved title (LocalSource: file stem;
                     # DriveSource: auto-resolved from Content-Disposition,
-                    # already validated in the source layer). Route
-                    # through title_to_stem so both the --title path
-                    # and the source-resolved path produce the same
+                    # already validated in the source layer; YouTubeSource
+                    # audio arm: yt-dlp probe title). Route through
+                    # title_to_stem so all source paths produce the same
                     # on-disk filename shape ("Session 17" →
-                    # Session-17) — the test
+                    # Session-17) — test
                     # test_drive_auto_resolved_title_produces_dash_stem
                     # locks this convergence.
                     #
@@ -597,6 +779,12 @@ def transcribe(
                     # missing key is a producer-side bug (review I5
                     # invariant — let KeyError bubble with traceback
                     # rather than silently writing 'untitled-DATE.md').
+                    stem = media.extra["video_id"]
+                elif media.kind == "youtube_audio":
+                    # Audio fallback with no --title and yt-dlp probe
+                    # returned empty title — same fallback shape as the
+                    # captions arm. extra['video_id'] is set by
+                    # YouTubeSource.download_audio.
                     stem = media.extra["video_id"]
                 else:
                     # Drive source with no --title and the CDN title
