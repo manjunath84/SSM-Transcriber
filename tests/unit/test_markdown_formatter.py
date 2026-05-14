@@ -412,3 +412,153 @@ def test_render_assemblyai_frontmatter_field_order_is_stable(
         "assemblyai_job_id",
         "created",
     ], f"frontmatter order changed: got {keys_in_order}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 Slice 2 — youtube_audio source rendering.
+# Workspace WAV under local_path; original_uri is the canonical YouTube
+# URL; provider/model come from AssemblyAI's TranscriptResult so the
+# body summary uses the normal <provider>/<model> shape (NOT the
+# captions special-case label).
+# ---------------------------------------------------------------------------
+
+
+def _audio_result() -> TranscriptResult:
+    return TranscriptResult(
+        text="hello world from audio",
+        segments=[
+            Segment(start_ms=0, end_ms=1500, text="hello world", speaker=None),
+            Segment(start_ms=1500, end_ms=3000, text="from audio", speaker=None),
+        ],
+        language="en",
+        duration_seconds=3.0,
+        provider="assemblyai",
+        model="universal-3-pro",
+        job_id="job-abc",
+    )
+
+
+def _audio_prepared(
+    workspace: RunWorkspace, *, title: str | None
+) -> PreparedMedia:
+    audio = workspace.path("audio.m4a")
+    audio.write_bytes(b"")
+    return PreparedMedia(
+        kind="youtube_audio",
+        original_uri="https://youtu.be/dQw4w9WgXcQ",
+        local_path=audio,
+        remote_url=None,
+        title=title,
+        duration_seconds=300.0,
+        workspace=workspace,
+        extra={"video_id": "dQw4w9WgXcQ", "probe_duration": "300"},
+    )
+
+
+def test_render_youtube_audio_frontmatter(workspace: RunWorkspace) -> None:
+    """Frontmatter contract for the audio-fallback path:
+    - source_kind = youtube_audio (NOT local, NOT youtube_captions)
+    - source_uri = canonical YouTube URL (NOT file://)
+    - provider/model from AssemblyAI's result
+    - assemblyai_job_id populated (NOT null)
+    - NO caption_type field (that's captions-arm only)"""
+    media = _audio_prepared(workspace, title="Test Video")
+    output = render(_audio_result(), media, created=date(2026, 5, 13))
+
+    assert "source_kind: youtube_audio" in output
+    assert "source_uri: https://youtu.be/dQw4w9WgXcQ" in output
+    assert "provider: assemblyai" in output
+    assert "model: universal-3-pro" in output
+    assert "assemblyai_job_id: job-abc" in output
+    assert "title: Test Video" in output
+    assert "caption_type:" not in output
+    # The workspace audio file path must NOT leak into the frontmatter.
+    assert "file://" not in output
+    assert ".m4a" not in output
+
+
+def test_render_youtube_audio_body_summary_uses_provider_model_shape(
+    workspace: RunWorkspace,
+) -> None:
+    """Audio path's body summary uses the standard
+    ``<provider>/<model>`` shape (assemblyai/universal-3-pro), NOT the
+    captions special-case ``youtube-captions (manual|auto)`` label.
+    The label distinguishes "transcript came from audio" from "came
+    from captions" without making the user squint at provider names."""
+    media = _audio_prepared(workspace, title="Test")
+    output = render(_audio_result(), media, created=date(2026, 5, 13))
+
+    assert "assemblyai/universal-3-pro" in output
+    assert "youtube-captions" not in output
+
+
+def test_render_youtube_audio_falls_back_to_video_id_when_no_title(
+    workspace: RunWorkspace,
+) -> None:
+    """Defence-in-depth: if probe returned no title (empty string from
+    _probe_metadata's coercion of None → ""), the H1 + frontmatter title
+    fall back to extra['video_id']. Mirrors the captions arm. Without
+    this branch, _resolve_title would return ``local_path.stem`` =
+    ``audio`` — a misleading title for a real YouTube video."""
+    media = _audio_prepared(workspace, title="")
+    output = render(_audio_result(), media, created=date(2026, 5, 13))
+
+    assert "title: dQw4w9WgXcQ" in output
+    assert "# dQw4w9WgXcQ" in output
+    assert "title: audio" not in output
+    assert "# audio" not in output
+
+
+def test_render_youtube_audio_missing_video_id_raises_loud(
+    workspace: RunWorkspace,
+) -> None:
+    """Producer-side bug: PreparedMedia(kind='youtube_audio') without
+    extra['video_id'] raises KeyError when _resolve_title tries the
+    fallback. Review I4 mandate: loud over silent."""
+    audio = workspace.path("audio.m4a")
+    audio.write_bytes(b"")
+    media = PreparedMedia(
+        kind="youtube_audio",
+        original_uri="https://youtu.be/dQw4w9WgXcQ",
+        local_path=audio,
+        remote_url=None,
+        title="",
+        duration_seconds=300.0,
+        workspace=workspace,
+        extra={},  # missing video_id!
+    )
+    with pytest.raises(KeyError):
+        render(_audio_result(), media, created=date(2026, 5, 13))
+
+
+def test_render_youtube_audio_frontmatter_field_order(
+    workspace: RunWorkspace,
+) -> None:
+    """Schema stability — the audio path produces the exact same field
+    set + order as a local-file path (no caption_type insertion). Pins
+    downstream-parser stability per the spec's frontmatter contract."""
+    media = _audio_prepared(workspace, title="t")
+    output = render(_audio_result(), media, created=date(2026, 5, 13))
+
+    lines = output.splitlines()
+    open_idx = lines.index("---")
+    close_idx = lines.index("---", open_idx + 1)
+    keys_in_order = [
+        line.split(":", 1)[0].strip()
+        for line in lines[open_idx + 1 : close_idx]
+        if ":" in line
+    ]
+
+    assert keys_in_order == [
+        "title",
+        "source_uri",
+        "source_kind",
+        "duration_seconds",
+        "language",
+        "provider",
+        "model",
+        "diarized",
+        "speakers",
+        "assemblyai_job_id",
+        "created",
+    ], f"youtube_audio frontmatter order: {keys_in_order}"
