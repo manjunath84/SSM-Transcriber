@@ -13,7 +13,7 @@
 
 ## PR #35 — Implementation: YouTube Source (yt-dlp Audio Fallback)
 
-**Merged:** TBD  |  **Branch:** `feat/youtube-audio-fallback-impl`
+**Merged:** 2026-05-13 (squash `077b26a`)  |  **Branch:** `feat/youtube-audio-fallback-impl` (deleted)
 **Explainer:** [`prs/pr-035-youtube-audio-fallback-impl.md`](prs/pr-035-youtube-audio-fallback-impl.md)
 
 PR #35 closes the YouTube coverage gap Slice 1 left open: when

@@ -1,6 +1,6 @@
 # PR #35 — Implementation: YouTube Source (yt-dlp Audio Fallback)
 
-**Merged:** TBD  |  **Branch:** `feat/youtube-audio-fallback-impl`  |  **Reviews:** TBD
+**Merged:** 2026-05-13 (squash `077b26a`)  |  **Branch:** `feat/youtube-audio-fallback-impl` (deleted)  |  **Reviews:** Codex (4 findings, all P1+P2 fixed pre-merge), pr-review-toolkit five-agent pass (2 critical + 8 important, all fixed pre-merge)
 **Spec PR:** [#34](https://github.com/manjunath84/SSM-Transcriber/pull/34) ([explainer](pr-034-youtube-audio-fallback-spec.md))
 **Journey entry:** [`../journey.md#pr-35--implementation-youtube-source-yt-dlp-audio-fallback`](../journey.md#pr-35--implementation-youtube-source-yt-dlp-audio-fallback)
 
@@ -16,8 +16,11 @@ user consent at the budget gate.
 
 ## What changed, by phase
 
-Three implementation commits land the slice in plan-task-group order,
-plus a Phase D docs commit:
+Three implementation commits landed the slice in plan-task-group
+order on the feature branch, plus a Phase D docs commit and two
+post-review fix commits. main collapsed all six into the single
+squash commit `077b26a`; the phase-SHAs below reference the feature
+branch's pre-merge history (now deleted) for teaching continuity.
 
 ### Phase A — source layer (commit `8f6e36f`)
 
@@ -114,9 +117,15 @@ The CLI's `_handle_youtube_exception` loses its `TranscriptsDisabled` /
 `NoTranscriptFound` branch — those are unreachable post-Phase A
 since `prepare()` wraps them.
 
-Test surface grows by 13 in `test_cli.py` (82 → 95), 2 outdated
-tests removed (the old issue-#21-pointer "no captions" test +
-two parametrize rows now routed through `NoCaptionsAvailable`).
+Test surface grows by 13 in `test_cli.py` (82 → 95), 1 outdated
+test removed (the old issue-#21-pointer "no captions" test) and
+two parametrize rows now routed through `NoCaptionsAvailable`.
+
+The two post-review fix commits added another **+25 tests** on top
+(14 from the Codex P1+P2 round, 11 from the pr-review-toolkit
+round — probe edge cases, defensive download-response checks,
+widened auth markers, AudioProbe invariants, catch-all logger).
+Final test count at merge: **371 passing** (was 342 before review).
 
 ### Phase C — formatter (commit `c1cdf63`)
 
