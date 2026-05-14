@@ -8,6 +8,7 @@ calls that function with the planned output path.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -1266,13 +1267,6 @@ def test_captions_with_budget_free_succeeds(
     assert result.exit_code == 0, result.output
 
 
-# Slice 1's test_captions_no_captions_exits_2_with_documented_message
-# was superseded by test_captionless_video_free_budget_emits_budget_aware_message
-# below — the no-captions message is now budget-aware and the
-# issue-#21 pointer + yt-dlp recipe are gone now that Slice 2 has
-# shipped the audio fallback as a real flag rather than a workaround.
-
-
 def test_captions_ip_blocked_exits_3(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1445,10 +1439,10 @@ def _make_yt_exception(name: str) -> Exception:
 @pytest.mark.parametrize(
     "exception_name, expected_exit, expected_substring",
     [
-        # Slice 2 removed TranscriptsDisabled + NoTranscriptFound from
-        # this parametrize — those now surface as NoCaptionsAvailable
-        # from prepare() and route through the budget-aware audio-fallback
-        # path. Covered by test_captionless_video_*_budget_* tests below.
+        # TranscriptsDisabled + NoTranscriptFound are surfaced as
+        # NoCaptionsAvailable by YouTubeSource.prepare and routed
+        # through the audio-fallback path — covered by
+        # test_captionless_video_* tests below.
         ("VideoUnavailable", 2, "Video unavailable"),
         ("VideoUnplayable", 2, "Video unplayable"),
         ("InvalidVideoId", 2, "rejected the video ID"),
@@ -1498,7 +1492,7 @@ def test_captions_library_exception_matrix(
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 Slice 2 — NoCaptionsAvailable routing + audio-fallback flow.
+# NoCaptionsAvailable routing + audio-fallback flow.
 # Free budget → exit 2 with budget-aware message; low+ budget → probe,
 # budget gate with real cost estimate, download. Tests in this block
 # stub YouTubeSource.{prepare, probe_audio, download_audio} directly so
@@ -1626,6 +1620,10 @@ def _make_yt_dlp_exception(name: str, message: str = "test") -> Exception:
         ("UnsupportedError", "test", "probe", 2, "not supported by yt-dlp"),
         ("GeoRestrictedError", "test", "probe", 2, "geo-restricted"),
         ("ExtractorError", "age-restricted: members only", "probe", 2, "requires authentication"),
+        ("ExtractorError", "Sign in to confirm your age", "probe", 2, "requires authentication"),
+        ("ExtractorError", "This video requires login", "probe", 2, "requires authentication"),
+        ("ExtractorError", "This video is private", "probe", 2, "requires authentication"),
+        ("ExtractorError", "Members-only premium content", "probe", 2, "requires authentication"),
         ("ExtractorError", "some other extractor failure", "probe", 2, "audio extraction failed"),
         ("ProbeDurationUnknown", "", "probe", 2, "could not determine video duration"),
         # Exit-3 family: network exhaustion after retries.
@@ -1708,12 +1706,11 @@ def test_yt_dlp_exception_matrix(
 def test_captionless_low_budget_shows_dollar_estimate_and_context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Codex P2: the original implementation passed ``cost_summary`` to
-    budget_check, which suppresses the duration-derived ``$X.XX``
-    estimate AND the soft-cap warning. The user was being asked to
-    authorise a paid call without seeing the actual cost. Verify the
-    new flow: emit the audio-fallback context via notify(); let
-    budget_check render the real estimate + soft-cap warning.
+    """budget_check's ``cost_summary`` parameter suppresses both the
+    duration-derived ``$X.XX`` estimate AND the soft-cap warning. The
+    audio-fallback flow needs to surface the real number so the user
+    can authorise the spend knowingly, so context goes via notify()
+    and budget_check renders the dollar amount + soft-cap on its own.
 
     The audio-fallback decline path is the cheapest place to assert
     the output: probe runs, prompt would fire, decline cancels — all
@@ -1762,13 +1759,11 @@ def test_captionless_low_budget_shows_dollar_estimate_and_context(
 def test_captionless_video_explicit_title_overrides_probe_title(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Codex P2: --title is documented as 'Frontmatter + filename
-    stem' (per the CLI help). The audio-fallback path was passing the
-    probe title into PreparedMedia.title unconditionally, so the
-    frontmatter + H1 always showed the probe title even when the user
-    supplied --title. Filename used --title (correct) but the rendered
-    content used probe title (wrong). Verify both surfaces honour
-    --title."""
+    """``--title`` is documented as "Frontmatter + filename stem"
+    (per CLI help). When supplied alongside the audio-fallback path,
+    PreparedMedia.title must carry the user value, not the probe
+    title — otherwise the rendered frontmatter + H1 silently disagree
+    with the filename."""
     monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
     monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
 
@@ -2096,15 +2091,12 @@ def test_yt_dlp_exception_matrix_unwraps_download_error_cause(
     expected_exit: int,
     expected_substring: str,
 ) -> None:
-    """Codex P2: yt-dlp's ``YoutubeDL.extract_info`` routes many
-    extractor failures through ``report_error()``, which raises
-    ``DownloadError`` with the original ``ExtractorError``-family
-    exception in ``__cause__``. Without unwrapping, our matrix would
-    classify those as exit 3 network failures instead of the
-    user-actionable exit 2 cases.
-
-    Verify that wrapped causes get the right exit code based on the
-    inner exception, not the outer DownloadError class."""
+    """yt-dlp's ``YoutubeDL.extract_info`` routes many extractor
+    failures through ``report_error()``, which raises ``DownloadError``
+    with the original ``ExtractorError``-family exception in
+    ``__cause__``. Without unwrapping, the matrix would classify
+    those as exit-3 network failures instead of the user-actionable
+    exit-2 cases. Wrapped causes must route by inner type."""
     monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
     monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
 
@@ -2142,6 +2134,62 @@ def test_yt_dlp_exception_matrix_unwraps_download_error_cause(
         f"DownloadError(__cause__={inner_name}({inner_message!r})): "
         f"expected {expected_substring!r}; got: {result.output}"
     )
+
+
+def test_unclassified_yt_dlp_exception_logs_error_for_operator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The exit-code matrix has a final catch-all arm for yt-dlp
+    exceptions our matrix doesn't enumerate (a future yt-dlp release
+    adding a new sibling under ``YoutubeDLError``). Without an
+    operator log the matrix would silently degrade: the user sees
+    exit 3 with a generic message, and nobody knows the matrix needs
+    updating. The catch-all must emit ``logger.error`` so the gap
+    surfaces in logs."""
+    monkeypatch.setattr("transcriber.cli.settings.output_dir", tmp_path)
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "fake-key")
+
+    from yt_dlp.utils import YoutubeDLError
+
+    from transcriber.sources.youtube import (
+        AudioProbe,
+        NoCaptionsAvailable,
+        YouTubeSource,
+    )
+
+    class _NewSiblingError(YoutubeDLError):
+        """Synthetic subclass simulating a future yt-dlp release."""
+
+    def captions_boom(*_a: object, **_k: object) -> None:
+        raise NoCaptionsAvailable("no captions")
+
+    def probe_boom(_uri: str) -> AudioProbe:
+        raise _NewSiblingError("brand-new failure mode")
+
+    monkeypatch.setattr(YouTubeSource, "prepare", staticmethod(captions_boom))
+    monkeypatch.setattr(YouTubeSource, "probe_audio", staticmethod(probe_boom))
+
+    with caplog.at_level(logging.ERROR, logger="transcriber.cli"):
+        result = CliRunner().invoke(
+            app,
+            [
+                "transcribe",
+                "https://youtu.be/dQw4w9WgXcQ",
+                "--budget",
+                "low",
+                "-y",
+            ],
+        )
+
+    assert result.exit_code == 3, result.output
+    error_records = [
+        r for r in caplog.records if r.levelname == "ERROR"
+    ]
+    assert any(
+        "unclassified" in r.message.lower() for r in error_records
+    ), [r.message for r in error_records]
 
 
 def test_yt_dlp_download_failure_calls_out_no_charge(
@@ -2288,10 +2336,13 @@ def test_captionless_video_low_budget_yes_flag_runs_full_flow(
     )
 
     assert result.exit_code == 0, result.output
-    # Output file exists with the probe-derived title (slugified by atomic.write).
+    # Filename uses the deterministic ``title_to_stem`` form
+    # (whitespace runs → ``-``). Pin the exact stem so a future
+    # slugifier regression (underscore-instead-of-dash) can't slip
+    # past on an "either-or" admission.
     output_files = list(tmp_path.glob("*.md"))
     assert len(output_files) == 1, list(tmp_path.iterdir())
-    assert "Test-Video" in output_files[0].name or "Test_Video" in output_files[0].name
+    assert output_files[0].name.startswith("Test-Video-"), output_files[0].name
 
 
 

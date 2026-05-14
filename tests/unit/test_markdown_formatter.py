@@ -415,7 +415,7 @@ def test_render_assemblyai_frontmatter_field_order_is_stable(
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 Slice 2 — youtube_audio source rendering.
+# youtube_audio source rendering.
 # Workspace WAV under local_path; original_uri is the canonical YouTube
 # URL; provider/model come from AssemblyAI's TranscriptResult so the
 # body summary uses the normal <provider>/<model> shape (NOT the

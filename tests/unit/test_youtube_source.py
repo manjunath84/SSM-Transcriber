@@ -787,7 +787,7 @@ def test_canonical_source_uri_is_short_form_regardless_of_input(
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 Slice 2 — types + exceptions (Group 1).
+# types + exceptions (Group 1).
 # AudioProbe is the slice-local return shape of probe_audio().
 # NoCaptionsAvailable wraps the two captions trigger exceptions
 # (TranscriptsDisabled, NoTranscriptFound) so the CLI can route them
@@ -820,6 +820,29 @@ def test_audio_probe_is_frozen() -> None:
     probe = AudioProbe(duration=42, title="t")
     with pytest.raises(FrozenInstanceError):
         probe.duration = 99  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("bad_duration", [0, -1, -3600])
+def test_audio_probe_rejects_non_positive_duration(bad_duration: int) -> None:
+    """The "duration > 0" invariant belongs on the type, not at one
+    callsite. A future second producer (test fixture, alternate prober)
+    must not be able to construct an AudioProbe that would price a
+    negative-duration video at $0 in the cost estimator."""
+    from transcriber.sources.youtube import AudioProbe
+
+    with pytest.raises(ValueError, match="duration"):
+        AudioProbe(duration=bad_duration, title="t")
+
+
+def test_audio_probe_accepts_none_title() -> None:
+    """``title`` is ``str | None`` so the fail-soft path (validate_title
+    rejected the creator-controlled title) produces ``None`` rather
+    than the empty-string sentinel — aligns with PreparedMedia.title
+    so the bridge in ``download_audio`` is honest about absence."""
+    from transcriber.sources.youtube import AudioProbe
+
+    probe = AudioProbe(duration=10, title=None)
+    assert probe.title is None
 
 
 def test_no_captions_available_subclasses_exception() -> None:
@@ -933,7 +956,7 @@ def test_source_kind_literal_includes_youtube_audio() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 Slice 2 — yt-dlp helpers (Group 3).
+# yt-dlp helpers (Group 3).
 # YoutubeDL is mocked via monkeypatch at the yt_dlp module path because
 # the helpers do a local ``from yt_dlp import YoutubeDL`` (deferred-
 # import pattern for module weight). The helpers don't construct an
@@ -1085,15 +1108,69 @@ def test_probe_metadata_raises_probe_duration_unknown_on_zero(
 def test_probe_metadata_handles_missing_title(
     _yt_dlp_mock: type[_FakeYoutubeDL],
 ) -> None:
-    """If ``title`` is missing or None, AudioProbe gets an empty string
-    so the CLI's filename derivation can fall back to ``video_id``
-    cleanly (Slice 1's review finding I4: loud over silent — the empty
-    string triggers the fallback path, not a Python None blowup)."""
+    """If ``title`` is missing or None, AudioProbe carries ``None`` so
+    the CLI's filename derivation falls back to ``video_id`` cleanly.
+    ``None`` (not ``""``) matches PreparedMedia.title's sentinel so the
+    bridge in ``download_audio`` doesn't conflate "no title returned"
+    with "title set to empty by the user"."""
     from transcriber.sources.youtube import _probe_metadata
 
     _yt_dlp_mock.probe_info = {"title": None, "duration": 100}
     probe = _probe_metadata("https://youtu.be/abc12345678")
-    assert probe.title == ""
+    assert probe.title is None
+
+
+def test_probe_metadata_raises_probe_duration_unknown_on_none_info(
+    _yt_dlp_mock: type[_FakeYoutubeDL],
+) -> None:
+    """yt-dlp can return ``None`` from ``extract_info`` in edge cases
+    (no info extracted). Without a guard, ``info.get("duration")``
+    blows up with ``AttributeError`` — escaping the CLI's catch tuple
+    and surfacing a raw traceback. Route through the existing
+    "duration unknown" exit instead."""
+    from transcriber.sources.youtube import (
+        ProbeDurationUnknown,
+        _probe_metadata,
+    )
+
+    _yt_dlp_mock.probe_info = None  # type: ignore[assignment]
+
+    with pytest.raises(ProbeDurationUnknown):
+        _probe_metadata("https://youtu.be/abc12345678")
+
+
+def test_probe_metadata_raises_probe_duration_unknown_on_string_duration(
+    _yt_dlp_mock: type[_FakeYoutubeDL],
+) -> None:
+    """Some yt-dlp extractors emit ``duration`` as a string. Without an
+    isinstance guard, ``duration <= 0`` raises ``TypeError``. Treat
+    non-numeric durations as "duration unknown" so the CLI maps to
+    the user-actionable exit 2."""
+    from transcriber.sources.youtube import (
+        ProbeDurationUnknown,
+        _probe_metadata,
+    )
+
+    _yt_dlp_mock.probe_info = {"title": "x", "duration": "3600"}
+
+    with pytest.raises(ProbeDurationUnknown):
+        _probe_metadata("https://youtu.be/abc12345678")
+
+
+def test_probe_metadata_raises_probe_duration_unknown_on_negative_duration(
+    _yt_dlp_mock: type[_FakeYoutubeDL],
+) -> None:
+    """Defensive — yt-dlp shouldn't emit a negative duration but a
+    broken extractor could. Treat the same as ``None`` / ``0``."""
+    from transcriber.sources.youtube import (
+        ProbeDurationUnknown,
+        _probe_metadata,
+    )
+
+    _yt_dlp_mock.probe_info = {"title": "x", "duration": -10}
+
+    with pytest.raises(ProbeDurationUnknown):
+        _probe_metadata("https://youtu.be/abc12345678")
 
 
 @pytest.mark.parametrize(
@@ -1110,18 +1187,17 @@ def test_probe_metadata_handles_missing_title(
 def test_probe_metadata_validates_title_against_path_traversal(
     hostile_title: str, _yt_dlp_mock: type[_FakeYoutubeDL]
 ) -> None:
-    """Codex P1: ``probe.title`` is creator-controlled YouTube metadata.
-    The CLI later uses any truthy ``media.title`` as the filename stem,
-    so an unvalidated probe title like ``../outside`` could write the
-    transcript outside ``settings.output_dir``. Mirror the oembed
-    fail-soft pattern: run probe title through ``validate_title`` and
-    fall back to empty string on rejection so ``extra['video_id']``
-    becomes the stem instead."""
+    """``probe.title`` is creator-controlled YouTube metadata that the
+    CLI uses as the default filename stem after only whitespace
+    collapsing. An unvalidated probe title like ``../outside`` could
+    redirect the transcript write outside ``settings.output_dir``;
+    fail-soft to ``None`` so the video_id stem is used instead
+    (mirrors the oembed probe's behaviour)."""
     from transcriber.sources.youtube import _probe_metadata
 
     _yt_dlp_mock.probe_info = {"title": hostile_title, "duration": 100}
     probe = _probe_metadata("https://youtu.be/abc12345678")
-    assert probe.title == "", (
+    assert probe.title is None, (
         f"hostile title {hostile_title!r} must be rejected, "
         f"got {probe.title!r}"
     )
@@ -1140,6 +1216,7 @@ def test_probe_metadata_keeps_safe_titles_with_whitespace_and_unicode(
         "duration": 727,
     }
     probe = _probe_metadata("https://youtu.be/abc12345678")
+    assert probe.title is not None
     assert "RAG Explained in 12 Minutes" in probe.title
 
 
@@ -1244,8 +1321,40 @@ def test_download_audio_propagates_download_error(
         _download_audio("https://youtu.be/abc12345678", workspace)
 
 
+@pytest.mark.parametrize(
+    "broken_info",
+    [
+        pytest.param({}, id="missing-requested_downloads"),
+        pytest.param({"requested_downloads": []}, id="empty-list"),
+        pytest.param(
+            {"requested_downloads": [{}]}, id="missing-filepath"
+        ),
+    ],
+)
+def test_download_audio_raises_download_error_on_malformed_yt_dlp_response(
+    broken_info: dict[str, Any], _yt_dlp_mock: type[_FakeYoutubeDL]
+) -> None:
+    """If yt-dlp's ``extract_info(download=True)`` returns a dict
+    without a usable ``requested_downloads[0]["filepath"]``, the raw
+    ``KeyError`` / ``IndexError`` would escape the CLI's
+    ``(YoutubeDLError, OSError)`` catch and the user would see a
+    raw traceback — and miss the "(no AssemblyAI charge incurred)"
+    reassurance. Surface as a yt-dlp ``DownloadError`` so the
+    existing catch + exit-3 mapping fire."""
+    from yt_dlp.utils import DownloadError
+
+    from transcriber.core.workspace import RunWorkspace
+    from transcriber.sources.youtube import _download_audio
+
+    workspace = RunWorkspace()
+    _yt_dlp_mock.download_info = broken_info
+
+    with pytest.raises(DownloadError, match="abc12345678"):
+        _download_audio("https://youtu.be/abc12345678", workspace)
+
+
 # ---------------------------------------------------------------------------
-# Phase 2 Slice 2 — YouTubeSource.probe_audio / download_audio (Group 4).
+# YouTubeSource.probe_audio / download_audio (Group 4).
 # Thin wrappers over the module helpers; the surface the CLI calls.
 # ---------------------------------------------------------------------------
 

@@ -137,14 +137,15 @@ def _handle_yt_dlp_exception(
     inspected for an "age-restricted" / "members" substring to route the
     auth-required variant separately from the generic extractor failure.
 
-    Codex P2: ``YoutubeDL.extract_info`` often routes extractor failures
-    through ``report_error()``, which raises ``DownloadError`` with the
-    original ``ExtractorError``-family exception preserved in
+    ``YoutubeDL.extract_info`` often routes extractor failures
+    through ``report_error()``, which raises ``DownloadError`` with
+    the original ``ExtractorError``-family exception preserved in
     ``__cause__``. Without unwrapping, those user-actionable failures
-    (private video, age-restricted, geo-restricted) would be misclassified
-    as exit-3 network failures. Recurse on ``__cause__`` first.
+    (private video, age-restricted, geo-restricted) would be
+    misclassified as exit-3 network failures. Recurse on
+    ``__cause__`` first.
 
-    Exit code matrix (mirrors Slice 1's captions exception matrix):
+    Exit code matrix:
     - 2: user-actionable video-level / auth issues yt-dlp can't bypass
     - 3: network exhaustion after yt-dlp's internal retries
     - 4: local I/O (ffmpeg post-processing, disk full / permissions)
@@ -158,10 +159,9 @@ def _handle_yt_dlp_exception(
         UnsupportedError,
     )
 
-    # If the outer exception is a DownloadError wrapping an extractor-
-    # family error, classify by the cause. Bounded recursion: a wrapped
-    # DownloadError-in-DownloadError would re-enter this branch and the
-    # innermost ExtractorError eventually decides the exit code.
+    # When DownloadError wraps an extractor-family error, classify by
+    # the cause so private/age-gated/unsupported videos return exit 2
+    # rather than the exit-3 network bucket.
     if isinstance(exc, DownloadError) and isinstance(
         exc.__cause__,
         (ExtractorError, UnavailableVideoError, UnsupportedError),
@@ -195,13 +195,28 @@ def _handle_yt_dlp_exception(
         )
     if isinstance(exc, ExtractorError):
         message_text = str(exc).lower()
-        if any(
-            marker in message_text
-            for marker in ("age-restricted", "age restricted", "members", "sign in")
-        ):
+        # yt-dlp's gated-content phrasing varies across extractors
+        # (age-restricted / private / members / login / premium) and
+        # across releases. Match a permissive substring set so any of
+        # those routes through the auth-required arm rather than the
+        # generic "extraction failed" — wrong message is a real UX hit
+        # even when the exit code is right.
+        auth_markers = (
+            "age-restricted",
+            "age restricted",
+            "members",
+            "member-only",
+            "sign in",
+            "sign-in",
+            "requires login",
+            "login required",
+            "private",
+            "premium",
+        )
+        if any(marker in message_text for marker in auth_markers):
             return 2, (
                 f"Video requires authentication (age-restricted, "
-                f"member-only, or paid):\n  {source_uri}\n\n"
+                f"member-only, private, or paid):\n  {source_uri}\n\n"
                 "Audio fallback can't download authenticated content "
                 "without cookies."
             )
@@ -218,7 +233,15 @@ def _handle_yt_dlp_exception(
         return 4, f"ffmpeg failed processing downloaded audio: {exc}"
     if isinstance(exc, OSError):
         return 4, f"Local I/O error during audio download: {exc}"
-    # Caller-side bug: should be unreachable.
+    # A new yt-dlp release added a sibling under YoutubeDLError we
+    # don't enumerate. The user-facing exit-3 is a safe default, but
+    # an operator needs to know the matrix has rotted — surface in
+    # logs so the gap is discoverable.
+    logger.error(
+        "unclassified yt-dlp exception (audio-fallback matrix needs update): %r",
+        exc,
+        exc_info=True,
+    )
     return 3, f"Unexpected yt-dlp error: {exc!r}"
 
 
@@ -249,10 +272,9 @@ def _handle_youtube_exception(exc: Exception, source_uri: str) -> int:
         YouTubeRequestFailed,
     )
 
-    # Phase 2 Slice 2: TranscriptsDisabled and NoTranscriptFound are now
-    # wrapped in NoCaptionsAvailable by YouTubeSource.prepare() and
-    # routed through the budget-aware audio-fallback handler in the
-    # transcribe command directly. They never reach this function.
+    # TranscriptsDisabled and NoTranscriptFound are wrapped in
+    # NoCaptionsAvailable by YouTubeSource.prepare and routed through
+    # the budget-aware audio-fallback handler — they never reach here.
     if isinstance(exc, PoTokenRequired):
         # PR-#31 silent-failure-hunter finding: previously routed to the
         # generic catch-all and told the user the library may need an
@@ -532,24 +554,23 @@ def transcribe(
                 console.print(f"[red]error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
             except NoCaptionsAvailable as exc:
-                # Phase 2 Slice 2 — YouTube captions missing. Free budget
-                # short-circuits to exit 2 with a budget-aware message;
-                # paid budgets fall through to the yt-dlp audio fallback
-                # (probe + cost gate + download). Spec §4b.
-                if budget.value == "free":
+                # Free budget: short-circuit with a budget-aware
+                # message that documents the paid-fallback opt-in.
+                # Paid budgets fall through to the probe→cost-gate→
+                # download flow below.
+                if budget is Budget.free:
                     console.print(
                         f"[red]error:[/red] {_no_captions_message(source, 'free')}"
                     )
                     raise typer.Exit(code=2) from exc
 
-                # Paid budget: metadata probe → cost gate → download.
-                # Catch yt-dlp's common base ``YoutubeDLError`` (covers
-                # ExtractorError, DownloadError, UnavailableVideoError,
-                # PostProcessingError, and any future subclasses — the
-                # exception hierarchy has siblings rather than a single
-                # chain so a narrow tuple silently misses entries). Plus
-                # our slice-local ``ProbeDurationUnknown``. The matrix
-                # decision happens in ``_handle_yt_dlp_exception`` (§4c).
+                # Catch yt-dlp's common base ``YoutubeDLError`` rather
+                # than a narrow tuple: the exception hierarchy has
+                # siblings (ExtractorError, DownloadError,
+                # UnavailableVideoError, PostProcessingError) so the
+                # narrow form silently misses any new release's
+                # additions. Plus the slice-local
+                # ``ProbeDurationUnknown``.
                 from yt_dlp.utils import YoutubeDLError
 
                 try:
@@ -562,13 +583,12 @@ def transcribe(
                 cost_usd = estimate_assemblyai_cost(
                     probe.duration, diarize=not no_speakers
                 )
-                # Codex P2: previously this passed cost_summary to
-                # budget_check, which suppresses BOTH the real $X.XX
-                # estimate line AND the soft-cap warning. Now we
-                # surface the audio-fallback context up-front via
-                # notify(), then let budget_check render the
-                # dollar-amount + soft-cap lines on its own. User
-                # gets context AND the real number.
+                # Notify the user about the fallback context before
+                # budget_check fires. Using budget_check's
+                # ``cost_summary`` parameter would suppress both the
+                # duration-derived $X.XX line AND the soft-cap
+                # warning — undesirable here because the user needs
+                # the real number to authorise spend.
                 console.print(
                     "[dim]No captions available for this video; "
                     "the audio fallback will download the audio and "
@@ -710,17 +730,13 @@ def transcribe(
                     # PR — the contract violation and filename regression are.
                     media = dataclasses.replace(media, local_path=wav_path)
 
-                    # Phase 2 Slice 2 §4e: skip the budget gate for the
-                    # audio-fallback path. The pre-download budget_check
-                    # earlier in the NoCaptionsAvailable handler already
-                    # gated the user on the probe-derived cost estimate;
-                    # re-firing here would double-prompt (or silently
-                    # cancel under non-interactive runs that only supplied
-                    # one confirmation). The probe-vs-ffprobe duration
-                    # drift is small (int seconds vs float seconds) so
-                    # the user's earlier authorization is trusted; if
-                    # divergence ever becomes a real problem a follow-up
-                    # confirmation mode can be added.
+                    # The audio-fallback path already prompted on the
+                    # probe-derived cost in the NoCaptionsAvailable
+                    # handler; re-firing here would double-prompt (or
+                    # silently cancel on a non-interactive run with one
+                    # ``-y``). The probe-vs-ffprobe duration drift is
+                    # int-vs-float seconds, so trusting the earlier
+                    # authorisation is acceptable.
                     if media.kind != "youtube_audio":
                         cost_usd = estimate_assemblyai_cost(
                             duration_seconds, diarize=not no_speakers

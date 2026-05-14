@@ -59,10 +59,25 @@ class AudioProbe:
     don't re-probe via oembed on the audio path. ``frozen=True`` mirrors
     ``PreparedMedia`` / ``PreparedTranscript`` and prevents accidental
     mutation between probe and download.
+
+    ``duration > 0`` is a type-level invariant — the cost estimator
+    treats negative or zero seconds as "$0", which would silently
+    bypass the budget gate. The probe helper raises
+    ``ProbeDurationUnknown`` before construction; this guard catches
+    future producers that forget. ``title`` is ``None`` when the
+    upstream probe returned no usable title (missing key, hostile
+    creator-controlled value rejected by ``validate_title``); the
+    CLI's filename derivation falls back to ``extra['video_id']``.
     """
 
     duration: int
-    title: str
+    title: str | None
+
+    def __post_init__(self) -> None:
+        if self.duration <= 0:
+            raise ValueError(
+                f"AudioProbe.duration must be > 0, got {self.duration!r}"
+            )
 
 
 class NoCaptionsAvailable(Exception):
@@ -111,10 +126,11 @@ def _probe_metadata(url: str) -> AudioProbe:
     """yt-dlp metadata round-trip — no download. Returns AudioProbe
     populated from ``info["title"]`` and ``info["duration"]``.
 
-    Raises ``ProbeDurationUnknown`` when ``duration`` is missing or
-    non-positive (live streams / premieres / malformed metadata). All
-    other yt-dlp exceptions propagate to the CLI for exit-code mapping
-    via ``_handle_yt_dlp_exception``.
+    Raises ``ProbeDurationUnknown`` when the response is missing,
+    when ``duration`` is missing/non-numeric/non-positive (live
+    streams, premieres, malformed metadata). All other yt-dlp
+    exceptions propagate to the CLI for exit-code mapping via
+    ``_handle_yt_dlp_exception``.
 
     yt-dlp is imported locally because the module is large (~50 MB
     in-memory after extraction registry init); deferring keeps the
@@ -124,26 +140,31 @@ def _probe_metadata(url: str) -> AudioProbe:
 
     with YoutubeDL(_YDL_OPTS_BASE) as ydl:
         info = ydl.extract_info(url, download=False)
-    duration = info.get("duration")
-    if duration is None or duration <= 0:
+    if not isinstance(info, dict):
         raise ProbeDurationUnknown(url)
-    # probe.title is creator-controlled metadata that downstream CLI
-    # uses as the default filename stem after only whitespace
-    # collapsing. Run it through validate_title (mirrors the oembed
-    # fail-soft pattern: validation failure → empty string → CLI/
-    # formatter fall back to extra["video_id"]) so a hostile title
-    # like ``../outside`` or ``subdir/name`` can't redirect the write
-    # outside settings.output_dir. Codex P1.
-    raw_title = info.get("title") or ""
-    try:
-        title = validate_title(str(raw_title)) if raw_title else ""
-    except ValueError:
-        logger.debug(
-            "yt-dlp probe: rejected hostile title %r for url=%s",
-            raw_title,
-            url,
-        )
-        title = ""
+    duration = info.get("duration")
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        raise ProbeDurationUnknown(url)
+    # probe.title is creator-controlled metadata that the CLI uses as
+    # the default filename stem after only whitespace collapsing. Run
+    # it through validate_title so a hostile title like ``../outside``
+    # or ``subdir/name`` can't redirect the write outside
+    # settings.output_dir. Fail-soft to None → CLI falls back to
+    # extra['video_id'] (same shape as the oembed probe).
+    raw_title = info.get("title")
+    title: str | None
+    if raw_title:
+        try:
+            title = validate_title(str(raw_title))
+        except ValueError:
+            logger.debug(
+                "yt-dlp probe: rejected hostile title %r for url=%s",
+                raw_title,
+                url,
+            )
+            title = None
+    else:
+        title = None
     return AudioProbe(duration=int(duration), title=title)
 
 
@@ -153,9 +174,15 @@ def _download_audio(url: str, workspace: RunWorkspace) -> Path:
     ``bestaudio/best`` — could be m4a, opus, webm, etc.).
 
     yt-dlp exceptions propagate; the CLI maps them via
-    ``_handle_yt_dlp_exception``.
+    ``_handle_yt_dlp_exception``. A response shape we don't recognise
+    (post-processing dropped ``requested_downloads``, the list is
+    empty, or the first entry has no ``filepath``) surfaces as
+    ``DownloadError`` so the same catch + exit-3 + "no charge
+    incurred" reassurance fire — a raw ``KeyError`` here would escape
+    the CLI's catch tuple and dump a traceback.
     """
     from yt_dlp import YoutubeDL  # noqa: PLC0415 — see _probe_metadata
+    from yt_dlp.utils import DownloadError  # noqa: PLC0415
 
     opts = {
         **_YDL_OPTS_BASE,
@@ -163,7 +190,17 @@ def _download_audio(url: str, workspace: RunWorkspace) -> Path:
     }
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
-    return Path(info["requested_downloads"][0]["filepath"])
+    requested = (info or {}).get("requested_downloads") or []
+    if not requested:
+        raise DownloadError(
+            f"yt-dlp returned no downloaded file for {url!r}"
+        )
+    filepath = requested[0].get("filepath")
+    if not filepath:
+        raise DownloadError(
+            f"yt-dlp returned a downloaded entry without a filepath for {url!r}"
+        )
+    return Path(filepath)
 
 logger = logging.getLogger(__name__)
 
@@ -427,11 +464,12 @@ class YouTubeSource:
         try:
             chosen, fetched = _fetch_captions(video_id)
         except (TranscriptsDisabled, NoTranscriptFound) as exc:
-            # Slice 2 trigger condition: these two exceptions mean the
-            # video plays but has no captions we can use — the CLI
+            # Audio-fallback trigger: these two exceptions mean the
+            # video plays but has no captions we can use. The CLI
             # decides whether to fall through to yt-dlp audio download
             # based on --budget. All other captions-library exceptions
-            # propagate unchanged (Slice 1 contract preserved).
+            # propagate unchanged so the captions exit-code matrix is
+            # untouched.
             raise NoCaptionsAvailable(
                 f"no captions for {uri!r}: {exc.__class__.__name__}"
             ) from exc
@@ -483,10 +521,10 @@ class YouTubeSource:
         cost-prompt. Threads the probe-derived title and duration
         forward so downstream stages don't re-probe.
 
-        ``title`` (Codex P2): when the user supplied ``--title``, the CLI
-        passes that validated string here so PreparedMedia.title (used
-        by the formatter for the frontmatter + H1) honours it. Without
-        the override, the probe title is used — same as the captions
+        When the user supplies ``--title``, the CLI passes that
+        validated string here so ``PreparedMedia.title`` (used by the
+        formatter for the frontmatter + H1) honours it. Without the
+        override, the probe title is used — mirrors the captions
         arm's behaviour with oembed.
         """
         video_id = _extract_video_id(uri)
