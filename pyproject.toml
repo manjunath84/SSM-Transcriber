@@ -33,6 +33,12 @@ dev = [
     "types-requests>=2.32.0",
 ]
 
+hosted = [
+    "boto3>=1.34.0",
+    "moto[s3,dynamodb,cognitoidp]>=5.0.0",
+    "types-boto3>=1.0.0",
+]
+
 [project.scripts]
 ssm-transcriber = "transcriber.cli:app"
 
