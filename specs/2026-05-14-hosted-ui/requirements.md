@@ -53,9 +53,17 @@ pure-serverless, scaling to ≈$0 at idle by construction.
    (7e adds zero infra cost; the transcription itself is the existing
    paid AssemblyAI call — the runbook states this explicitly).
 2. **Sign in (7a).** User opens the web app → "Sign in with Google" →
-   Cognito Hosted UI with Google IdP (Drive scope requested) → lands on
+   Cognito Hosted UI with Google as the identity provider
+   (identity/authentication only — **no Drive scope here**) → lands on
    the dashboard. An un-invited Google account is rejected with a clear
-   "not invited" message (exit: no account provisioned).
+   "not invited" message (exit: no account provisioned). Drive access is
+   a **separate** opt-in consent (see Scenario 2b below), never
+   bundled into sign-in.
+2b. **Enable Drive upload (7c, opt-in).** When the user first turns on
+   Drive upload, the app runs a **separate Google OAuth
+   authorization-code consent** (scope `drive.file`, offline access).
+   The refresh token is exchanged + stored KMS-encrypted server-side.
+   Declining leaves the app fully usable without Drive.
 3. **View existing transcript (7a).** Dashboard lists the user's
    transcripts newest-first with a budget pill. Clicking one renders the
    markdown + YAML frontmatter with a metadata sidebar and
@@ -69,10 +77,19 @@ pure-serverless, scaling to ≈$0 at idle by construction.
    rate, estimated cost, remaining budget, and post-job balance → user
    approves → audio downloaded → AssemblyAI → settle → markdown in S3.
    Frontmatter `source_kind: youtube_audio`, `provider: assemblyai`.
-6. **Submit a Drive URL (7b).** Public Drive link → HEAD probe →
-   cost gate shows the honest "estimate unavailable; AssemblyAI bills
-   per audio minute, final cost in dashboard" message → approve →
-   AssemblyAI `audio_url` passthrough (no Lambda download).
+6. **Submit a Drive URL (7b).** Public Drive link → HEAD probe
+   (`Content-Length`). Drive bytes don't map cleanly to billable audio
+   minutes, so the cost gate can't show an exact figure — **but Gate 3
+   must still bound spend (Codex P1 fix)**: the job reserves a
+   **conservative ceiling** before approval, derived from
+   `Content-Length ÷ a configured minimum-audio-bitrate` →
+   max-plausible-minutes × rate, and hard-capped by a configurable
+   `max_drive_reservation_usd`. Approval is **blocked** if that ceiling
+   exceeds `remaining_budget_usd` (same Gate-3 path as Scenario 9).
+   Cost gate shows "estimate uncertain; up to ~$X reserved against your
+   budget, actual billed per audio minute and reconciled on settle" →
+   approve → AssemblyAI `audio_url` passthrough (no Lambda download) →
+   settle to actual, refund (ceiling − actual).
 7. **Upload a local file (7c).** User picks "Upload file" → browser
    gets a presigned S3 PUT (≤500MB, audio/* or video/*) → uploads →
    probe → cost gate → AssemblyAI ingests from a presigned S3 GET →
@@ -118,9 +135,15 @@ Other binding constraints carried unchanged:
 - **No `print()` in library code; no secrets in logs or user-facing
   output.** CloudWatch structured logs follow the same rule;
   `redacted_dump()` discipline extends to any diagnostic Lambda output.
-- **Atomic output writes.** S3 writes use put-then-confirm; the
-  `result.raw.json` + `transcript.md` pair is written so a partial
-  failure never leaves a half-transcript at the canonical key.
+- **Atomic output writes (Codex P2 fix).** A single S3 PUT is atomic,
+  but `transcript.md` + `result.raw.json` are **two** objects. Both are
+  written first, then a small `manifest.json` is written **last** as
+  the commit marker. The list/get Lambdas and the viewer treat a
+  `{job_id}` prefix as existing **only if `manifest.json` is present**
+  — so a partial failure (one object written, crash before the marker)
+  yields an invisible prefix, never a half-transcript at a canonical
+  key. The marker PUT is the linearization point; re-running a failed
+  job overwrites the partial objects then re-writes the marker.
 - **Cache philosophy.** `result.raw.json` is retained in S3 so a
   re-format (timestamp toggle, speaker relabel) never re-bills
   AssemblyAI — same intent as the F3 versioned cache.
@@ -147,7 +170,7 @@ Other binding constraints carried unchanged:
 | D5 | CLI ↔ UI relationship | (a) coexistence; (b) cloud-canonical, CLI thin client; (c) CLI dual-mode `--local/--remote` | **(a) coexistence ("Reading 1")** | Preserves constitution local-first $0; library boundary already clean; Drive is the bridge for cross-surface visibility | Reading 2 (`--remote`) is a reversible future addition if unified visibility ever outweighs dual-path cost |
 | D6 | Sources in hosted UI | all four / Drive+YouTube only / upload only | **All four (YouTube captions+audio, Drive URL, local upload)** | Source modules already written; captions is the only $0 non-local path; Drive passthrough is near-free to wire | Per-source guardrails are env-config tunable |
 | D7 | Output + viewer | S3+viewer / Drive-primary / both | **Both: S3 primary + in-app viewer + optional Drive** | Constitution says outputs flow into Obsidian/NotebookLM/Drive; viewer needed for the read-now loop; optional Drive avoids forcing Google scope on every user | Viewer fidelity can grow; Drive stays optional |
-| D8 | Auth | Cognito+Google fed / Cognito email-pw / pure Google OAuth | **Cognito + Google federated IdP** | Best secondary-user UX (one click), best Drive integration (one consent), highest AWS-learning surface, reuses existing OAuth model | IdP set is Cognito config; email/pw can be added |
+| D8 | Auth | Cognito+Google fed / Cognito email-pw / pure Google OAuth | **Cognito + Google federated IdP** for app sign-in; **separate Google OAuth authorization-code flow** for the Drive token | One-click Cognito sign-in for secondary-user UX, highest AWS-learning surface. Codex P1 correction: Cognito federation yields Cognito user-pool tokens only and does **not** reliably surface the upstream Google access/refresh token — so Drive access is a **distinct** Google OAuth authorization-code consent (offline → refresh token), opt-in when the user first enables Drive upload. Not "one consent". | IdP set is Cognito config; email/pw can be added; Drive-token flow pinned in Reference calls |
 | D9 | Frontend stack | Vite+React+TS+TanStack Query / Next.js+Amplify / SvelteKit | **Vite + React + TS + TanStack Query, S3+CloudFront** | Modern-frontend learning without framework tax; doesn't hide AWS (vs Amplify); TanStack Query is a natural fit for the poll lifecycle; React-first serves interview-prep | Hosting can move to Amplify later without app rewrite |
 | D10 | Cost-gate mechanism | SF callback token / poll-inside-SF / synchronous Lambda wait | **Step Functions callback token, 24h heartbeat** | $0 while paused; survives tab close; clean resume via API GW → SendTaskSuccess/Failure | Timeout window is config (24h default) |
 | D11 | Secrets backend | SSM Parameter Store / Secrets Manager / both behind abstraction | **Both behind a `SecretsProvider` abstraction; default `ssm` ($0)** | Mirrors the repo's existing provider-registry pattern; cost-sensitive default; one config flip to switch; richer learning artifact | `TRANSCRIBER_SECRETS_BACKEND` env value |
@@ -182,16 +205,33 @@ shape with `audio_url` = the presigned S3 URL. Confirm via context7 that
 `audio_url` accepts a time-limited presigned S3 URL and capture the
 retrieval date here before writing 7c code.
 
-### Cognito Hosted UI + Google IdP token passthrough (NEW — pin at 7a)
+### Google Drive token acquisition (NEW — pin at 7a/7c)
 
-**Required before slice 7a implementation.** context7 fetch for: the
-exact Cognito User Pool Google-IdP configuration, the OAuth scope set
-needed for `https://www.googleapis.com/auth/drive.file`, and the
-mechanism by which the Google access/refresh token is obtained
-client-side after the Cognito Hosted UI redirect (Cognito does not
-reliably surface the upstream IdP access token server-side). Capture
-the verbatim token-exchange request/response shape + retrieval date in
-this section before 7a code is written.
+**Decision (resolves Codex P1).** Cognito + Google federated IdP
+provides **app identity / sign-in only**: it yields Cognito user-pool
+tokens, **not** the upstream Google access/refresh token, and Cognito
+does not reliably surface the IdP token. Drive API access therefore
+uses a **separate, explicit Google OAuth 2.0 authorization-code flow**,
+distinct from sign-in:
+
+- Scope `https://www.googleapis.com/auth/drive.file`, with
+  `access_type=offline` + `prompt=consent` to obtain a refresh token.
+- Triggered only when the user first enables Drive upload (7c) — not
+  during Cognito sign-in.
+- The authorization code is exchanged **server-side**; the refresh
+  token is stored KMS-encrypted (DynamoDB `SK=#GOOGLE_TOKENS`); access
+  tokens are minted from the refresh token on demand by the
+  drive-upload Lambda.
+- `POST /users/me/google-tokens` carries the authorization code (or
+  the server completes the redirect exchange). It **never** depends on
+  a Cognito-surfaced IdP token.
+
+**Required before slice 7a/7c implementation:** context7 fetch for the
+verbatim Google OAuth 2.0 authorization-code shapes (authorize-URL
+params, token-endpoint code exchange, refresh exchange) **and** the
+exact Cognito User Pool Google-IdP configuration used for identity.
+Capture verbatim request/response shapes + retrieval date in this
+section before that code is written.
 
 ### yt-dlp / youtube-transcript-api (carry-forward)
 
@@ -207,9 +247,12 @@ yt-dlp (binary/ffmpeg layer) is an infra concern, not a shape change.
   (`source_kind`, `provider`, `model`, `duration`, `cost_usd`,
   speaker/timestamp fields). The hosted pipeline reuses the formatter
   verbatim; no new frontmatter fields.
-- **S3 layout:**
+- **S3 layout** (a `{job_id}` prefix is reader-visible **only once its
+  `manifest.json` exists** — see Atomic output writes):
   - `transcripts-bucket/{cognito_sub}/{job_id}/transcript.md`
   - `transcripts-bucket/{cognito_sub}/{job_id}/result.raw.json`
+  - `transcripts-bucket/{cognito_sub}/{job_id}/manifest.json`
+    (commit marker, written **last**; presence = job committed)
   - `temp-audio-bucket/{cognito_sub}/{job_id}.{ext}` (lifecycle: delete
     after 14 days)
 - **DynamoDB single-table** (PK/SK + GSI1 token-lookup + GSI2 admin
@@ -236,7 +279,7 @@ yt-dlp (binary/ffmpeg layer) is an infra concern, not a shape change.
 | F2 PreparedMedia | **ADAPTED** | Same dataclass and source contract, but F2's `local_path: Path` "always present" invariant does **not** hold for Lambda-initiated Drive-URL jobs — the `remote_url` passthrough path is used and `local_path` is `None` or a Lambda `/tmp` path. Implementers must not assume `local_path` is populated in the hosted context. |
 | F3 cache key | **ADAPTED** | Preserves F3's *intent* (retain the raw result so a re-format never re-bills) but **not** its contract: the hosted path stores `result.raw.json` keyed by `{cognito_sub}/{job_id}` (job identity), **not** the versioned `audio_sha256 + provider + model + revision + language + vad_mode + schema` composite with lookup-by-key. Do **not** reuse the `~/.cache/transcriber/` `CacheKey` mechanics in Lambda. |
 | F4 two-gate spend | **EXTENDED** | Hosted adds Gate 3 (per-user cap). CLI stays two-gate. PLAN.md §F4 amended. |
-| F5 RunWorkspace | **ADAPTED** | Lambda `/tmp` + temp-audio S3 bucket play the workspace role; atomic-write principle preserved via S3 put + lifecycle. |
+| F5 RunWorkspace | **ADAPTED** | Lambda `/tmp` + temp-audio S3 bucket play the workspace role; atomic-write principle preserved via staged objects + a last-written `manifest.json` commit marker (see Atomic output writes / Codex P2). |
 | F6 model preflight | **N/A** | AssemblyAI-only in hosted; no local model. faster-whisper explicitly out (Non-goals). |
 | F7 test strategy | **EXTENDED** | Adds Lambda unit tests, Step Functions local execution, `moto`-mocked AWS; integration lane stays opt-in (`SSM_INTEGRATION`). |
 | F8 observability | **EXTENDED** | CloudWatch structured logs; no secrets; budget/provider decisions at INFO — same rule, new sink. |
@@ -315,7 +358,7 @@ IaC-lifecycle learning artifact.
 | Failure | Behaviour | Budget |
 |---|---|---|
 | Probe fails (bad URL, >3h video, geo-block, >2GB Drive, >500MB upload) | SF ends; job `failed`; reason in UI + email; no cost gate | Nothing reserved |
-| Gate 3: estimate > `remaining_budget_usd` (Scenario 9) | `reserve-budget` conditional write fails; job `failed`; message "estimated $X exceeds your remaining $Y this month; ask the admin to raise your cap"; no AssemblyAI call | Nothing reserved (conditional write never succeeded) |
+| Gate 3: estimate **or Drive conservative ceiling** > `remaining_budget_usd` (Scenarios 9, 6) | `reserve-budget` conditional write fails; job `failed`; message "estimated/maximum $X exceeds your remaining $Y this month; ask the admin to raise your cap"; no AssemblyAI call | Nothing reserved (conditional write never succeeded) |
 | User cancels at cost gate / 24h timeout | `SendTaskFailure` / heartbeat → job `cancelled` | Full refund |
 | AssemblyAI returns error status | poll Choice → fail path; raw error logged | Settle to actual (≈$0 if AAI didn't bill) |
 | Lambda crash mid-AAI (unknown billing) | SF Catch → job `failed`, `settlement_state=failed` | NOT refunded; CloudWatch alarm; admin reconciles |
