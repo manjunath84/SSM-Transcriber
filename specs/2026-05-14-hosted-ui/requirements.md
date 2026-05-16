@@ -49,7 +49,9 @@ pure-serverless, scaling to ≈$0 at idle by construction.
    (Claude Code, Codex CLI/UI, Cursor, VS Code Copilot, Gemini CLI),
    the user invokes the guided runbook; it asks source / Drive-upload /
    speakers / quality in plain language and runs the correct
-   `uv run ssm-transcriber transcribe …`. No flags memorised. $0.
+   `uv run ssm-transcriber transcribe …`. No flags memorised. **$0 AWS**
+   (7e adds zero infra cost; the transcription itself is the existing
+   paid AssemblyAI call — the runbook states this explicitly).
 2. **Sign in (7a).** User opens the web app → "Sign in with Google" →
    Cognito Hosted UI with Google IdP (Drive scope requested) → lands on
    the dashboard. An un-invited Google account is rejected with a clear
@@ -108,7 +110,7 @@ PR:
 |---|---|
 | `specs/mission.md` | Move "Multi-user or hosted/SaaS deployment" from *Out of scope* to *In scope (Phase 7, hosted UI)* with a back-link to this spec. The local CLI remains single-user/local-first; the hosted UI is the multi-user surface. |
 | `specs/tech-stack.md` | Add an AWS-deployment section: Lambda, Step Functions, DynamoDB, S3, Cognito (+Google IdP), API Gateway HTTP API, CloudFront, SES, EventBridge, SSM Parameter Store / Secrets Manager. Rationale per row. |
-| `docs/PLAN.md` §F1 | Extend verbatim: *"Library code (`sources/`, `providers/`, `formatters/`, `destinations/`, `core/`) stays sync. Orchestration MAY be event-driven (Step Functions, browser polling) at the hosting boundary only. No `async def` in library code."* |
+| `docs/PLAN.md` §F1 | Extend verbatim: *"Library code (`sources/`, `providers/`, `formatters/`, `destinations/`, `core/`) stays sync. Orchestration MAY be event-driven (Step Functions, browser polling) at the hosting boundary only. No `async def` in library code."* **Note: real F1 + CLAUDE.md's guardrail currently name only "pipeline, source, provider, or formatter". This amendment expands that set (adds `destinations/`, `core/`). The implementing PR MUST update the `CLAUDE.md` "Guardrails to keep inline" sync line in the same PR, or the two authoritative tool-context files diverge.** |
 | `docs/PLAN.md` §F4 | Extend verbatim: *"The hosted UI adds Gate 3 (per-user monthly spend cap) on top of Gate 1 (configured) and Gate 2 (budget tier). The CLI remains two-gate."* |
 
 Other binding constraints carried unchanged:
@@ -230,9 +232,9 @@ yt-dlp (binary/ffmpeg layer) is an infra concern, not a shape change.
 
 | Contract | Status | Notes |
 |---|---|---|
-| F1 sync | **EXTENDED** | Library stays sync; orchestration event-driven at the hosting boundary only. PLAN.md §F1 amended (see Constraints). |
-| F2 PreparedMedia | **UNCHANGED** | Lambdas call the same source contract. |
-| F3 cache key | **UNCHANGED** | `result.raw.json` in S3 mirrors versioned-cache intent; same key inputs. |
+| F1 sync | **EXTENDED** | Library stays sync; orchestration event-driven at the hosting boundary only. PLAN.md §F1 amended (see Constraints). The amendment expands the named sync-only set to add `destinations/` + `core/`; the implementing PR **must** update CLAUDE.md's guardrail line in lockstep (see the §F1 row note in Constraints). |
+| F2 PreparedMedia | **ADAPTED** | Same dataclass and source contract, but F2's `local_path: Path` "always present" invariant does **not** hold for Lambda-initiated Drive-URL jobs — the `remote_url` passthrough path is used and `local_path` is `None` or a Lambda `/tmp` path. Implementers must not assume `local_path` is populated in the hosted context. |
+| F3 cache key | **ADAPTED** | Preserves F3's *intent* (retain the raw result so a re-format never re-bills) but **not** its contract: the hosted path stores `result.raw.json` keyed by `{cognito_sub}/{job_id}` (job identity), **not** the versioned `audio_sha256 + provider + model + revision + language + vad_mode + schema` composite with lookup-by-key. Do **not** reuse the `~/.cache/transcriber/` `CacheKey` mechanics in Lambda. |
 | F4 two-gate spend | **EXTENDED** | Hosted adds Gate 3 (per-user cap). CLI stays two-gate. PLAN.md §F4 amended. |
 | F5 RunWorkspace | **ADAPTED** | Lambda `/tmp` + temp-audio S3 bucket play the workspace role; atomic-write principle preserved via S3 put + lifecycle. |
 | F6 model preflight | **N/A** | AssemblyAI-only in hosted; no local model. faster-whisper explicitly out (Non-goals). |
@@ -256,14 +258,37 @@ into the `SecretsProvider`-backed store). New config:
 Google OAuth client config reused from the existing
 `GOOGLE_OAUTH_CLIENT_ID`/`SECRET` slots in `.env.example`.
 
+## Tracking convention (mega-spec → issues)
+
+`docs/ai/runbooks/tracking.md` mandates one issue per phase/slice. A
+single multi-slice mega-spec needs an explicit rule so the board does
+not stay misleading for the whole multi-slice build:
+
+- Issue **#37** is the **Phase 7 parent anchor**. It is referenced
+  (`Refs #37`) by the spec PR and every slice PR; it is **not**
+  auto-closed by any single slice. It closes only when all slices have
+  landed.
+- Open **one issue per implementation slice** — 7a, 7b, 7c, 7d —
+  **before 7a implementation begins**. 7e is already tracked (shipped
+  in PR #39, `Refs #37`); a 7e issue is optional/retroactive.
+- Each slice's implementation PR carries `Closes #<that-slice-issue>`
+  (auto-closes its own card) **and** `Refs #37` (keeps the parent
+  visible). No slice PR uses `Closes #37`.
+- Spec PR #38 uses `Refs #37` only (a spec PR never auto-closes the
+  slice/phase issue, per tracking.md).
+
 ## Slice map (implementation units within this mega-spec)
 
 - **7e — Guided local-transcribe runbook** (ships first; zero AWS):
-  `docs/ai/runbooks/transcribe-local.md` + thin adapters
-  (`.claude/commands/`, `AGENTS.md`, `.cursorrules`,
-  `.github/copilot-instructions.md`, `GEMINI.md`). No Python change.
-  Verify: from Claude Code AND Codex, the runbook walks the user to a
-  correct `uv run ssm-transcriber …` without flag recall.
+  `docs/ai/runbooks/transcribe-local.md` + a thin
+  `.claude/commands/transcribe-local.md` pointer + two
+  `docs/ai/README.md` routing rows. The non-Claude tool adapters
+  (`AGENTS.md`, `.cursorrules`, `.github/copilot-instructions.md`,
+  `GEMINI.md`) need **no** edit — they already indirect via
+  `docs/ai/README.md`, so the routing table is the AI-agnostic surface
+  (reconciliation recorded in `plan-7e.md`). No Python change. Verify:
+  from Claude Code AND Codex, the runbook walks the user to a correct
+  `uv run ssm-transcriber …` without flag recall. **Shipped in PR #39.**
 - **7a — Auth scaffold + S3 viewer:** Cognito+Google fed, CloudFront+S3
   SPA, API GW Cognito authorizer, list/get/delete transcript Lambdas,
   seeded S3 fixture. Verify: Google sign-in → see + read a seeded
@@ -290,6 +315,7 @@ IaC-lifecycle learning artifact.
 | Failure | Behaviour | Budget |
 |---|---|---|
 | Probe fails (bad URL, >3h video, geo-block, >2GB Drive, >500MB upload) | SF ends; job `failed`; reason in UI + email; no cost gate | Nothing reserved |
+| Gate 3: estimate > `remaining_budget_usd` (Scenario 9) | `reserve-budget` conditional write fails; job `failed`; message "estimated $X exceeds your remaining $Y this month; ask the admin to raise your cap"; no AssemblyAI call | Nothing reserved (conditional write never succeeded) |
 | User cancels at cost gate / 24h timeout | `SendTaskFailure` / heartbeat → job `cancelled` | Full refund |
 | AssemblyAI returns error status | poll Choice → fail path; raw error logged | Settle to actual (≈$0 if AAI didn't bill) |
 | Lambda crash mid-AAI (unknown billing) | SF Catch → job `failed`, `settlement_state=failed` | NOT refunded; CloudWatch alarm; admin reconciles |
