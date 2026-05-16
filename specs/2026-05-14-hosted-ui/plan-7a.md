@@ -267,7 +267,7 @@ git commit -m "feat(7a): CDK app skeleton (synth-green, no resources)"
 
 Run:
 ```bash
-cd web 2>/dev/null || (mkdir web && cd web)
+mkdir -p web && cd web
 npm create vite@latest . -- --template react-ts
 npm install
 npm install @tanstack/react-query
@@ -332,7 +332,7 @@ Replace the skeleton test with:
 ```python
 def test_transcripts_bucket_is_private_and_destroyable() -> None:
     t = _template()
-    t.resource_count_is("AWS::S3::Bucket", 2)  # transcripts + SPA hosting (Task 12)
+    t.resource_count_is("AWS::S3::Bucket", 1)  # transcripts only; SPA bucket arrives in Task 12
     t.has_resource_properties(
         "AWS::S3::Bucket",
         {"PublicAccessBlockConfiguration": {"BlockPublicAcls": True}},
@@ -353,7 +353,7 @@ def test_single_table_has_pk_sk_and_gsis() -> None:
     )
 ```
 
-Run: `cd infra && python -m pytest tests/ -q` → Expected: FAIL (1 bucket asserted = 2, no table).
+Run: `cd infra && python -m pytest tests/ -q` → Expected: FAIL (no bucket/table exist yet — `resource_count_is(...,1)` and the table assertion both fail against the empty skeleton stack).
 
 - [ ] **Step 2: Add the constructs**
 
@@ -396,7 +396,7 @@ self.table.add_global_secondary_index(
 
 > Note: GSI1 (token lookup) / GSI2 (admin scan) are provisioned per the spec's single-table design but **unused in 7a** (only `#PROFILE` items exist). They are cheap on-demand and avoid a later table migration.
 
-The SPA hosting bucket (2nd bucket asserted) is added in Task 12; until then, temporarily assert `resource_count_is("AWS::S3::Bucket", 1)` and update to `2` in Task 12. (Adjust Step 1's count to `1` now; Task 12 Step 1 flips it to `2`.)
+The Step 1 snippet above already asserts exactly `1` bucket (transcripts only). The SPA hosting bucket is a Task 12 concern: Task 12 Step 1 is the single place that flips this assertion to `2`. Do not pre-assert `2` here — that would never reach a clean red→green in this task.
 
 - [ ] **Step 3: Pass + synth**
 
@@ -599,7 +599,7 @@ git commit -m "feat(7a): hosted error→HTTP mapping without internal leakage"
 - Create: `src/transcriber/hosted/handlers/__init__.py`, `src/transcriber/hosted/handlers/invite_gate.py`
 - Create: `tests/unit/hosted/test_invite_gate.py`
 
-> Uses the **verbatim federated-signin trigger event shape pinned in Task 0**. If Task 0's fetch showed the trigger is not Pre-Sign-up, adjust the handler signature to the pinned trigger — do **not** code against a guessed shape.
+> **Hard dependency on Task 0.** This task hardcodes `triggerSource: "PreSignUp_ExternalProvider"` and the event shape below. If Task 0's context7 pin shows a *different* federated-signin trigger or payload, then **three** sites must change together: (1) the `_event()` builder + handler here, (2) Task 8's `cognito.UserPoolOperation.PRE_SIGN_UP` wiring, and (3) Task 8's `LambdaConfig.PreSignUp` assertion. Do **not** code against a guessed shape — Task 0 must be complete first.
 
 - [ ] **Step 1: Failing test (moto DynamoDB)**
 
@@ -626,6 +626,10 @@ def table(monkeypatch):
             BillingMode="PAY_PER_REQUEST",
         )
         monkeypatch.setenv("HOSTED_TABLE", "HostedTable")
+        # Handlers call boto3 with no explicit region; moto 5 does not
+        # auto-populate this, so without it the first boto3 call raises
+        # NoRegionError before any assertion runs.
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
         yield t
 
 
@@ -725,11 +729,22 @@ Run synth tests → Expected: FAIL.
 
 - [ ] **Step 2: Implement (use Task-0 pinned construct shapes verbatim)**
 
-Add to `hosted_stack.py` (Google client secret comes from SSM Parameter Store SecureString — D11 default `ssm`, $0 — not hard-coded):
+Add to `hosted_stack.py`. The Google **client secret** must be a real
+`SecretValue` (Codex P1): a federated-IdP client secret cannot be read
+from an SSM **SecureString** at synth — `ssm.StringParameter.value_for_string_parameter`
+only resolves plain String params and would hand Cognito a wrong/plain
+reference. Store the one Google client secret in **Secrets Manager** and
+pass it as a `SecretValue`; the **client id** is not secret, so a plain
+SSM String param is fine. (Cost note: this is the one place D11's "$0
+SSM default" does not apply — a single Secrets Manager secret is ≈\$0.40/mo,
+already acknowledged as opt-in in the spec cost-floor. The secret itself
+is created in Task 17 Step 1.) Construct prop name (`client_secret_value`)
+must match the **Task-0 context7 pin**.
 
 ```python
 from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_lambda as lambda_
+from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_ssm as ssm
 
 self.user_pool = cognito.UserPool(
@@ -739,16 +754,18 @@ self.user_pool = cognito.UserPool(
     removal_policy=RemovalPolicy.DESTROY,
 )
 
-google_secret = ssm.StringParameter.value_for_string_parameter(
-    self, f"/ssm-transcriber/{self.env_name}/google-oauth-client-secret"
+google_client_secret = secretsmanager.Secret.from_secret_name_v2(
+    self, "GoogleClientSecret",
+    f"ssm-transcriber/{self.env_name}/google-oauth-client-secret",
 )
-cognito.UserPoolIdentityProviderGoogle(
+google_client_id = ssm.StringParameter.value_for_string_parameter(
+    self, f"/ssm-transcriber/{self.env_name}/google-oauth-client-id"
+)
+google_idp = cognito.UserPoolIdentityProviderGoogle(
     self, "GoogleIdp",
     user_pool=self.user_pool,
-    client_id=ssm.StringParameter.value_for_string_parameter(
-        self, f"/ssm-transcriber/{self.env_name}/google-oauth-client-id"
-    ),
-    client_secret=google_secret,
+    client_id=google_client_id,
+    client_secret_value=google_client_secret.secret_value,  # SecretValue, not a plain SSM ref (Codex P1)
     scopes=["openid", "email", "profile"],      # identity ONLY — no drive scope (D8)
     attribute_mapping=cognito.AttributeMapping(
         email=cognito.ProviderAttribute.GOOGLE_EMAIL
@@ -759,7 +776,7 @@ invite_fn = lambda_.Function(
     self, "InviteGateFn",
     runtime=lambda_.Runtime.PYTHON_3_12,
     handler="transcriber.hosted.handlers.invite_gate.handler",
-    code=lambda_.Code.from_asset("../", bundling=_python_bundling()),
+    code=_lambda_code(),
     environment={"HOSTED_TABLE": self.table.table_name},
 )
 self.table.grant_read_data(invite_fn)
@@ -778,6 +795,10 @@ self.user_pool_client = self.user_pool.add_client(
         cognito.UserPoolClientIdentityProvider.GOOGLE
     ],
 )
+# CFN must create the Google IdP before the app client that lists it as a
+# supported provider, or the deploy races and fails "provider not found".
+self.user_pool_client.node.add_dependency(google_idp)
+
 self.user_pool.add_domain(
     "HostedUiDomain",
     cognito_domain=cognito.CognitoDomainOptions(
@@ -786,16 +807,29 @@ self.user_pool.add_domain(
 )
 ```
 
-Add a module-level `_python_bundling()` helper that pip-installs `src/transcriber` into the Lambda asset (Docker bundling or `BundlingOptions` with `pip install . -t /asset-output`). Concrete bundling command:
+Add module-level helpers. `_lambda_code()` is the single shared Lambda
+asset factory (used here and in Task 12) — Docker bundling so the
+**deployed** asset is only the pip-installed package (`/asset-output`),
+plus an `exclude` so the staging copy of the repo root skips heavyweight
+trees (`web/node_modules`, `.venv`, `.git`, `tests/`, `docs/`, `infra/`) —
+keeps staging fast and well clear of the 250 MB unzipped Lambda limit:
 
 ```python
 def _python_bundling():
     from aws_cdk import BundlingOptions, DockerImage
     return BundlingOptions(
         image=DockerImage.from_registry("public.ecr.aws/sam/build-python3.12"),
-        command=[
-            "bash", "-c",
-            "pip install . -t /asset-output && cp -r src/transcriber /asset-output/",
+        command=["bash", "-c", "pip install . -t /asset-output"],
+    )
+
+
+def _lambda_code():
+    return lambda_.Code.from_asset(
+        "../",
+        bundling=_python_bundling(),
+        exclude=[
+            "web", ".venv", ".git", "tests", "docs", "infra",
+            "output", "temp", "**/__pycache__", "**/*.pyc",
         ],
     )
 ```
@@ -836,6 +870,10 @@ def bucket(monkeypatch):
         s3.put_object(Bucket="tb", Key="sub1/j1/manifest.json", Body=b"{}")
         s3.put_object(Bucket="tb", Key="sub1/j2/transcript.md", Body=b"# partial")
         monkeypatch.setenv("TRANSCRIPTS_BUCKET", "tb")
+        # Required: handlers call boto3 with no explicit region; moto 5
+        # won't auto-set it → NoRegionError before any assertion. Tasks 10
+        # & 11 reuse this exact fixture, so this line covers them too.
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
         yield s3
 
 
@@ -897,7 +935,7 @@ def handler(event: dict, _context) -> dict:
         return {"statusCode": 200,
                 "headers": {"content-type": "application/json"},
                 "body": json.dumps({"transcripts": jobs})}
-    except Exception as exc:  # noqa: BLE001 — boundary handler; mapped, not swallowed
+    except Exception as exc:  # boundary handler: error is mapped via to_response, not swallowed
         return to_response(exc)
 ```
 
@@ -937,15 +975,110 @@ git commit -m "feat(7a): get_transcript Lambda (manifest-gated, 404 on partial/f
 **Files:**
 - Create: `src/transcriber/hosted/handlers/delete_transcript.py`, `tests/unit/hosted/test_delete_transcript.py`
 
-- [ ] **Step 1: Failing test** — delete removes all three objects (`transcript.md`, `result.raw.json`, `manifest.json`); deleting another user's job → 404 and leaves objects intact; idempotent (second delete → 404, no crash). **Delete the manifest *first*** so a mid-delete crash still yields an invisible prefix.
+- [ ] **Step 1: Failing test** — delete removes all three objects (`transcript.md`, `result.raw.json`, `manifest.json`); deleting another user's job → 404 and leaves objects intact; idempotent (second delete → 404, no crash). Assert the manifest is gone **after a successful manifest delete** and only then are the other two deleted (a test double can simulate a crash after the manifest delete and assert the prefix is invisible — never a committed half-transcript).
 
-- [ ] **Step 2: Implement** — verify the manifest exists for `(sub, job_id)` (else `NotFound`); `delete_objects` ordering: `manifest.json` first (de-commit), then `transcript.md`, `result.raw.json`. Same boundary mapping.
+- [ ] **Step 2: Implement** — verify the manifest exists for `(sub, job_id)` (else `NotFound`). Then **two separate S3 calls, ordered**: (1) a standalone `s3.delete_object(Key=manifest_key(...))` that must **return successfully** (this is the de-commit linearization point — a single batched `delete_objects` does **not** guarantee S3 processes the manifest first or that a partial batch failure leaves the prefix invisible); (2) only after (1) succeeds, delete `transcript.md` and `result.raw.json` (a batched `delete_objects` is fine for these two — they are already invisible once the marker is gone). Same `try/except → to_response` boundary as Task 9.
 
 - [ ] **Step 3: Pass + commit**
 
 ```bash
 git add src/transcriber/hosted/handlers/delete_transcript.py tests/unit/hosted/test_delete_transcript.py
 git commit -m "feat(7a): delete_transcript Lambda (manifest-first, user-isolated, idempotent)"
+```
+
+### Task 11b: `get_me` Lambda — budget-pill / profile source (TDD)
+
+**Files:**
+- Create: `src/transcriber/hosted/handlers/get_me.py`, `tests/unit/hosted/test_get_me.py`
+
+The dashboard budget pill (Scenario 3, 7a) renders `monthly_budget_usd`; the parent spec lists `GET /users/me`. Without this handler the SPA's `/users/me` hook 404s. 7a scope: **return the `#PROFILE` fields only — no usage accounting, no Gate-3 math** (that is 7b/7d).
+
+- [ ] **Step 1: Failing test (moto DynamoDB — same fixture pattern as Task 7, incl. the `AWS_DEFAULT_REGION` line)**
+
+```python
+import json
+import boto3, pytest
+from moto import mock_aws
+from transcriber.hosted.handlers.get_me import handler
+
+
+@pytest.fixture()
+def table(monkeypatch):
+    with mock_aws():
+        ddb = boto3.resource("dynamodb", region_name="us-east-1")
+        ddb.create_table(
+            TableName="HostedTable",
+            KeySchema=[{"AttributeName": "PK", "KeyType": "HASH"},
+                       {"AttributeName": "SK", "KeyType": "RANGE"}],
+            AttributeDefinitions=[{"AttributeName": "PK", "AttributeType": "S"},
+                                  {"AttributeName": "SK", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        monkeypatch.setenv("HOSTED_TABLE", "HostedTable")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+        yield ddb.Table("HostedTable")
+
+
+def _event(email: str) -> dict:
+    return {"requestContext": {"authorizer": {"jwt": {"claims": {"email": email}}}}}
+
+
+def test_returns_profile_fields(table):
+    table.put_item(Item={"PK": "USER#wife@example.com", "SK": "#PROFILE",
+                         "email": "wife@example.com", "monthly_budget_usd": "5"})
+    body = json.loads(handler(_event("wife@example.com"), None)["body"])
+    assert body == {"email": "wife@example.com", "monthly_budget_usd": "5"}
+
+
+def test_missing_profile_is_404(table):
+    assert handler(_event("ghost@example.com"), None)["statusCode"] == 404
+```
+
+Run: `uv run pytest tests/unit/hosted/test_get_me.py -q` → Expected: FAIL.
+
+- [ ] **Step 2: Implement**
+
+```python
+"""GET /users/me — the caller's #PROFILE (budget pill source). 7a: no usage math."""
+
+from __future__ import annotations
+
+import json
+import os
+
+import boto3
+
+from transcriber.hosted.errors import NotFound, to_response
+
+
+def handler(event: dict, _context) -> dict:
+    try:
+        email = event["requestContext"]["authorizer"]["jwt"]["claims"]["email"]
+        table = boto3.resource("dynamodb").Table(os.environ["HOSTED_TABLE"])
+        item = table.get_item(
+            Key={"PK": f"USER#{email}", "SK": "#PROFILE"}
+        ).get("Item")
+        if not item:
+            raise NotFound("profile not found")
+        return {
+            "statusCode": 200,
+            "headers": {"content-type": "application/json"},
+            "body": json.dumps(
+                {"email": item["email"],
+                 "monthly_budget_usd": item["monthly_budget_usd"]}
+            ),
+        }
+    except Exception as exc:  # boundary handler: mapped via to_response, not swallowed
+        return to_response(exc)
+```
+
+Run tests + mypy → Expected: PASS.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/transcriber/hosted/handlers/get_me.py tests/unit/hosted/test_get_me.py
+git commit -m "feat(7a): get_me Lambda — profile/budget-pill source (#PROFILE only)"
 ```
 
 ### Task 12: API Gateway HTTP API + Cognito JWT authorizer + SPA hosting (CDK)
@@ -961,7 +1094,7 @@ def test_http_api_routes_are_jwt_authorized() -> None:
     t.resource_count_is("AWS::ApiGatewayV2::Api", 1)
     t.has_resource_properties("AWS::ApiGatewayV2::Authorizer",
                               {"AuthorizerType": "JWT"})
-    t.resource_count_is("AWS::ApiGatewayV2::Route", 3)  # list/get/delete
+    t.resource_count_is("AWS::ApiGatewayV2::Route", 4)  # list/get/delete + GET /users/me
     t.resource_count_is("AWS::CloudFront::Distribution", 1)
 
 
@@ -972,8 +1105,8 @@ def test_two_buckets_now() -> None:
 Update Task 4 Step 1's bucket count to `1`; this task asserts `2`. Run → FAIL.
 
 - [ ] **Step 2: Implement** — using the **Task-0 pinned** `aws_apigatewayv2` + `aws_apigatewayv2_authorizers` (`HttpJwtAuthorizer` / `HttpUserPoolAuthorizer`) shapes:
-  - 3 `lambda_.Function`s (list/get/delete) with `code=Code.from_asset("../", bundling=_python_bundling())`, `environment={"TRANSCRIPTS_BUCKET": self.transcripts_bucket.bucket_name}`; `self.transcripts_bucket.grant_read(list_fn/get_fn)`, `grant_read_write(delete_fn)`.
-  - `HttpApi` with a `HttpUserPoolAuthorizer` bound to `self.user_pool` + `self.user_pool_client`; routes `GET /transcripts`, `GET /transcripts/{id}`, `DELETE /transcripts/{id}` (CORS allow the CloudFront origin).
+  - 4 `lambda_.Function`s (list/get/delete + `get_me`) all with `code=_lambda_code()` (the shared helper from Task 8 — do not re-define bundling). list/get/delete: `environment={"TRANSCRIPTS_BUCKET": self.transcripts_bucket.bucket_name}`, `self.transcripts_bucket.grant_read(list_fn/get_fn)`, `grant_read_write(delete_fn)`. `get_me`: `environment={"HOSTED_TABLE": self.table.table_name}`, `self.table.grant_read_data(get_me_fn)`.
+  - `HttpApi` with a `HttpUserPoolAuthorizer` bound to `self.user_pool` + `self.user_pool_client`; routes `GET /transcripts`, `GET /transcripts/{id}`, `DELETE /transcripts/{id}`, `GET /users/me` (CORS allow the CloudFront origin).
   - SPA hosting `s3.Bucket` (private) + `cloudfront.Distribution` with an OAI/OAC S3 origin, default root `index.html`, SPA 403/404→`/index.html` rewrite. `removal_policy=DESTROY`, `auto_delete_objects=True`.
   - Add the CloudFront URL to the Cognito client `callback_urls` and emit `CfnOutput`s: `ApiBaseUrl`, `CloudFrontUrl`, `UserPoolId`, `UserPoolClientId`, `CognitoDomain`.
 
@@ -1023,8 +1156,11 @@ git add infra/ && git commit -m "feat(7a): HTTP API + Cognito JWT authorizer + C
 
 **Files:** Create `infra/seed.py`, `tests/unit/hosted/test_seed_shapes.py`
 
-- [ ] **Step 1: Failing test** — `seed.build_profile_item(email, budget)` → exact `#PROFILE` shape (`PK=USER#{email}`, `SK=#PROFILE`, `email`, `monthly_budget_usd`); `seed.fixture_objects(sub, job_id)` → the three S3 `(key, body)` pairs with `manifest.json` content `{"committed": true}` and a valid frontmatter+markdown `transcript.md`.
-- [ ] **Step 2: Implement** `infra/seed.py` as a boto3 script: put the `#PROFILE` item for the two invited emails (yours + your wife's — read from argv, never hard-coded), and put the three fixture objects under `{sub}/{job_id}/` (manifest **last**). Pure builders live in importable functions so the test does not touch AWS.
+- [ ] **Step 1: Failing test** — `seed.build_profile_item(email, budget)` → exact `#PROFILE` shape (`PK=USER#{email}`, `SK=#PROFILE`, `email`, `monthly_budget_usd`); `seed.fixture_objects(sub, job_id)` → the three S3 `(key, body)` pairs with `manifest.json` content `{"committed": true}` and a valid frontmatter+markdown `transcript.md`. (Pure builders only — the test must not touch AWS.)
+- [ ] **Step 2: Implement** `infra/seed.py` with **two argparse subcommands**, matching the load-bearing ordering Task 17 depends on:
+  - `seed.py invite --emails a@x.com,b@x.com` — puts the `#PROFILE` item per email (budget default $5 per D14; emails from argv, never hard-coded). Run **before** first sign-in.
+  - `seed.py fixture --sub <cognito-sub> [--job-id <id>]` — puts the three S3 objects under `{sub}/{job_id}/`, `manifest.json` **written last** (commit-marker invariant). Run **after** the invited user has a sub.
+  The shape logic lives in the importable pure builders (`build_profile_item`, `fixture_objects`) tested in Step 1; the subcommands are thin boto3 wrappers around them.
 - [ ] **Step 3: Pass + commit.**
 
 ### Task 17: Manual deploy + Google OAuth client + two-sign-in validation
@@ -1033,10 +1169,12 @@ git add infra/ && git commit -m "feat(7a): HTTP API + Cognito JWT authorizer + C
 
 These steps are **not TDD-able**; they are explicit and their evidence is captured in `validation.md`.
 
-- [ ] **Step 1: Google Cloud Console OAuth web client** — context7-fetch the *current* Google "OAuth 2.0 Web application client" setup steps; create a Web client; authorized redirect URI = the Cognito Hosted-UI `/oauth2/idpresponse` URL (from `CfnOutput CognitoDomain`). Put the client id/secret into SSM Parameter Store SecureString at the two paths Task 8 reads. Record (redacted) what was created in `validation.md`.
-- [ ] **Step 2: Deploy** — `npm --prefix web run build`, then `cd infra && cdk deploy`. Capture stack outputs into `validation.md`. Run `python infra/seed.py --emails you@example.com,wife@example.com --sub <your-cognito-sub-after-first-login>` (note the chicken-egg: first login provisions the user via the invite-gate auto-confirm; seed the transcript fixture under that sub afterward).
-- [ ] **Step 3: Two real sign-in attempts** — (a) an **invited** Google account → lands on dashboard → sees + opens + deletes the seeded transcript; (b) an **un-invited** Google account → rejected with the "not invited" message. Screenshot/console-capture both into `validation.md`.
-- [ ] **Step 4: Teardown proof** — `cd infra && cdk destroy`; confirm the stack is gone (≈$0). Record in `validation.md`. Commit:
+- [ ] **Step 1: Google Cloud Console OAuth web client** — context7-fetch the *current* Google "OAuth 2.0 Web application client" setup steps; create a Web client; authorized redirect URI = the Cognito Hosted-UI `/oauth2/idpresponse` URL (from `CfnOutput CognitoDomain`). Store the credentials where Task 8 reads them (these resources are created here, before `cdk deploy` in Step 2): the **client id** as a **plain SSM String** parameter at `/ssm-transcriber/<env>/google-oauth-client-id`, and the **client secret** as a **Secrets Manager secret** named `ssm-transcriber/<env>/google-oauth-client-secret` (not an SSM SecureString — CDK cannot resolve a SecureString at synth; this is the Codex-P1 correction). Record (redacted) what was created in `validation.md`.
+- [ ] **Step 2: Deploy** — `npm --prefix web run build`, then `cd infra && cdk deploy`. Capture stack outputs into `validation.md`.
+- [ ] **Step 3: Seed invites BEFORE any sign-in (ordering is load-bearing)** — the invite-gate (Task 7) rejects any Google account with no `USER#{email}/#PROFILE` item, and that rejection happens *before* Cognito ever mints a sub. So the `#PROFILE` invite rows must exist first: `python infra/seed.py invite --emails you@example.com,wife@example.com`. Do **not** try to seed by Cognito sub here — no sub exists yet. (Transcript fixtures are seeded in Step 5, after a sub exists.)
+- [ ] **Step 4: Two real sign-in attempts** — (a) an **invited** Google account → invite-gate passes → lands on dashboard (empty list is fine — no transcript fixture yet); (b) an **un-invited** Google account → rejected with the "not invited" message. Screenshot/console-capture both into `validation.md`. Note the invited account's Cognito `sub` from the ID token / Cognito console.
+- [ ] **Step 5: Seed the transcript fixture by sub, then verify the viewer** — now that the invited user has a sub: `python infra/seed.py fixture --sub <invited-cognito-sub>`. Reload the dashboard → the seeded transcript appears → open it (markdown + frontmatter render) → delete it (row disappears; all three S3 objects gone). Capture into `validation.md`.
+- [ ] **Step 6: Teardown proof** — `cd infra && cdk destroy`; confirm the stack is gone (≈$0). Record in `validation.md`. Commit:
 
 ```bash
 git add specs/2026-05-14-hosted-ui/validation.md
@@ -1060,13 +1198,25 @@ git commit -m "docs(7a): validation evidence — sign-in, viewer, invite-gate, t
 
 **Files:** Modify `CLAUDE.md`
 
-- [ ] **Step 1** — In `CLAUDE.md` "## Guardrails to keep inline", replace exactly:
+- [ ] **Step 1** — In `CLAUDE.md` "## Guardrails to keep inline", replace the F1 sync bullet. **It is hard-wrapped across two lines with a 2-space continuation indent — the `Edit` `old_string` must match that exactly; do NOT collapse it to one line or the edit fails and this spec-mandated lockstep silently no-ops.**
 
-  `- Keep the core sync through Phase 4; do not add `async def` to pipeline, source, provider, or formatter code.`
+  `old_string` (verbatim, CLAUDE.md ~lines 39-40 — preserve the line break and the 2-space indent on the second line):
 
-  with:
+  ```text
+  - Keep the core sync through Phase 4; do not add `async def` to pipeline,
+    source, provider, or formatter code.
+  ```
 
-  `- Library code (`sources/`, `providers/`, `formatters/`, `destinations/`, `core/`) stays sync; do not add `async def` there. Orchestration MAY be event-driven (Step Functions, browser polling) at the hosting boundary only (`src/transcriber/hosted/`). See PLAN.md §F1.`
+  `new_string`:
+
+  ```text
+  - Library code (`sources/`, `providers/`, `formatters/`, `destinations/`,
+    `core/`) stays sync; never add `async def` there. Orchestration MAY be
+    event-driven (Step Functions, browser polling) at the hosting boundary
+    only (`src/transcriber/hosted/`). See PLAN.md §F1.
+  ```
+
+  After the edit, run `grep -n "src/transcriber/hosted" CLAUDE.md` to confirm the replacement landed (non-empty output = success).
 
 - [ ] **Step 2: Commit** `git commit -m "docs(7a): CLAUDE.md F1 guardrail in lockstep with PLAN.md amendment"`
 
@@ -1091,11 +1241,11 @@ git commit -m "docs(7a): validation evidence — sign-in, viewer, invite-gate, t
 
 ## Self-Review (run before declaring the plan done)
 
-**1. Spec coverage** — Scenario 2 (sign-in + un-invited reject) → Tasks 7, 8, 17. Scenario 3 (list + budget pill + viewer + delete) → Tasks 9–11, 14. Scenario 12 (teardown $0) → Task 4 removal policies + G4 + 17.4. Atomic-write/Codex-P2 → Tasks 5, 9, 10, 11. Constitution amendments + F1 lockstep → G1, G2. Reference-calls pin discipline → Task 0. Tracking convention → PR section below. F-contract postures → Scope section + Task G1/G2. No uncovered 7a requirement.
+**1. Spec coverage** — Scenario 2 (sign-in + un-invited reject) → Tasks 7, 8, 17. Scenario 3 (list + budget pill + viewer + delete) → Tasks 9–11b (pill source = `get_me`, Task 11b), 14. Scenario 12 (teardown $0) → Task 4 removal policies + G4 + 17.6. Atomic-write/Codex-P2 → Tasks 5, 9, 10, 11. Constitution amendments + F1 lockstep → G1, G2. Reference-calls pin discipline → Task 0. Tracking convention → PR section below. F-contract postures → Scope section + Task G1/G2. No uncovered 7a requirement (the budget pill's `GET /users/me` backend, previously missing, is now Task 11b + Task 12 route 4).
 
-**2. Placeholder scan** — Tasks 10 and 11 Step 1 state assertions by exact name and reuse Task 9's fully-shown fixture rather than re-pasting; every code-bearing step elsewhere shows complete code. No "TBD"/"handle errors"/vague steps. Acceptable per "repeat or precisely reference" — the referenced fixture is fully shown in Task 9.
+**2. Placeholder scan** — Tasks 10 and 11 Step 1 state assertions by exact name and reuse Task 9's fully-shown fixture (incl. its `AWS_DEFAULT_REGION` line) rather than re-pasting; every code-bearing step elsewhere shows complete code. No "TBD"/"handle errors"/vague steps. Acceptable per "repeat or precisely reference" — the referenced fixture is fully shown in Task 9.
 
-**3. Type/name consistency** — `visible_job_ids`, `manifest_key`, `raw_key`, `transcript_key`, `job_prefix` consistent across Tasks 5/9/10/11. `to_response`/`NotFound`/`Forbidden` consistent Tasks 6/9/10/11. `HostedStack(env_name=…)`, `self.table`, `self.transcripts_bucket`, `self.user_pool`, `self.user_pool_client`, `_python_bundling()` consistent across infra Tasks 2/4/8/12/15. Bucket-count assertion handoff (Task 4 → `1`, Task 12 → `2`) noted in both places.
+**3. Type/name consistency** — `visible_job_ids`, `manifest_key`, `raw_key`, `transcript_key`, `job_prefix` consistent across Tasks 5/9/10/11. `to_response`/`NotFound`/`Forbidden` consistent Tasks 6/9/10/11/11b. `HostedStack(env_name=…)`, `self.table`, `self.transcripts_bucket`, `self.user_pool`, `self.user_pool_client`, `google_idp`, the shared `_lambda_code()` factory (defined Task 8, reused Task 12 — `_python_bundling()` is now internal to `_lambda_code()` only) consistent across infra Tasks 2/4/8/12/15. Bucket-count handoff: Task 4 Step 1 asserts `1`, Task 12 Step 1 is the sole place that flips it to `2`. Route-count: Task 12 asserts `4` (list/get/delete + `get_me`). `seed.py invite`/`seed.py fixture` subcommands consistent between Task 16 and Task 17.
 
 ## Tracking & PR (Loop A — do NOT auto-execute)
 
