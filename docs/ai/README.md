@@ -40,7 +40,7 @@ in one of those two places.
 | Auditing F1–F8 compliance | [`runbooks/phase-check.md`](runbooks/phase-check.md) | `docs/PLAN.md` Phase 1 Foundations |
 | Writing a focused implementation spec | [`specs/README.md`](specs/README.md) | `docs/PLAN.md` phase constraints |
 | Setting up or running Drive transcribe + upload | [`runbooks/drive-transcribe-upload.md`](runbooks/drive-transcribe-upload.md) | `README.md` § Google Drive upload |
-| Transcribing a local audio/video file | [`runbooks/transcribe-local.md`](runbooks/transcribe-local.md) | `README.md` § Quick start |
+| Transcribing a local audio/video file | [`runbooks/transcribe-local.md`](runbooks/transcribe-local.md) | `README.md` § Transcription quick-start |
 
 ## Claude command inventory
 

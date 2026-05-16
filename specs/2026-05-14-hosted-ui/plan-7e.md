@@ -44,9 +44,10 @@ unrelated to 7e and must not be bundled in.
 The runbook MUST state current reality: local-file transcription runs
 through **paid AssemblyAI** and requires `--budget low` (or `best`);
 `--budget free` is rejected because the faster-whisper $0 local
-provider is **not yet shipped** (PLAN.md Phase 1 / Phase 2 Slice 2b are
-pending). The runbook must not promise a $0 local path. It may note the
-$0 path as a future capability with a one-line forward reference.
+provider is **not yet shipped** (PLAN.md Phase 2 Slice 2b — the
+deferred faster-whisper provider). The runbook must not promise a $0
+local path. It may note the $0 path as a future capability with a
+one-line forward reference.
 
 ---
 
