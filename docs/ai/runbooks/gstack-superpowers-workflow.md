@@ -47,8 +47,8 @@ only. GSD is not installed.**
 - Cost: a full GStack pipeline ≈600k tokens/spec; this project is
   cost-sensitive and 7a–7d already have merged requirements.
 
-Full expert analysis: `~/.claude/plans/do-you-think-its-tranquil-badger.md`
-(personal, ephemeral — this runbook is the durable record).
+This runbook is the durable record of the decision; the rationale above
+is self-contained and does not depend on any external analysis file.
 
 ## The workflow
 

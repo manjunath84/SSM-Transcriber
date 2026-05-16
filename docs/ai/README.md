@@ -41,7 +41,7 @@ in one of those two places.
 | Writing a focused implementation spec | [`specs/README.md`](specs/README.md) | `docs/PLAN.md` phase constraints |
 | Setting up or running Drive transcribe + upload | [`runbooks/drive-transcribe-upload.md`](runbooks/drive-transcribe-upload.md) | `README.md` § Google Drive upload |
 | Transcribing a local audio/video file | [`runbooks/transcribe-local.md`](runbooks/transcribe-local.md) | `README.md` § Transcription quick-start |
-| Combining GStack + Superpowers for spec/execution | [`runbooks/gstack-superpowers-workflow.md`](runbooks/gstack-superpowers-workflow.md) | `docs/PLAN.md` (phase context) |
+| Combining GStack + Superpowers for spec/execution | [`runbooks/gstack-superpowers-workflow.md`](runbooks/gstack-superpowers-workflow.md) | `specs/2026-05-14-hosted-ui/` (Phase 7 spec context) |
 
 ## Claude command inventory
 
