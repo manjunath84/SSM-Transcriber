@@ -56,3 +56,6 @@ google_token.json
 !.claude/commands/
 !.claude/commands/*.md
 .claude/settings.local.json
+
+# Superpowers brainstorming visual-companion session dirs
+.superpowers/
