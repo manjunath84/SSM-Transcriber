@@ -29,6 +29,13 @@ unless `-y` is passed.
   user to add it — the run will fail Gate 1 otherwise.
 - The file exists and is a readable audio/video file. Resolve the path
   before building the command.
+- **`ffmpeg`/`ffprobe` on `PATH`.** Local files go through
+  `extract_audio()`, which unconditionally shells out to `ffprobe` and
+  `ffmpeg` *before* the provider call. `uv sync` does **not** install
+  these — they are system binaries. Verify `ffmpeg -version` and
+  `ffprobe -version` both succeed; if not, install (macOS:
+  `brew install ffmpeg`; Debian/Ubuntu: `apt-get install ffmpeg`).
+  Missing → the run exits 4 with "ffprobe executable not found".
 - For optional Drive upload only: `GOOGLE_OAUTH_CLIENT_ID` /
   `GOOGLE_OAUTH_CLIENT_SECRET` set and `auth google-drive` already run
   (see `drive-transcribe-upload.md`). Skip this whole branch if the
@@ -91,6 +98,7 @@ the cost prompt.
 | Budget error: `--budget free` not allowed for a paid provider | 2 | `--budget free` used for a paid local run | Re-run with `--budget low`. |
 | `ASSEMBLYAI_API_KEY` missing message | 2 | Gate 1 not configured | Add the key to `.env`. |
 | File not found | 4 | Bad path | Re-resolve the file path with the user. |
+| `ffprobe`/`ffmpeg` executable not found | 4 | ffmpeg binary not installed (`uv sync` doesn't provide it) | Install ffmpeg (macOS `brew install ffmpeg`; Debian/Ubuntu `apt-get install ffmpeg`), then re-run. |
 | Polling exceeds `--max-wait` | 3 | File longer than the cap | Re-run with `--max-wait 60` (or higher). |
 | Upload error after `✓ Saved to:` | 4 | Drive failed; transcript is on disk | `uv run ssm-transcriber upload <path> --drive-folder <FOLDER_ID>` (no AssemblyAI re-charge). |
 
