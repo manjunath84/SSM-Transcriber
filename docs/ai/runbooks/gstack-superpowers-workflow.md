@@ -54,32 +54,62 @@ is self-contained and does not depend on any external analysis file.
 
 ### Loop A — a slice whose requirements already exist (e.g. Phase 7 7a–7d)
 
+The requirements spec is already merged (Phase 7 shipped via PR #38).
+Per slice, **two** PRs remain — a plan PR then an implementation PR —
+the two-PR SDD lifecycle in `tracking.md` § "Lifecycle". Do **not**
+collapse them into one.
+
+**Spec-side (the per-slice plan PR):**
+
 1. **(Optional, fuzziness-gated) GStack `office-hours`** — only if the
    slice has *genuine* unresolved fuzziness (e.g. 7a IaC CDK-vs-SAM,
-   IAM scoping, the Codex-flagged Google-token flow). Its design-doc is
+   IAM scoping, the Codex-flagged Google-token flow). Design-doc is
    **input notes only**, never the repo spec. Skip by default (tokens).
-2. **Superpowers `brainstorming`** authors/updates the repo spec under
-   `specs/<date>-<slug>/` per `REQUIREMENTS_TEMPLATE.md` (ingesting the
-   office-hours notes if step 1 ran).
-3. **Superpowers `writing-plans`** → `specs/<date>-<slug>/plan-<slice>.md`.
-4. **GStack `Auto Plan`** over that plan file ("GStack Auto Plan:
-   `<plan path>`") → CEO/design/eng findings + auto-decisions; apply
-   surviving decisions back into the plan. *Primary GStack value-add.*
-5. **External multi-vendor review** — `/codex:review` +
-   `/pr-review-toolkit:review-pr` on the spec/plan (the existing repo
-   gate that caught the real defects on #38/#39).
-6. **Superpowers `subagent-driven-development`** → TDD execution.
-7. **`/commit-commands:commit-push-pr`** with `Refs #<slice-issue>`,
-   then merge + board move per `tracking.md` and the spec's "Tracking
-   convention" section.
+2. **Superpowers `writing-plans`** ingests the already-merged
+   requirements (+ office-hours notes if step 1 ran) and authors
+   `specs/<date>-<slug>/plan-<slice>.md`. Requirements are **not**
+   re-authored in Loop A — that PR already merged. (If a slice has no
+   merged requirements yet, that is Loop B.)
+3. **GStack `Auto Plan`** over that plan file → CEO/design/eng findings
+   + auto-decisions; apply surviving decisions back into the plan.
+   *Primary GStack value-add.*
+4. **Open the plan PR.** Link keyword **per `tracking.md` + the merged
+   spec's "Tracking convention" section** — defer to those, do not
+   hardcode it here (a plan/spec-side PR does not ship the slice).
+5. **External multi-vendor review on that PR** — `/codex:review` +
+   `/pr-review-toolkit:review-pr` (the gate that caught the real
+   defects on #38/#39). Fixes land on the same PR.
+6. **Merge, then move the board per `tracking.md`** (a spec-side PR's
+   keyword does not auto-close — the board move is manual, by design).
 
-### Loop B — a genuinely new, fuzzy feature
+**Implementation-side (the implementation PR):**
 
-`office-hours` FIRST (pressure-test the idea) → Superpowers
-`brainstorming` (authors the repo spec, ingesting the notes) → then
-Loop A steps 3–7. Use `spec-team` only if you first reshape its
-`/backlog/...` output into the repo `specs/` template (rarely worth it
-vs. Superpowers brainstorming).
+7. **Superpowers `subagent-driven-development`** → TDD execution on a
+   fresh implementation branch.
+8. **Open the implementation PR.** Link keyword again **per
+   `tracking.md` + the spec's "Tracking convention" section** (a
+   feature-shipping PR auto-closes its slice issue and moves the board;
+   the mega-spec umbrella #37 stays open until *all* slices land —
+   that nuance is the spec's, defer to it).
+9. **External multi-vendor review on the implementation PR**, fixes on
+   the same PR, merge → board to Done per `tracking.md`.
+
+### Loop B — a genuinely new, fuzzy feature (no requirements spec yet)
+
+Same two-PR discipline plus a requirements step up front:
+
+1. **GStack `office-hours` FIRST** — pressure-test the idea (input
+   notes only).
+2. **Superpowers `brainstorming`** authors the requirements spec under
+   `specs/<date>-<slug>/` per `REQUIREMENTS_TEMPLATE.md`, ingesting the
+   notes. (Use `spec-team` only if you first reshape its `/backlog/...`
+   output into the repo `specs/` template — rarely worth it vs.
+   Superpowers brainstorming.)
+3. **Requirements spec PR:** open / review / merge / board-move exactly
+   as Loop A steps 4–6 (keyword per `tracking.md`).
+4. Then run **Loop A in full per implementable slice**. A feature big
+   enough to fan into slices nests: one requirements spec PR up front,
+   then a plan-PR + implementation-PR pair *for each slice*.
 
 ### Handoff mechanism
 

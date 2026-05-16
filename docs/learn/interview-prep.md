@@ -127,6 +127,36 @@ Every story below is a real event captured in the repo. The format is
 [`glossary.md#vad`](glossary.md#vad),
 [`prs/pr-003-phase-1-foundations.md`](prs/pr-003-phase-1-foundations.md).
 
+**Story: Choosing which AI framework authors specs — by reading
+output contracts, not docs** (PR #40).
+
+- **Situation.** Two spec-driven-development frameworks were installed
+  on top of the project's existing workflow. I had to decide which one
+  authors specs, which only reviews, and write it down before it got
+  re-litigated on every future slice.
+- **Task.** Pick the boundary on evidence, not on which tool's
+  marketing was better.
+- **Action.** I read the installed skills' actual output contracts.
+  GStack's `office-hours` can only emit a design doc to a
+  user-private path; `spec-team` is Jira/Supabase/backlog-shaped.
+  Neither produces the repo's required spec sections — the
+  verbatim-vendor-API discipline and contract-status table that
+  external reviewers had repeatedly used to catch real bugs. So I kept
+  Superpowers as the author (it produces those natively) and scoped
+  GStack to the one thing it's genuinely better at: adversarial
+  decisions and multi-persona review.
+- **Result.** A single revisitable decision record with explicit
+  "when to revisit" triggers. The kicker: an external reviewer (Codex)
+  then caught that my own workflow doc had silently collapsed the
+  repo's mandated two-PR lifecycle into one — so I rewrote it to
+  *defer to* the tracking convention as the single source of truth
+  rather than restate it, which is the same fix you'd apply to
+  duplicated logic in code.
+
+**Pointers:** [`journey.md` PR #40 entry](journey.md#pr-40--decision-record-gstack--superpowers-workflow),
+[`prs/pr-040-gstack-superpowers-workflow.md`](prs/pr-040-gstack-superpowers-workflow.md),
+[`docs/ai/runbooks/gstack-superpowers-workflow.md`](../ai/runbooks/gstack-superpowers-workflow.md).
+
 ### "Tell me about a time you caught a bug before it shipped"
 
 Same story as above, or:

@@ -11,6 +11,42 @@
 
 ---
 
+## PR #40 — Decision Record: GStack × Superpowers Workflow
+
+**Merged:** TBD  |  **Branch:** `docs/gstack-superpowers-workflow`
+**Explainer:** [`prs/pr-040-gstack-superpowers-workflow.md`](prs/pr-040-gstack-superpowers-workflow.md)
+
+By Phase 7 the repo had three ways to drive spec-driven development:
+the established Superpowers `brainstorming → writing-plans → execute`
+flow, plus a freshly-installed GStack (adversarial `office-hours`,
+multi-persona `autoplan`, `spec-team`), plus an open question of
+whether to add GSD. With slices 7a–7d still unbuilt, an undecided
+"which tool authors the spec" question would get re-litigated every
+slice. This PR writes the answer down once: **Superpowers authors
+specs, GStack is decision/review only, GSD stays uninstalled** — with
+explicit triggers for when to revisit.
+
+The decision was made by reading the installed skills' actual output
+contracts, not their pitches. GStack's `office-hours` can only emit a
+design doc to `~/.gstack/...`; `spec-team` is Jira/Supabase/`/backlog/`
+shaped. Neither produces the repo's `REQUIREMENTS_TEMPLATE` sections —
+the verbatim-vendor-API discipline and F-contract table the external
+reviewers kept leaning on to catch real defects on #38/#39. Keeping
+Superpowers as the author preserves those defenses; GStack's real edge
+(forcing-question decisions, persona review) is used precisely there.
+
+The teaching moment is in the review, not the decision. Codex caught
+that the first Loop A draft had silently collapsed the repo's mandated
+**two-PR SDD lifecycle** (`tracking.md`: a spec PR with `Refs`, then a
+separate implementation PR with `Closes`) into one linear flow ending
+in a single `Refs` PR — which would have left every slice's issue
+un-closed and its board card stuck. The fix doesn't just re-split the
+flow; it stops the runbook from restating the keyword rule at all and
+**defers to `tracking.md`** as the single source of truth, so a future
+convention change can't leave this doc lying. A process doc can carry
+the same drift bug as code — and the cheap fix is to point at the
+authority rather than copy it.
+
 ## PR #35 — Implementation: YouTube Source (yt-dlp Audio Fallback)
 
 **Merged:** 2026-05-13 (squash `077b26a`)  |  **Branch:** `feat/youtube-audio-fallback-impl` (deleted)
