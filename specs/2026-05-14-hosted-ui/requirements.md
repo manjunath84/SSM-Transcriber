@@ -233,6 +233,306 @@ exact Cognito User Pool Google-IdP configuration used for identity.
 Capture verbatim request/response shapes + retrieval date in this
 section before that code is written.
 
+#### 7a pins (identity only) — context7 /aws/aws-cdk, retrieved 2026-05-16
+
+Construct shapes below are verbatim from the AWS CDK README via
+context7 `/aws/aws-cdk` (retrieved 2026-05-16). The CDK README ships
+TypeScript snippets only; the CDK Python API is JSII-codegenerated
+from the same construct spec, so the mechanical mapping is: same
+construct/class names, props become snake_case keyword arguments
+(`clientId` → `client_id`, `clientSecretValue` → `client_secret_value`,
+`attributeMapping` → `attribute_mapping`, `userPool` → `user_pool`,
+`jwtAudience` → `jwt_audience`). Task 8 codes the Python constructs by
+applying that rule to the verbatim TS below — no hand-rewrite from
+memory. The Cognito **federated sign-in Lambda trigger event payload**
+is a Cognito service contract not documented in `/aws/aws-cdk`; it is
+pinned verbatim from the AWS Cognito Developer Guide (URLs + retrieval
+date inline below), per the verifiability intent of the CLAUDE.md
+guardrail.
+
+- Cognito UserPoolIdentityProviderGoogle (Python) — verbatim construct signature + attribute_mapping shape:
+
+  Verbatim from context7 `/aws/aws-cdk`
+  (`packages/aws-cdk-lib/aws-cognito/README.md`), retrieved 2026-05-16.
+  Construct + Secrets Manager client secret:
+
+  ```ts
+  const userpool = new cognito.UserPool(this, 'Pool');
+  const secret = secretsmanager.Secret.fromSecretAttributes(this, "CognitoClientSecret", {
+      secretCompleteArn: "arn:aws:secretsmanager:xxx:xxx:secret:xxx-xxx"
+  }).secretValue
+
+  const provider = new cognito.UserPoolIdentityProviderGoogle(this, 'Google', {
+    clientId: 'amzn-client-id',
+    clientSecretValue: secret,
+    userPool: userpool,
+  });
+  ```
+
+  Verbatim `attributeMapping` shape (mapping `email` /
+  `email_verified` from the Google IdP), same source:
+
+  ```ts
+  const userpool = new cognito.UserPool(this, 'Pool');
+
+  new cognito.UserPoolIdentityProviderGoogle(this, 'google', {
+    userPool: userpool,
+    clientId: 'google-client-id',
+    attributeMapping: {
+      email: cognito.ProviderAttribute.GOOGLE_EMAIL,
+      emailVerified: cognito.ProviderAttribute.GOOGLE_EMAIL_VERIFIED, // you can mapping the `email_verified` attribute.
+    },
+  });
+  ```
+
+  Verbatim general `attributeMapping` pattern (standard + custom +
+  `other()` for non-predefined attributes), same source (shown for the
+  Amazon IdP in the README; the `attributeMapping`/`ProviderAttribute`
+  shape is identical across `UserPoolIdentityProvider*` constructs):
+
+  ```ts
+  attributeMapping: {
+    email: cognito.ProviderAttribute.AMAZON_EMAIL,
+    website: cognito.ProviderAttribute.other('url'), // use other() when an attribute is not pre-defined in the CDK
+    custom: {
+      // custom user pool attributes go here
+      uniqueId: cognito.ProviderAttribute.AMAZON_USER_ID,
+    },
+  },
+  ```
+
+  Python mapping (per the codegen rule above): class
+  `aws_cdk.aws_cognito.UserPoolIdentityProviderGoogle`; kwargs
+  `client_id=`, `client_secret_value=` (a
+  `aws_cdk.SecretValue`), `user_pool=`, `attribute_mapping=` (an
+  `aws_cdk.aws_cognito.AttributeMapping` / dict), with
+  `aws_cdk.aws_cognito.ProviderAttribute.GOOGLE_EMAIL`,
+  `.GOOGLE_EMAIL_VERIFIED`, and `ProviderAttribute.other('...')`.
+
+- Cognito federated sign-in Lambda trigger that gates un-invited users — trigger name + verbatim event payload shape:
+
+  **Trigger: Pre sign-up Lambda trigger, `triggerSource =
+  "PreSignUp_ExternalProvider"`.** Evidence (verbatim from AWS Cognito
+  Developer Guide
+  `cognito-user-pools-working-with-lambda-triggers.html`, section
+  "Lambda triggers for federated users", retrieved 2026-05-16):
+
+  > **Federated user trigger sources**
+  > - **First sign-in**
+  >   - **Lambda trigger:** Pre sign-up / **Trigger source:** `PreSignUp_ExternalProvider`
+  >   - **Lambda trigger:** Post confirmation / **Trigger source:** `PostConfirmation_ConfirmSignUp`
+  >   - **Lambda trigger:** Pre token generation / **Trigger source:** `TokenGeneration_HostedAuth`
+  > - **Subsequent sign-ins**
+  >   - **Lambda trigger:** Pre authentication / **Trigger source:** `PreAuthentication_Authentication`
+  >   - **Lambda trigger:** Post authentication / **Trigger source:** `PostAuthentication_Authentication`
+  >   - **Lambda trigger:** Pre token generation / **Trigger source:** `TokenGeneration_HostedAuth`
+
+  And the triggerSource table (same source):
+
+  > | Trigger | triggerSource value | Event |
+  > | Pre sign-up | PreSignUp_SignUp | Pre sign-up. |
+  > | Pre sign-up | PreSignUp_AdminCreateUser | Pre sign-up when an admin creates a new user. |
+  > | Pre sign-up | PreSignUp_ExternalProvider | Pre sign-up for external identity providers. |
+
+  So the gate Lambda is the **Pre sign-up** trigger, distinguishing
+  `triggerSource == "PreSignUp_ExternalProvider"` (Google federated
+  first sign-in) from `PreSignUp_SignUp` (self-service) and
+  `PreSignUp_AdminCreateUser`. Returning an error from the function
+  denies the sign-up — verbatim from the same guide: "If your Lambda
+  function doesn't return the request and response parameters to
+  Amazon Cognito, or returns an error, the authentication event
+  doesn't succeed. You can return an error in your function to prevent
+  a user's sign-up, authentication, token generation, or any other
+  stage of their authentication flow that invokes Lambda trigger." For
+  federated users the docs note (verbatim): "your pre sign-up trigger
+  can automatically confirm users for the `PreSignUp_SignUp` trigger
+  source, but return the event unchanged for external and
+  administrator-created users."
+
+  Common Lambda trigger event envelope — verbatim from
+  `cognito-user-pools-working-with-lambda-triggers.html` ("User pool
+  Lambda trigger event"), retrieved 2026-05-16:
+
+  ```json
+  {
+      "version": "{{string}}",
+      "triggerSource": "{{string}}",
+      "region": {{AWSRegion}},
+      "userPoolId": "{{string}}",
+      "userName": "{{string}}",
+      "callerContext":
+          {
+              "awsSdkVersion": "{{string}}",
+              "clientId": "{{string}}"
+          },
+      "request":
+          {
+              "userAttributes": {
+                  "{{string}}": "{{string}}",
+                  ....
+              }
+          },
+      "response": {}
+  }
+  ```
+
+  Pre sign-up trigger-specific request/response — verbatim from
+  `user-pool-lambda-pre-sign-up.html` ("Pre sign-up Lambda trigger
+  parameters"), retrieved 2026-05-16:
+
+  ```json
+  {
+      "request": {
+          "userAttributes": {
+              "{{string}}": "{{string}}",
+              . . .
+          },
+          "validationData": {
+              "{{string}}": "{{string}}",
+              . . .
+           },
+          "clientMetadata": {
+              "{{string}}": "{{string}}",
+              . . .
+           }
+      },
+
+      "response": {
+          "autoConfirmUser": "{{boolean}}",
+          "autoVerifyPhone": "{{boolean}}",
+          "autoVerifyEmail": "{{boolean}}"
+      }
+  }
+  ```
+
+  Concrete example input event (verbatim, same guide, "Client
+  metadata" section — shown with `PreSignUp_SignUp`; the envelope keys
+  are identical for `PreSignUp_ExternalProvider`, only `triggerSource`
+  and the `userAttributes` provided by attribute mapping differ):
+
+  ```json
+  {
+      "callerContext": {
+          "awsSdkVersion": "aws-sdk-unknown-unknown",
+          "clientId": "1example23456789"
+      },
+      "region": "us-west-2",
+      "request": {
+          "clientMetadata": {
+              "GeoLocation": "Netherlands (Kingdom of the) [NL]",
+              "IpAddress": "192.0.2.252"
+          },
+          "userAttributes": {
+              "email": "mary_major@example.com",
+              "name": "Mary",
+              "phone_number": "+12065551212"
+          },
+          "validationData": null
+      },
+      "response": {
+          "autoConfirmUser": false,
+          "autoVerifyEmail": false,
+          "autoVerifyPhone": false
+      },
+      "triggerSource": "PreSignUp_SignUp",
+      "userName": "mary_major2",
+      "userPoolId": "us-west-2_EXAMPLE",
+      "version": "1"
+  }
+  ```
+
+  Reject pattern (Python) — verbatim from `user-pool-lambda-pre-sign-up.html`
+  ("Deny sign-up if user name has fewer than five characters"),
+  retrieved 2026-05-16; raising rejects the sign-up:
+
+  ```python
+  def lambda_handler(event, context):
+      if len(event['userName']) < 5:
+          raise Exception("Cannot register users with username less than the minimum length of 5")
+      # Return to Amazon Cognito
+      return event
+  ```
+
+  Note for Task 7: for a federated Google user, `userName` is the
+  Cognito-assigned federated username (e.g. `Google_<sub>`), not the
+  email; gate logic must read the invited email from
+  `event['request']['userAttributes']['email']` (populated by the
+  IdP attribute mapping pinned above) and branch on
+  `event['triggerSource'] == 'PreSignUp_ExternalProvider'`.
+
+- API Gateway v2 HTTP API + Cognito JWT authorizer (Python) — verbatim construct shape:
+
+  Verbatim from context7 `/aws/aws-cdk`
+  (`packages/aws-cdk-lib/aws-apigatewayv2-authorizers/README.md`),
+  retrieved 2026-05-16 — Cognito User Pool authorizer for HTTP API:
+
+  ```ts
+  import * as cognito from 'aws-cdk-lib/aws-cognito';
+  import { HttpUserPoolAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+  import { HttpUrlIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+
+  const userPool = new cognito.UserPool(this, 'UserPool');
+
+  const authorizer = new HttpUserPoolAuthorizer('BooksAuthorizer', userPool);
+
+  const api = new apigwv2.HttpApi(this, 'HttpApi');
+
+  api.addRoutes({
+    integration: new HttpUrlIntegration('BooksIntegration', 'https://get-books-proxy.example.com'),
+    path: '/books',
+    authorizer,
+  });
+  ```
+
+  Verbatim generic JWT authorizer variant (OIDC issuer + audience),
+  same source — usable if a raw issuer URL is preferred over the
+  Cognito-specific wrapper:
+
+  ```ts
+  import { HttpJwtAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+  import { HttpUrlIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+
+  const issuer = 'https://test.us.auth0.com';
+  const authorizer = new HttpJwtAuthorizer('BooksAuthorizer', issuer, {
+    jwtAudience: ['3131231'],
+  });
+
+  const api = new apigwv2.HttpApi(this, 'HttpApi');
+
+  api.addRoutes({
+    integration: new HttpUrlIntegration('BooksIntegration', 'https://get-books-proxy.example.com'),
+    path: '/books',
+    authorizer,
+  });
+  ```
+
+  Verbatim default-authorizer + scopes variant, same source:
+
+  ```ts
+  import { HttpJwtAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+
+  const issuer = 'https://test.us.auth0.com';
+  const authorizer = new HttpJwtAuthorizer('DefaultAuthorizer', issuer, {
+    jwtAudience: ['3131231'],
+  });
+
+  const api = new apigwv2.HttpApi(this, 'HttpApi', {
+    defaultAuthorizer: authorizer,
+    defaultAuthorizationScopes: ['manage:books'],
+  });
+  ```
+
+  Python mapping (per the codegen rule above): classes
+  `aws_cdk.aws_apigatewayv2.HttpApi`,
+  `aws_cdk.aws_apigatewayv2_authorizers.HttpUserPoolAuthorizer`
+  (positional `id`, `pool`), `HttpJwtAuthorizer` (positional `id`,
+  `jwt_issuer`, kwarg `jwt_audience=`),
+  `aws_cdk.aws_apigatewayv2_integrations.HttpUrlIntegration`;
+  `http_api.add_routes(path=..., integration=..., authorizer=...)`;
+  `HttpApi(..., default_authorizer=..., default_authorization_scopes=[...])`.
+
+(Drive authorization-code / refresh-token shapes remain deferred to slice 7c, per the parent section.)
+
 ### yt-dlp / youtube-transcript-api (carry-forward)
 
 **Source:** `specs/2026-05-13-youtube-audio-fallback/requirements.md`
