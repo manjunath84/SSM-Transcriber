@@ -17,7 +17,8 @@ confirms.
 Local-file transcription today is a **paid AssemblyAI call** and
 requires `--budget low` (or `best`). `--budget free` is rejected for
 local files because the $0 local provider (faster-whisper) is not yet
-shipped (PLAN.md Phase 1 / Phase 2 Slice 2b, pending). Do not promise a
+shipped (PLAN.md Phase 2 Slice 2b — the deferred faster-whisper
+provider). Do not promise a
 free local transcription. AssemblyAI bills per audio minute; the CLI
 shows an estimate and prompts for confirmation before the paid call
 unless `-y` is passed.
@@ -87,7 +88,7 @@ the cost prompt.
 
 | Symptom | Exit | Meaning | Recovery |
 |---------|------|---------|----------|
-| Budget/auth error mentioning `free` not allowed | 2 | `--budget free` used for a paid local run | Re-run with `--budget low`. |
+| Budget error: `--budget free` not allowed for a paid provider | 2 | `--budget free` used for a paid local run | Re-run with `--budget low`. |
 | `ASSEMBLYAI_API_KEY` missing message | 2 | Gate 1 not configured | Add the key to `.env`. |
 | File not found | 4 | Bad path | Re-resolve the file path with the user. |
 | Polling exceeds `--max-wait` | 3 | File longer than the cap | Re-run with `--max-wait 60` (or higher). |
@@ -102,5 +103,5 @@ Exit codes follow the project matrix `{0, 2, 3, 4}` (see
   `uv run ssm-transcriber transcribe --help`. If the CLI changes, update
   this runbook in the same PR.
 - The $0 local path (faster-whisper) is future work; when PLAN.md
-  Phase 1 / Slice 2b lands, revise the Cost reality section to offer
+  Phase 2 Slice 2b lands, revise the Cost reality section to offer
   `--budget free` for local files.
