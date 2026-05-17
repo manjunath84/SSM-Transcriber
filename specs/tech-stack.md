@@ -57,6 +57,24 @@
 |---|---|---|
 | Orchestration | LangGraph | Graph boundary for multi-agent flows. |
 
+## AWS deployment (Phase 7 hosted UI)
+
+> The hosted multi-user surface only; the local CLI has no AWS dependency.
+> See [`specs/2026-05-14-hosted-ui/requirements.md`](2026-05-14-hosted-ui/requirements.md).
+
+| Layer | Choice | Rationale |
+|---|---|---|
+| Compute | AWS Lambda | Serverless, scale-to-zero so a dormant stack costs ~$0; the sync library code runs unchanged inside a handler. |
+| Orchestration | AWS Step Functions | Event-driven job state machine at the hosting boundary only; keeps library code sync (F1) while modelling long-running transcription jobs. |
+| State / metadata | Amazon DynamoDB | Per-user job records and budget reservations; conditional writes enforce the Gate 3 per-user spend cap atomically. |
+| Object storage | Amazon S3 | Stores uploaded media, `result.raw.json`, and `transcript.md`; a final `manifest.json` PUT is the atomic commit marker. |
+| Auth | Amazon Cognito (+ Google IdP) | Hosted user pool with Google federation; admin-create flow gates invited users and carries the per-user budget claim. |
+| API | API Gateway HTTP API | Lightweight, low-cost HTTP front for the upload/list/get Lambdas; cheaper and simpler than REST API for this surface. |
+| CDN / hosting | Amazon CloudFront | Serves the static browser UI and fronts the API origin; TLS and edge caching without running a server. |
+| Email | Amazon SES | Transactional email (invites, job-complete notifications) without a third-party mail provider. |
+| Events | Amazon EventBridge | Decouples job lifecycle events (completion, failure, alarms) from the Step Functions flow at the hosting boundary. |
+| Config / secrets | SSM Parameter Store / Secrets Manager | Provider API keys and stack config stay out of code and logs; respects the no-secrets-in-logs guardrail. |
+
 ## Quality gates (current — in `pyproject.toml` and CI)
 
 | Layer | Choice | Rationale |

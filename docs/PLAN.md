@@ -237,6 +237,12 @@ overlapping cloud uploads, streaming providers).
 - CLI stays sync end-to-end; no `asyncio.run()` at the entry point
 - LangGraph (Phase 6b) may use async internally — that is isolated behind the
   graph boundary and does not leak into sources/providers
+- **Phase 7 (hosted UI) amendment** (per
+  [`specs/2026-05-14-hosted-ui/requirements.md`](../specs/2026-05-14-hosted-ui/requirements.md)):
+  Library code (`sources/`, `providers/`, `formatters/`, `destinations/`,
+  `core/`) stays sync. Orchestration MAY be event-driven (Step Functions,
+  browser polling) at the hosting boundary only. No `async def` in library
+  code.
 
 #### F2. `PreparedMedia` — the source→pipeline contract
 
@@ -348,6 +354,10 @@ Rules:
   estimated cost, and the flag that would skip the prompt (`--yes`). Cost
   estimates come from the `speech_duration` sidecar (see VAD, above), not the
   full media duration.
+- **Phase 7 (hosted UI) amendment** (per
+  [`specs/2026-05-14-hosted-ui/requirements.md`](../specs/2026-05-14-hosted-ui/requirements.md)):
+  The hosted UI adds Gate 3 (per-user monthly spend cap) on top of Gate 1
+  (configured) and Gate 2 (budget tier). The CLI remains two-gate.
 
 #### F5. Temp files and interruption — `RunWorkspace`
 
