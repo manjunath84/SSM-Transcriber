@@ -20,7 +20,7 @@ def _template() -> Template:
 
 def test_transcripts_bucket_is_private_and_destroyable() -> None:
     t = _template()
-    t.resource_count_is("AWS::S3::Bucket", 1)  # transcripts only; SPA bucket arrives in Task 12
+    t.resource_count_is("AWS::S3::Bucket", 2)  # transcripts + SPA bucket (Task 12)
     t.has_resource_properties(
         "AWS::S3::Bucket",
         {"PublicAccessBlockConfiguration": {"BlockPublicAcls": True}},
@@ -50,3 +50,16 @@ def test_cognito_pool_has_google_idp_and_presignup_trigger() -> None:
         "AWS::Cognito::UserPool",
         {"LambdaConfig": {"PreSignUp": {}}},  # exact key per Task-0 pin
     )
+
+
+def test_http_api_routes_are_jwt_authorized() -> None:
+    t = _template()
+    t.resource_count_is("AWS::ApiGatewayV2::Api", 1)
+    t.has_resource_properties("AWS::ApiGatewayV2::Authorizer",
+                              {"AuthorizerType": "JWT"})
+    t.resource_count_is("AWS::ApiGatewayV2::Route", 4)  # list/get/delete + GET /users/me
+    t.resource_count_is("AWS::CloudFront::Distribution", 1)
+
+
+def test_two_buckets_now() -> None:
+    _template().resource_count_is("AWS::S3::Bucket", 2)  # flips Task 4 count
