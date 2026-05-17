@@ -31,3 +31,14 @@ def test_single_table_has_pk_sk_and_gsis() -> None:
             "BillingMode": "PAY_PER_REQUEST",
         },
     )
+
+
+def test_cognito_pool_has_google_idp_and_presignup_trigger() -> None:
+    t = _template()
+    t.resource_count_is("AWS::Cognito::UserPool", 1)
+    t.has_resource_properties("AWS::Cognito::UserPoolIdentityProvider",
+                              {"ProviderType": "Google"})
+    t.has_resource_properties(
+        "AWS::Cognito::UserPool",
+        {"LambdaConfig": {"PreSignUp": {}}},  # exact key per Task-0 pin
+    )

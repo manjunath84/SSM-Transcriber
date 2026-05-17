@@ -22,3 +22,20 @@ npx --yes aws-cdk@2 destroy                           # tear everything down
 `python` otherwise pointed at it) when running any `cdk` command. To tear down
 all hosted AWS resources and avoid lingering spend, follow
 [`docs/ai/runbooks/aws-teardown.md`](../docs/ai/runbooks/aws-teardown.md).
+
+## Docker required for synth/deploy/test
+
+The invite-gate Lambda is built with CDK asset bundling
+(`Code.from_asset(..., bundling=BundlingOptions(image=DockerImage...))`),
+which runs `pip install` inside a `public.ecr.aws/sam/build-python3.12`
+container. CDK performs this Docker bundling **during synthesis** — which
+means it runs not only for `npx aws-cdk@2 synth`/`deploy` but also for
+`python -m pytest tests/` (the assertion suite calls
+`Template.from_stack()`, which synthesizes the stack).
+
+A running Docker daemon is therefore a hard prerequisite for `pytest`,
+`synth`, and `deploy` in this directory. Without it, every test and synth
+fails with `Cannot connect to the Docker daemon` / `docker exited with
+status 125` — a bundling/environment error, not a CDK code error. Start
+Docker (Desktop or engine) before running the infra test suite or any
+`cdk` command. The user-run Task 17 deploy also requires Docker.
