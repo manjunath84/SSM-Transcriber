@@ -204,6 +204,21 @@ planned for `src/transcriber/llm/provider.py` in Phase 6a.
 
 ---
 
+## PKCE (Proof Key for Code Exchange)
+
+An OAuth 2.0 hardening for public clients (browsers, mobile apps) that
+can't safely keep a client secret. The client generates a random
+`code_verifier`, sends its hash (`code_challenge`, method `S256`) on
+the authorize request, and proves possession of the original verifier
+when exchanging the auth code for tokens — so an intercepted code is
+useless without the verifier.
+
+**Where it shows up:**
+[`web/src/auth.ts`](../../web/src/auth.ts) (`pkceChallenge`,
+`code_challenge_method: "S256"`), introduced in PR #43.
+
+---
+
 ## `PreparedMedia`
 
 The name of the dataclass (F2) that every media source in this project
@@ -219,21 +234,6 @@ disk, YouTube, or Google Drive; it only sees the common value object.
 
 **Where it shows up:** `docs/PLAN.md` Phase 1 Foundations F2;
 planned for `src/transcriber/sources/base.py` in Phase 1.
-
----
-
-## PKCE (Proof Key for Code Exchange)
-
-An OAuth 2.0 hardening for public clients (browsers, mobile apps) that
-can't safely keep a client secret. The client generates a random
-`code_verifier`, sends its hash (`code_challenge`, method `S256`) on
-the authorize request, and proves possession of the original verifier
-when exchanging the auth code for tokens — so an intercepted code is
-useless without the verifier.
-
-**Where it shows up:**
-[`web/src/auth.ts`](../../web/src/auth.ts) (`pkceChallenge`,
-`code_challenge_method: "S256"`), introduced in PR #43.
 
 ---
 
