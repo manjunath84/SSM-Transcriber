@@ -7,7 +7,7 @@ import os
 os.environ.setdefault("CDK_SKIP_BUNDLING", "1")
 
 import aws_cdk as cdk  # noqa: E402
-from aws_cdk.assertions import Template  # noqa: E402
+from aws_cdk.assertions import Match, Template  # noqa: E402
 
 from stacks.hosted_stack import HostedStack  # noqa: E402
 
@@ -37,6 +37,32 @@ def test_single_table_has_pk_sk_and_gsis() -> None:
                 {"AttributeName": "SK", "KeyType": "RANGE"},
             ],
             "BillingMode": "PAY_PER_REQUEST",
+            # A dropped GSI must fail this test. array_with keeps the
+            # assertion order-insensitive (CDK may emit the indexes in
+            # any order) while still requiring BOTH GSI1 and GSI2 with
+            # their exact PK/SK key schemas.
+            "GlobalSecondaryIndexes": Match.array_with(
+                [
+                    Match.object_like(
+                        {
+                            "IndexName": "GSI1",
+                            "KeySchema": [
+                                {"AttributeName": "GSI1PK", "KeyType": "HASH"},
+                                {"AttributeName": "GSI1SK", "KeyType": "RANGE"},
+                            ],
+                        }
+                    ),
+                    Match.object_like(
+                        {
+                            "IndexName": "GSI2",
+                            "KeySchema": [
+                                {"AttributeName": "GSI2PK", "KeyType": "HASH"},
+                                {"AttributeName": "GSI2SK", "KeyType": "RANGE"},
+                            ],
+                        }
+                    ),
+                ]
+            ),
         },
     )
 

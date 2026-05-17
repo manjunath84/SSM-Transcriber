@@ -86,15 +86,41 @@ def fixture_objects(sub: str, job_id: str = "seed-job") -> list[tuple[str, bytes
 
 def _cmd_invite(args: argparse.Namespace) -> None:
     import boto3
+    from botocore.exceptions import ClientError
 
     table_name = args.table or os.environ.get("HOSTED_TABLE")
     if not table_name:
         raise SystemExit("missing table: pass --table or set HOSTED_TABLE")
     emails = [e.strip() for e in args.emails.split(",") if e.strip()]
     table = boto3.resource("dynamodb").Table(table_name)
+    invited = 0
+    skipped = 0
     for email in emails:
-        table.put_item(Item=build_profile_item(email, args.budget))
-    print(f"seeded {len(emails)} #PROFILE row(s) into {table_name}")
+        item = build_profile_item(email, args.budget)
+        if args.overwrite:
+            # Intentional reset: omit the guard so an existing row is replaced.
+            table.put_item(Item=item)
+            print(f"overwrote: {email}")
+            invited += 1
+            continue
+        try:
+            table.put_item(
+                Item=item,
+                ConditionExpression="attribute_not_exists(PK)",
+            )
+        except ClientError as exc:
+            if (
+                exc.response.get("Error", {}).get("Code")
+                == "ConditionalCheckFailedException"
+            ):
+                # Non-destructive: an existing #PROFILE is left untouched so a
+                # re-run never silently resets monthly_budget_usd (Codex P4).
+                print(f"skipped (already invited): {email}")
+                skipped += 1
+                continue
+            raise
+        invited += 1
+    print(f"invited {invited}, skipped {skipped} (into {table_name})")
 
 
 def _cmd_fixture(args: argparse.Namespace) -> None:
@@ -118,6 +144,11 @@ def _build_parser() -> argparse.ArgumentParser:
     invite.add_argument("--emails", required=True, help="comma-separated emails")
     invite.add_argument("--budget", type=int, default=5)
     invite.add_argument("--table", default=None, help="defaults to $HOSTED_TABLE")
+    invite.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace an existing #PROFILE (intentional reset; off by default)",
+    )
     invite.set_defaults(func=_cmd_invite)
 
     fixture = sub.add_parser("fixture", help="write a committed transcript fixture")

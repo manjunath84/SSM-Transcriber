@@ -22,6 +22,12 @@ def bucket(monkeypatch):
         s3.put_object(
             Bucket="test-bucket", Key="sub1/j2/transcript.md", Body=b"# partial"
         )
+        # j3: committed (manifest + transcript) but NO result.raw.json, to
+        # exercise the raw-absent branch -> 200 with raw_present: false.
+        s3.put_object(
+            Bucket="test-bucket", Key="sub1/j3/transcript.md", Body=b"# no raw"
+        )
+        s3.put_object(Bucket="test-bucket", Key="sub1/j3/manifest.json", Body=b"{}")
         monkeypatch.setenv("TRANSCRIPTS_BUCKET", "test-bucket")
         # Required: handlers call boto3 with no explicit region; moto 5
         # won't auto-set it -> NoRegionError before any assertion.
@@ -51,3 +57,10 @@ def test_get_missing_manifest_is_404(bucket):
 def test_get_other_users_job_is_404(bucket):
     out = handler(_event("other", "j1"), None)
     assert out["statusCode"] == 404
+
+
+def test_get_committed_job_without_raw_reports_raw_absent(bucket):
+    out = handler(_event("sub1", "j3"), None)
+    assert out["statusCode"] == 200
+    body = json.loads(out["body"])
+    assert body == {"markdown": "# no raw", "raw_present": False}
