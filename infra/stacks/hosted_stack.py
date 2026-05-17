@@ -12,6 +12,7 @@ from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as ddb
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_s3_deployment as s3deploy
 from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
@@ -159,6 +160,14 @@ class HostedStack(Stack):
                     response_page_path="/index.html",
                 ),
             ],
+        )
+        s3deploy.BucketDeployment(
+            self,
+            "SpaDeployment",
+            sources=[s3deploy.Source.asset("../web/dist")],
+            destination_bucket=self.spa_bucket,
+            distribution=self.distribution,
+            distribution_paths=["/*"],  # invalidate CloudFront on every deploy
         )
         cloudfront_url = f"https://{self.distribution.distribution_domain_name}"
 

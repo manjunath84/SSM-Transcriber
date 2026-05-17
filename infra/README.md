@@ -23,6 +23,22 @@ npx --yes aws-cdk@2 destroy                           # tear everything down
 all hosted AWS resources and avoid lingering spend, follow
 [`docs/ai/runbooks/aws-teardown.md`](../docs/ai/runbooks/aws-teardown.md).
 
+## Frontend build is a prerequisite (`web/dist` must exist)
+
+The stack ships the SPA via `aws_s3_deployment.BucketDeployment` sourcing
+`../web/dist`. CDK resolves that asset **at synth time**, so the directory
+must exist before *any* `cdk synth` / `cdk deploy` **and before the infra
+test suite** (the assertion tests synth the stack). `web/dist` is a build
+artifact (gitignored), so run the Vite build first, from the repo root:
+
+```bash
+npm --prefix web run build      # emits web/dist/ — required before cdk/tests
+```
+
+If `web/dist` is missing you'll see a synth-time asset error rather than a
+clean test failure. (`Source.asset` on this prebuilt dir does **not**
+Docker-bundle — see the Docker note below.)
+
 ## Docker is required only for real bundling (deploy), NOT for tests
 
 Lambda code is packaged via CDK asset bundling

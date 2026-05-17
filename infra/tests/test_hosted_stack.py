@@ -63,3 +63,7 @@ def test_http_api_routes_are_jwt_authorized() -> None:
 
 def test_two_buckets_now() -> None:
     _template().resource_count_is("AWS::S3::Bucket", 2)  # flips Task 4 count
+
+
+def test_spa_bucket_deployment_present() -> None:
+    _template().resource_count_is("Custom::CDKBucketDeployment", 1)
