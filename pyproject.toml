@@ -82,6 +82,13 @@ ignore_missing_imports = true
 module = ["yt_dlp", "yt_dlp.*"]
 ignore_missing_imports = true
 
+# infra/seed.py is the standalone CDK operator script (infra/ is outside
+# the package, with its own venv). test_seed_shapes.py imports it via a
+# runtime sys.path insert, which mypy's static resolver can't follow.
+[[tool.mypy.overrides]]
+module = ["seed"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
