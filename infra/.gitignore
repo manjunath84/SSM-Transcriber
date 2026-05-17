@@ -1,0 +1,8 @@
+# CDK synth/build output — generated, never committed
+cdk.out/
+
+# Python venv + caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

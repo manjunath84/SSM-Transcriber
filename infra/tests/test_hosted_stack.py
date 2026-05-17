@@ -10,6 +10,24 @@ def _template() -> Template:
     return Template.from_stack(stack)
 
 
-def test_stack_synthesizes_empty_for_now() -> None:
-    # Skeleton: synthesizes with zero resources until Group B adds them.
-    _template().resource_count_is("AWS::S3::Bucket", 0)
+def test_transcripts_bucket_is_private_and_destroyable() -> None:
+    t = _template()
+    t.resource_count_is("AWS::S3::Bucket", 1)  # transcripts only; SPA bucket arrives in Task 12
+    t.has_resource_properties(
+        "AWS::S3::Bucket",
+        {"PublicAccessBlockConfiguration": {"BlockPublicAcls": True}},
+    )
+
+
+def test_single_table_has_pk_sk_and_gsis() -> None:
+    t = _template()
+    t.has_resource_properties(
+        "AWS::DynamoDB::Table",
+        {
+            "KeySchema": [
+                {"AttributeName": "PK", "KeyType": "HASH"},
+                {"AttributeName": "SK", "KeyType": "RANGE"},
+            ],
+            "BillingMode": "PAY_PER_REQUEST",
+        },
+    )
