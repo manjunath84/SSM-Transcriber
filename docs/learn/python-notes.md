@@ -30,6 +30,11 @@
   - [`tenacity.retry` decorator](#tenacity-retry)
 - [Function signatures](#function-signatures)
   - [Keyword-only arguments (`*, kwarg`)](#keyword-only-arguments-kwarg)
+- [AWS / cloud SDK idioms](#aws--cloud-sdk-idioms)
+  - [AWS Lambda handler signature](#lambda-handler-signature)
+  - [`boto3` resource vs. client](#boto3-resource-vs-client)
+- [CLI argument parsing](#cli-argument-parsing)
+  - [`argparse` subcommands (subparsers)](#argparse-subcommands)
 
 ---
 
@@ -558,3 +563,111 @@ canonical example.
 **Where it shows up:** [`src/transcriber/core/budget.py:65`](../../src/transcriber/core/budget.py)
 — `estimate_assemblyai_cost(duration_seconds, *, diarize=True)`,
 introduced in PR #18.
+
+---
+
+## AWS / cloud SDK idioms
+
+### AWS Lambda handler signature
+
+**Java analogue:** an AWS Lambda Java handler implements
+`RequestHandler<EventT, ResultT>` with `handleRequest(EventT event,
+Context context)`. The runtime finds it by the configured
+`fqcn::method` and injects both arguments.
+
+**Python idiom.** A Lambda handler is just a module-level function
+the runtime calls by `module.function`. It takes two positional args:
+the event (a plain `dict`, already JSON-parsed) and the runtime
+context. The context is rarely used, so the convention is to name it
+`_context` — a leading underscore signals "intentionally unused" (the
+same convention as `_` for a throwaway loop variable).
+
+```python
+def handler(event: dict, _context) -> dict:
+    email = event["request"]["userAttributes"]["email"]
+    ...
+    return event  # for a Cognito trigger, the (mutated) event is the response
+```
+
+There is no interface to implement and no base class — the contract is
+purely positional. Type the event as `dict` because its shape is the
+*vendor's* contract (pinned verbatim in the spec), not something the
+type system can enforce here.
+
+**Where it shows up:**
+[`src/transcriber/hosted/handlers/invite_gate.py:18`](../../src/transcriber/hosted/handlers/invite_gate.py)
+— `def handler(event: dict, _context) -> dict:`, introduced in PR #43.
+
+---
+
+### `boto3` resource vs. client
+
+**Java analogue:** the AWS Java SDK gives you one typed service client
+per service (`DynamoDbClient`, `S3Client`) with low-level request/
+response objects. There is no second, higher-level object-mapped API
+in the core SDK (the Enhanced Client is a separate opt-in).
+
+**Python idiom.** `boto3` exposes **two** styles and you pick per call
+site:
+
+```python
+import boto3
+
+# resource: higher-level, object-oriented. Good when an SDK abstraction
+# (here a Table with dict-shaped Key=) reads cleaner than raw params.
+table = boto3.resource("dynamodb").Table(name)
+item = table.get_item(Key={"PK": pk, "SK": "#PROFILE"}).get("Item")
+
+# client: low-level, 1:1 with the service API. Good for paginated /
+# parameter-heavy calls like list_objects_v2 with a continuation token.
+s3 = boto3.client("s3")
+resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+```
+
+Rule of thumb in this repo: `resource` when the OO wrapper genuinely
+simplifies the call (DynamoDB items), `client` when you need the raw
+API surface (S3 pagination). Not every service has a `resource`.
+
+**Where it shows up:**
+[`src/transcriber/hosted/handlers/invite_gate.py:21`](../../src/transcriber/hosted/handlers/invite_gate.py)
+(`boto3.resource("dynamodb").Table`) vs.
+[`src/transcriber/hosted/handlers/list_transcripts.py:18`](../../src/transcriber/hosted/handlers/list_transcripts.py)
+(`boto3.client("s3")`), introduced in PR #43.
+
+---
+
+## CLI argument parsing
+
+### `argparse` subcommands (subparsers)
+
+**Java analogue:** picocli's `@Command` with nested subcommands, or
+the manual `switch (args[0])` dispatch you'd hand-write with plain
+`String[] args` — one program, several verbs, each with its own flags.
+
+**Python idiom.** `argparse` builds a subcommand parser with
+`add_subparsers()`, then `add_parser("verb")` for each verb; each
+sub-parser gets its own flags and is dispatched on `args.command`.
+
+```python
+parser = argparse.ArgumentParser(description="Seed the hosted stack.")
+sub = parser.add_subparsers(dest="command", required=True)
+
+invite = sub.add_parser("invite", help="write invited-user #PROFILE rows")
+invite.add_argument("--email", required=True)
+
+fixture = sub.add_parser("fixture", help="write a committed transcript fixture")
+fixture.add_argument("--sub", required=True)
+
+args = parser.parse_args()
+# args.command is "invite" or "fixture"; dispatch on it.
+```
+
+`required=True` on the subparsers makes "no verb given" an error
+rather than a silent no-op. (The repo's *user-facing* CLI uses `typer`
+instead — see [`typer` and `Annotated`](#typer-and-annotated); plain
+`argparse` is reserved for the operator-only `infra/seed.py` script,
+which is outside the package.)
+
+**Where it shows up:**
+[`infra/seed.py:113`](../../infra/seed.py) (`_build_parser`,
+`add_subparsers` + two `add_parser` verbs), introduced in PR #43.

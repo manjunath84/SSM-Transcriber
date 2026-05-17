@@ -11,6 +11,61 @@
 
 ---
 
+## PR #43 — Implementation Phase 7 Slice 7a Auth Scaffold S3 Viewer
+
+**Merged:** TBD  |  **Branch:** `feat/7a-auth-scaffold`
+**Explainer:** [`prs/pr-043-7a-auth-scaffold-impl.md`](prs/pr-043-7a-auth-scaffold-impl.md)
+
+Until this slice the project was a single-user local CLI, and the
+constitution said so out loud — "multi-user or hosted/SaaS deployment"
+was an explicit *non-goal*. PR #43 is where that changes on purpose:
+it ships the smallest end-to-end hosted vertical that proves the AWS
+wire-up before the expensive cost surface (7b) lands on top of it. An
+*invited* person signs in with Google through Cognito, sees their
+existing transcripts newest-first, opens one to read the markdown, and
+can delete it — on a pure-serverless stack that `cdk destroy` takes to
+literal $0. No job submission, no cost gate, no Step Functions yet.
+
+The decision worth carrying forward is the IaC choice, and it was made
+the same way the good decisions in this repo always are: by reading
+what the tools actually produce, not their pitches. This slice's infra
+is auth- and CDN-heavy — federated Cognito, CloudFront+S3, an API
+Gateway Cognito authorizer. AWS CDK's L2 constructs collapse exactly
+those into a handful of typed Python lines; SAM has *no* serverless
+abstraction for a user pool, Google federation, or CloudFront and
+degrades to hand-written raw CloudFormation for precisely the hard
+parts. CDK also keeps infra in the same language as the app and ships
+`assertions.Template` for the infra unit tests F7 already mandates.
+SAM's real edges (teaching raw CFN, `sam local invoke`) don't pay for
+their YAML tax when the spec already covers local testing via `moto`.
+That reasoning is pinned in the plan's ADR-0 and spec rows D2/D8/D9,
+grounded in a Context7 fetch — not from memory.
+
+The architectural spine is the **F1 hosting boundary**. F1 says
+library code stays sync; a hosted surface is event-driven by nature.
+Rather than relax F1, the slice draws a named line:
+`src/transcriber/hosted/` is the event-driven orchestration package,
+explicitly outside the sync-only set, and it imports nothing that
+would push `async def` back into `sources/`, `providers/`,
+`formatters/`, `destinations/`, `core/`. The PLAN.md §F1 amendment
+widens the protected set, and the CLAUDE.md guardrail line is edited
+in the *same* PR — because two authoritative tool-context files that
+disagree are worse than one that's slightly stale.
+
+Two details a sharp reviewer should notice. First, the invite-gate
+event shape was *pinned, not guessed*: which Cognito trigger fires for
+a federated Google first sign-in is a genuinely non-obvious service
+contract (it's the *Pre sign-up* trigger with
+`triggerSource == "PreSignUp_ExternalProvider"`), copied verbatim from
+the AWS docs into the spec before `invite_gate.py` was written — the
+same verbatim-vendor-shape discipline that caught real bugs on PR #12.
+Second, the chicken-and-egg the seed script solves: the invite-gate
+rejects anyone without a `#PROFILE` row keyed by *email*, but the
+fixture transcript is keyed by the Cognito `sub` that doesn't exist
+until *after* first sign-in — so `infra/seed.py` deliberately splits
+into ordered `invite` and `fixture` subcommands. That ordering is an
+operational contract, written down, not folklore.
+
 ## PR #40 — Decision Record: GStack × Superpowers Workflow
 
 **Merged:** TBD  |  **Branch:** `docs/gstack-superpowers-workflow`

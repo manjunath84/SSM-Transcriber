@@ -42,6 +42,7 @@ in one of those two places.
 | Setting up or running Drive transcribe + upload | [`runbooks/drive-transcribe-upload.md`](runbooks/drive-transcribe-upload.md) | `README.md` § Google Drive upload |
 | Transcribing a local audio/video file | [`runbooks/transcribe-local.md`](runbooks/transcribe-local.md) | `README.md` § Transcription quick-start |
 | Combining GStack + Superpowers for spec/execution | [`runbooks/gstack-superpowers-workflow.md`](runbooks/gstack-superpowers-workflow.md) | `specs/2026-05-14-hosted-ui/` (Phase 7 spec context) |
+| Tearing down / restoring the hosted AWS stack | [`runbooks/aws-teardown.md`](runbooks/aws-teardown.md) | `infra/README.md` |
 
 ## Claude command inventory
 

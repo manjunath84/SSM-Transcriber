@@ -157,6 +157,49 @@ output contracts, not docs** (PR #40).
 [`prs/pr-040-gstack-superpowers-workflow.md`](prs/pr-040-gstack-superpowers-workflow.md),
 [`docs/ai/runbooks/gstack-superpowers-workflow.md`](../ai/runbooks/gstack-superpowers-workflow.md).
 
+**Story: AWS CDK over SAM for an auth-and-CDN-heavy serverless
+stack — chosen on what the tools produce, not preference** (PR #43).
+
+- **Situation.** I was adding a hosted multi-user web surface on top
+  of a single-user local CLI. The first slice's infra was Cognito with
+  Google federation, a CloudFront+S3 single-page app, and an API
+  Gateway Cognito JWT authorizer. I had to pick the Infrastructure-as-
+  Code tool before writing any infra, and lock it for the whole phase.
+- **Task.** Decide between AWS CDK (Python) and AWS SAM on evidence,
+  and write an ADR so it wasn't re-litigated every slice.
+- **Action.** I evaluated each tool against the *specific* hard parts
+  of this slice, not generically. SAM's strength is serverless
+  primitives (functions, simple APIs) and `sam local invoke`. But it
+  has no abstraction for a Cognito user pool, Google federation, or
+  CloudFront — those degrade to hand-written raw CloudFormation, which
+  is exactly the verbose part. CDK's L2 constructs
+  (`UserPoolIdentityProviderGoogle`, `HttpUserPoolAuthorizer`,
+  `S3BucketOrigin.with_origin_access_control`) collapse them into a
+  few typed lines, keep infra in the same language as the app, and
+  ship `assertions.Template` for the infra unit tests my test contract
+  already required. SAM's `local invoke` edge didn't pay for its YAML
+  tax because the spec already covered local testing with `moto`. I
+  pinned the decision in an ADR grounded in a documentation fetch, not
+  memory.
+- **Result.** The auth + CDN stack is a few hundred readable Python
+  lines with unit-tested synthesized CloudFormation, and `cdk destroy`
+  is a literal-$0 teardown lever. The decision record carries an
+  explicit "where it can change" trigger (only if a future slice needs
+  heavy non-serverless resources, which the pure-serverless constraint
+  rules out).
+
+**The interviewer's follow-up is usually: "Isn't CDK just generating
+the same CloudFormation SAM would?"** Answer: yes, both emit
+CloudFormation — the difference is *who writes the hard parts*. For
+serverless-native resources SAM's terse syntax wins; for federated
+identity and a CDN it has no abstraction at all, so you'd hand-author
+the same CFN CDK generates for free, minus the type-checking and the
+unit-testable `Template` assertions.
+
+**Pointers:** [`journey.md` PR #43 entry](journey.md#pr-43--implementation-phase-7-slice-7a-auth-scaffold-s3-viewer),
+[`prs/pr-043-7a-auth-scaffold-impl.md`](prs/pr-043-7a-auth-scaffold-impl.md),
+[`specs/2026-05-14-hosted-ui/plan-7a.md`](../../specs/2026-05-14-hosted-ui/plan-7a.md) (ADR-0).
+
 ### "Tell me about a time you caught a bug before it shipped"
 
 Same story as above, or:

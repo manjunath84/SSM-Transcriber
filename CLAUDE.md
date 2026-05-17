@@ -36,8 +36,10 @@ roadmap and live board for execution status.
 
 ## Guardrails to keep inline
 
-- Keep the core sync through Phase 4; do not add `async def` to pipeline,
-  source, provider, or formatter code.
+- Library code (`sources/`, `providers/`, `formatters/`, `destinations/`,
+  `core/`) stays sync; never add `async def` there. Orchestration MAY be
+  event-driven (Step Functions, browser polling) at the hosting boundary
+  only (`src/transcriber/hosted/`). See PLAN.md §F1.
 - Use `from transcriber.config import settings`; never read `os.environ`
   directly.
 - Cache keys are versioned composites; never cache on `SHA256(file + quality)`.

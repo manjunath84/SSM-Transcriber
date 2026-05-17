@@ -53,10 +53,19 @@ the full audience description.
   set is determined by what the evaluations show, with accuracy as the
   primary tiebreaker.)
 
+## In scope (Phase 7, hosted UI)
+
+- Multi-user, hosted/SaaS deployment of the transcription pipeline behind
+  a browser UI. The **local CLI remains single-user / local-first** (no
+  account, no network dependency, `$0` default); the **hosted UI is the
+  multi-user surface** — both guarantees hold simultaneously. Scoped to
+  Phase 7; see
+  [`specs/2026-05-14-hosted-ui/requirements.md`](2026-05-14-hosted-ui/requirements.md)
+  for the full requirements and constitution overrides.
+
 ## Out of scope
 
 - Real-time / streaming transcription.
-- Multi-user or hosted/SaaS deployment. This is a single-user local CLI.
 - Long-term storage of raw audio. `RunWorkspace` cleans up temp artifacts.
 - Becoming a knowledge management system. Transcripts flow into separate
   downstream tools (Obsidian, NotebookLM, the user's `knowledge-base` repo)
