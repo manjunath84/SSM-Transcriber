@@ -69,6 +69,61 @@ planned for `src/transcriber/core/cache.py` in Phase 1.
 
 ---
 
+## CloudFront OAC (Origin Access Control)
+
+A CloudFront feature that lets the CDN read from a **private** S3
+bucket using a signed, scoped identity, so the bucket itself never has
+to be public. OAC is the current AWS-recommended replacement for the
+older Origin Access Identity (OAI); the SPA bucket stays private and
+only CloudFront can fetch its objects.
+
+**Where it shows up:**
+[`infra/stacks/hosted_stack.py:145`](../../infra/stacks/hosted_stack.py)
+(`S3BucketOrigin.with_origin_access_control`), introduced in PR #43.
+
+---
+
+## Cognito federated IdP
+
+An identity-provider configuration where AWS Cognito doesn't store
+passwords itself but **delegates authentication to a third party**
+(here, Google) and mints its own user-pool tokens after that party
+verifies the user. The app only ever sees Cognito tokens — it does
+*not* automatically get Google's access/refresh token, which is why
+Drive access is a separate OAuth flow deferred to a later slice.
+
+**Java analogue:** Spring Security with an external OIDC/SAML provider
+configured — your app trusts the IdP's assertion and issues its own
+session, rather than checking credentials directly.
+
+**Where it shows up:**
+[`infra/stacks/hosted_stack.py:90`](../../infra/stacks/hosted_stack.py)
+(`UserPoolIdentityProviderGoogle`) and the Pre-sign-up gate
+[`src/transcriber/hosted/handlers/invite_gate.py`](../../src/transcriber/hosted/handlers/invite_gate.py),
+introduced in PR #43.
+
+---
+
+## Commit marker
+
+A small object written **last**, after all the real artifacts, whose
+presence is the single signal that a multi-object write completed. A
+partial failure (some objects written, crash before the marker)
+leaves the work *invisible* rather than half-visible, because readers
+treat the prefix as non-existent until the marker is there.
+
+**Java analogue:** the same idea as writing to a temp file and doing
+an atomic rename at the end — except across multiple objects, where
+the marker file plays the role the rename can't.
+
+**Where it shows up:**
+[`src/transcriber/hosted/s3keys.py`](../../src/transcriber/hosted/s3keys.py)
+(`MANIFEST_NAME` + `visible_job_ids`), enforced by every list/get/
+delete Lambda; introduced in PR #43 (spec "Atomic output writes",
+Codex P2).
+
+---
+
 ## Context window (token budget)
 
 The fixed-size buffer of text an LLM can "see" during one interaction. For
@@ -167,6 +222,21 @@ planned for `src/transcriber/sources/base.py` in Phase 1.
 
 ---
 
+## PKCE (Proof Key for Code Exchange)
+
+An OAuth 2.0 hardening for public clients (browsers, mobile apps) that
+can't safely keep a client secret. The client generates a random
+`code_verifier`, sends its hash (`code_challenge`, method `S256`) on
+the authorize request, and proves possession of the original verifier
+when exchanging the auth code for tokens — so an intercepted code is
+useless without the verifier.
+
+**Where it shows up:**
+[`web/src/auth.ts`](../../web/src/auth.ts) (`pkceChallenge`,
+`code_challenge_method: "S256"`), introduced in PR #43.
+
+---
+
 ## Prompt caching
 
 An Anthropic API feature (and similar features in other providers) that
@@ -240,6 +310,26 @@ a 45-minute transcription still leaves the filesystem clean.
 
 **Where it shows up:** `docs/PLAN.md` Phase 1 Foundations F5;
 planned for `src/transcriber/core/workspace.py` in Phase 1.
+
+---
+
+## Single-table design
+
+A DynamoDB modelling style where **multiple entity types share one
+table**, distinguished by composite partition/sort keys (and global
+secondary indexes), rather than one table per entity as in a
+relational schema. It trades relational normalization for fewer
+round-trips and the ability to fetch related items in a single query.
+In 7a only `#PROFILE` items exist; job records and tokens are future
+SKs in the same table.
+
+**Java analogue:** the opposite of JPA-per-entity tables — closer to a
+single key-value store where the key encodes both *which* entity and
+*which instance*, and access patterns (not entities) drive the schema.
+
+**Where it shows up:**
+[`infra/stacks/hosted_stack.py:65`](../../infra/stacks/hosted_stack.py)
+(one `ddb.Table` with `PK`/`SK` + GSI1/GSI2), introduced in PR #43.
 
 ---
 
