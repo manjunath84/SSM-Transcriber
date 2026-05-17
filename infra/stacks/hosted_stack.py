@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from aws_cdk import RemovalPolicy, Stack
 from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as ddb
@@ -19,6 +21,14 @@ def _python_bundling():
 
 
 def _lambda_code():
+    # CDK_SKIP_BUNDLING=1 → no-Docker path. assertions.Template tests (and a
+    # Dockerless `cdk synth`) assert resource SHAPES (Cognito/routes/buckets),
+    # not Lambda code content, so a plain unbundled asset is sufficient and
+    # avoids requiring Docker to run the infra unit tests / synth locally.
+    # Real `cdk deploy` (user Task 17 / Docker-enabled CI) leaves the var
+    # unset and gets the correct pip-bundled package.
+    if os.environ.get("CDK_SKIP_BUNDLING") == "1":
+        return lambda_.Code.from_asset("../src/transcriber/hosted")
     return lambda_.Code.from_asset(
         "../",
         bundling=_python_bundling(),

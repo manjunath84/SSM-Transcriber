@@ -23,19 +23,25 @@ npx --yes aws-cdk@2 destroy                           # tear everything down
 all hosted AWS resources and avoid lingering spend, follow
 [`docs/ai/runbooks/aws-teardown.md`](../docs/ai/runbooks/aws-teardown.md).
 
-## Docker required for synth/deploy/test
+## Docker is required only for real bundling (deploy), NOT for tests
 
-The invite-gate Lambda is built with CDK asset bundling
+Lambda code is packaged via CDK asset bundling
 (`Code.from_asset(..., bundling=BundlingOptions(image=DockerImage...))`),
 which runs `pip install` inside a `public.ecr.aws/sam/build-python3.12`
-container. CDK performs this Docker bundling **during synthesis** — which
-means it runs not only for `npx aws-cdk@2 synth`/`deploy` but also for
-`python -m pytest tests/` (the assertion suite calls
-`Template.from_stack()`, which synthesizes the stack).
+container. CDK runs this bundling **during synthesis**.
 
-A running Docker daemon is therefore a hard prerequisite for `pytest`,
-`synth`, and `deploy` in this directory. Without it, every test and synth
-fails with `Cannot connect to the Docker daemon` / `docker exited with
-status 125` — a bundling/environment error, not a CDK code error. Start
-Docker (Desktop or engine) before running the infra test suite or any
-`cdk` command. The user-run Task 17 deploy also requires Docker.
+To keep the infra unit tests (and a shape-only `cdk synth`) runnable
+**without Docker**, `_lambda_code()` honours `CDK_SKIP_BUNDLING=1`: when
+set, it uses a plain unbundled asset. The `assertions.Template` suite
+asserts resource *shapes* (Cognito / API routes / buckets), not Lambda
+code content, so the stub asset is sufficient and correct for tests.
+`infra/tests/test_hosted_stack.py` sets this var on import, so
+`python -m pytest tests/` passes with no Docker daemon.
+
+**Docker IS required for a real `cdk deploy`** (and any `cdk synth` you
+want to produce a deployable artifact): leave `CDK_SKIP_BUNDLING` unset
+so the real pip-bundled package is built. The user-run Task 17 deploy
+requires Docker for this reason. If you run tests/synth without Docker
+and without the skip var, you'll see `Cannot connect to the Docker
+daemon` / `docker exited with status 125` — set `CDK_SKIP_BUNDLING=1`
+(tests already do) or start Docker.

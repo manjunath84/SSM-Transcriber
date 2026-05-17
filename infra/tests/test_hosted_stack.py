@@ -1,7 +1,15 @@
-import aws_cdk as cdk
-from aws_cdk.assertions import Template
+import os
 
-from stacks.hosted_stack import HostedStack
+# Infra assertion tests check resource SHAPES, not Lambda code content, so
+# they must not require Docker for Lambda asset bundling. Set before the
+# stack is imported/synthesized. Real `cdk synth`/`cdk deploy` is a separate
+# process that does not import this module, so it still bundles for real.
+os.environ.setdefault("CDK_SKIP_BUNDLING", "1")
+
+import aws_cdk as cdk  # noqa: E402
+from aws_cdk.assertions import Template  # noqa: E402
+
+from stacks.hosted_stack import HostedStack  # noqa: E402
 
 
 def _template() -> Template:
