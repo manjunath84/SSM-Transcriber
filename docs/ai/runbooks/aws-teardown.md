@@ -28,7 +28,7 @@ separately if total $0 is required.
 
 See **Cost floor** in
 [`specs/2026-05-14-hosted-ui/requirements.md`](../../specs/2026-05-14-hosted-ui/requirements.md)
-(~lines 668–679) for the detailed breakdown.
+(~lines 668–678) for the detailed breakdown.
 
 ## Prerequisites (check, don't assume)
 
@@ -84,17 +84,17 @@ $0, delete them manually:
 
 ```bash
 # Delete the client-id SSM Parameter
-aws ssm delete-parameter --name /transcriber/google-oauth/client-id --region <region>
+aws ssm delete-parameter --name /ssm-transcriber/<env>/google-oauth-client-id --region <region>
 
 # Delete Secrets Manager secret (if provisioned — optional)
 aws secretsmanager delete-secret \
-  --secret-id transcriber-google-oauth-client-secret \
+  --secret-id ssm-transcriber/<env>/google-oauth-client-secret \
   --force-delete-without-recovery \
   --region <region>
 ```
 
-Replace `<region>` with the AWS region where these were created (e.g.,
-`us-east-1`).
+Replace `<env>` with your deployment environment (e.g., `dev`, `prod`) and
+`<region>` with the AWS region where these were created (e.g., `us-east-1`).
 
 ## Confirm ~$0
 
@@ -138,9 +138,9 @@ and prerequisites.
 | CloudWatch log groups remain after stack deletion | CloudFormation does not delete retained log groups by default; they linger and incur pennies of storage | Delete manually: `aws logs delete-log-group --log-group-name /aws/lambda/<FunctionName> --region <region>` for each function. |
 | S3 bucket deletion fails with `bucket not empty` | `auto_delete_objects=True` did not empty the bucket (e.g., object lock or versioning interference) | Manually empty the bucket: `aws s3 rm s3://<BucketName> --recursive`, then re-run `cdk destroy`. |
 | `cdk destroy` hangs or times out | CDK waiting for CloudFormation deletion; stack is very large or has dependencies | Let it continue (may take several minutes). If it truly hangs, you can cancel and monitor the stack deletion in the AWS Console. |
-| Secrets Manager or SSM params were NOT deleted | `cdc destroy` does not manage operator-provisioned items | Delete them manually per the Teardown section above. Verify with `aws secretsmanager describe-secret` and `aws ssm describe-parameters --filters "Key=Name,Values=/transcriber/"`. |
+| Secrets Manager or SSM params were NOT deleted | `cdk destroy` does not manage operator-provisioned items | Delete them manually per the Teardown section above. Verify with `aws secretsmanager describe-secret` and `aws ssm describe-parameters --filters "Key=Name,Values=/ssm-transcriber/"`. |
 | Docker daemon not running during `cdk deploy` | CDK bundling fails with `Cannot connect to the Docker daemon` | Start Docker, then re-run `cdk deploy`. For tests only, set `CDK_SKIP_BUNDLING=1`. |
-| `web/dist` missing before `cdc deploy` | CDK asset synth fails; the frontend SPA is required at synth time | Run `npm --prefix web run build` from the repo root before `cdk deploy`. |
+| `web/dist` missing before `cdk deploy` | CDK asset synth fails; the frontend SPA is required at synth time | Run `npm --prefix web run build` from the repo root before `cdk deploy`. |
 
 ## Notes
 

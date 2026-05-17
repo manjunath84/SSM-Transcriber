@@ -61,6 +61,7 @@
 
 > The hosted multi-user surface only; the local CLI has no AWS dependency.
 > See [`specs/2026-05-14-hosted-ui/requirements.md`](2026-05-14-hosted-ui/requirements.md).
+> **Scope note:** Phase 7a (auth + viewer) provisions Cognito (+Google IdP), S3, CloudFront, API Gateway HTTP API, Lambda, and DynamoDB. Step Functions, SES, and EventBridge are part of the full Phase 7 surface and land in later slices (7b/7c).
 
 | Layer | Choice | Rationale |
 |---|---|---|
