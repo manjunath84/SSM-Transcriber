@@ -5,7 +5,7 @@
 // consume these are Task 14 (not here).
 
 import { getIdToken } from "./auth";
-import { config } from "./config";
+import { getConfig } from "./config";
 
 export interface TranscriptSummary {
   jobId: string;
@@ -81,7 +81,7 @@ function authHeaders(): HeadersInit {
 }
 
 function apiUrl(path: string): string {
-  return `${config.apiBaseUrl.replace(/\/$/, "")}${path}`;
+  return `${getConfig().apiBaseUrl.replace(/\/$/, "")}${path}`;
 }
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {

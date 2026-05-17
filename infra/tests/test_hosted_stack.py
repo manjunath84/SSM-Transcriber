@@ -66,4 +66,23 @@ def test_two_buckets_now() -> None:
 
 
 def test_spa_bucket_deployment_present() -> None:
+    # Still ONE BucketDeployment: dist + runtime config.json are merged into
+    # a single SpaDeployment (a 2nd deployment would be pruned away by this
+    # one's default `s3 sync --delete`). Count stays 1.
     _template().resource_count_is("Custom::CDKBucketDeployment", 1)
+
+
+def test_runtime_config_json_deployment_present() -> None:
+    # The SPA deployment must carry TWO sources (../web/dist asset +
+    # the runtime config.json), so the SPA can fetch its
+    # API/Cognito/CloudFront config at runtime (no build-time VITE_* env).
+    # The config.json Source.json_data renders into a 2nd zip asset, so the
+    # BucketDeployment custom resource has two SourceObjectKeys.
+    t = _template()
+    t.resource_count_is("Custom::CDKBucketDeployment", 1)
+    deployments = t.find_resources("Custom::CDKBucketDeployment")
+    (props,) = (r["Properties"] for r in deployments.values())
+    assert len(props["SourceObjectKeys"]) == 2, (
+        f"expected 2 SPA deployment sources (dist + config.json), "
+        f"got {props['SourceObjectKeys']}"
+    )

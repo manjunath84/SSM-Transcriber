@@ -161,14 +161,10 @@ class HostedStack(Stack):
                 ),
             ],
         )
-        s3deploy.BucketDeployment(
-            self,
-            "SpaDeployment",
-            sources=[s3deploy.Source.asset("../web/dist")],
-            destination_bucket=self.spa_bucket,
-            distribution=self.distribution,
-            distribution_paths=["/*"],  # invalidate CloudFront on every deploy
-        )
+        # SpaDeployment (dist + runtime config.json) is created below, after
+        # http_api / user_pool_client exist, so config.json can carry their
+        # deploy-resolved tokens. cloudfront_url is needed here for the
+        # Cognito app-client callback URL.
         cloudfront_url = f"https://{self.distribution.distribution_domain_name}"
 
         self.user_pool_client = self.user_pool.add_client(
@@ -275,6 +271,40 @@ class HostedStack(Stack):
             integration=apigwv2_integrations.HttpLambdaIntegration(
                 "GetMeIntegration", get_me_fn
             ),
+        )
+
+        # --- SPA deployment (dist + runtime config.json) --------------------
+        # The SPA bundle is built (`npm run build`) BEFORE this stack's
+        # outputs exist, so build-time VITE_* injection would ship empty
+        # config. Instead a runtime-fetched config.json is written into the
+        # SPA bucket from the stack's own deploy-resolved tokens
+        # (Source.json_data resolves CDK tokens at deploy time). Both sources
+        # go in ONE BucketDeployment: a separate deployment with prune=False
+        # would still be wiped by this deployment's default-prune
+        # `aws s3 sync --delete`, since config.json is not in ../web/dist.
+        # Merging both sources keeps the default prune (stale hashed Vite
+        # assets are cleaned) without deleting config.json. Placed after
+        # http_api / user_pool_client so config.json carries their tokens.
+        s3deploy.BucketDeployment(
+            self,
+            "SpaDeployment",
+            sources=[
+                s3deploy.Source.asset("../web/dist"),
+                s3deploy.Source.json_data(
+                    "config.json",
+                    {
+                        "apiBaseUrl": http_api.url or "",
+                        "cognitoDomain": self.user_pool_domain.base_url(),
+                        "userPoolClientId": (
+                            self.user_pool_client.user_pool_client_id
+                        ),
+                        "cloudFrontUrl": cloudfront_url,
+                    },
+                ),
+            ],
+            destination_bucket=self.spa_bucket,
+            distribution=self.distribution,
+            distribution_paths=["/*"],  # invalidate CloudFront on every deploy
         )
 
         # --- Outputs ---------------------------------------------------------

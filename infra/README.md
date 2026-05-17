@@ -39,6 +39,24 @@ If `web/dist` is missing you'll see a synth-time asset error rather than a
 clean test failure. (`Source.asset` on this prebuilt dir does **not**
 Docker-bundle — see the Docker note below.)
 
+### Runtime config (no `VITE_*` at build time)
+
+The SPA's API/Cognito/CloudFront config values are this stack's CfnOutputs,
+which only exist *after* `cdk deploy`. So `npm --prefix web run build` needs
+**no environment variables** — do not pass `VITE_*`. Instead the stack writes
+a `config.json` into the SPA bucket from its own deploy-resolved values: the
+`SpaDeployment` `BucketDeployment` merges **two sources** — the `web/dist`
+asset and a `Source.json_data("config.json", {...})` — into one deployment.
+(One deployment, not two: a separate config-only deployment would be deleted
+by the dist deployment's default `aws s3 sync --delete`, since `config.json`
+is not in `web/dist`. Merging keeps the default prune — stale hashed Vite
+assets are cleaned — without wiping `config.json`.) The SPA fetches
+`/config.json` at runtime, falling back to `import.meta.env.VITE_*` only for
+local `vite` dev. Flow: build the SPA (no env) → `cdk deploy` (writes dist +
+`config.json`, invalidates CloudFront via `distribution_paths=["/*"]`). The
+`ApiBaseUrl` / `CognitoDomain` / `UserPoolClientId` / `CloudFrontUrl`
+CfnOutputs remain for operator/automation use.
+
 ## Docker is required only for real bundling (deploy), NOT for tests
 
 Lambda code is packaged via CDK asset bundling

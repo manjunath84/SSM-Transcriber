@@ -4,7 +4,7 @@
 // Drive access is Phase 7c). No refresh-token handling — that is out of
 // scope for this slice (re-login on expiry is acceptable for 7a).
 
-import { config } from "./config";
+import { getConfig } from "./config";
 
 const VERIFIER_KEY = "pkce_verifier";
 const ID_TOKEN_KEY = "id_token";
@@ -34,18 +34,19 @@ export async function pkceChallenge(verifier: string): Promise<string> {
 }
 
 function redirectUri(): string {
-  const origin = config.cloudFrontUrl || window.location.origin;
+  const origin = getConfig().cloudFrontUrl || window.location.origin;
   return `${origin.replace(/\/$/, "")}/callback`;
 }
 
 export async function beginLogin(): Promise<void> {
+  const cfg = getConfig();
   const verifier = randomVerifier();
   sessionStorage.setItem(VERIFIER_KEY, verifier);
   const challenge = await pkceChallenge(verifier);
 
   const params = new URLSearchParams({
     response_type: "code",
-    client_id: config.userPoolClientId,
+    client_id: cfg.userPoolClientId,
     identity_provider: "Google",
     scope: "openid email",
     redirect_uri: redirectUri(),
@@ -54,24 +55,25 @@ export async function beginLogin(): Promise<void> {
   });
 
   window.location.assign(
-    `${config.cognitoDomain.replace(/\/$/, "")}/oauth2/authorize?${params.toString()}`,
+    `${cfg.cognitoDomain.replace(/\/$/, "")}/oauth2/authorize?${params.toString()}`,
   );
 }
 
 export async function completeLogin(code: string): Promise<void> {
+  const cfg = getConfig();
   const verifier = sessionStorage.getItem(VERIFIER_KEY);
   if (!verifier) throw new Error("Missing PKCE verifier");
 
   const body = new URLSearchParams({
     grant_type: "authorization_code",
-    client_id: config.userPoolClientId,
+    client_id: cfg.userPoolClientId,
     code,
     redirect_uri: redirectUri(),
     code_verifier: verifier,
   });
 
   const res = await fetch(
-    `${config.cognitoDomain.replace(/\/$/, "")}/oauth2/token`,
+    `${cfg.cognitoDomain.replace(/\/$/, "")}/oauth2/token`,
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
