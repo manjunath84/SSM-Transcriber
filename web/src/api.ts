@@ -56,12 +56,22 @@ export function parseMe(json: unknown): Me {
   if (!isObject(json) || typeof json.email !== "string") {
     throw new Error("Malformed /users/me response: missing email");
   }
+  // monthly_budget_usd arrives as a JSON string ("5") per the DynamoDB
+  // number-as-string convention; tolerate a number too. Fail loudly on
+  // anything unparseable — never silently default to 0.
+  const raw = json.monthly_budget_usd;
+  if (typeof raw !== "string" && typeof raw !== "number") {
+    throw new Error("Malformed /users/me response: missing monthly_budget_usd");
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    throw new Error(
+      "Malformed /users/me response: non-numeric monthly_budget_usd",
+    );
+  }
   return {
     email: json.email,
-    monthlyBudgetUsd:
-      typeof json.monthly_budget_usd === "number"
-        ? json.monthly_budget_usd
-        : 0,
+    monthlyBudgetUsd: n,
   };
 }
 

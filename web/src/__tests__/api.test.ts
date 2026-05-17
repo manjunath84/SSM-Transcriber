@@ -55,11 +55,27 @@ describe("parseTranscript", () => {
 });
 
 describe("parseMe", () => {
-  test("maps monthly_budget_usd -> monthlyBudgetUsd", () => {
+  test("coerces string wire shape to number (real /users/me payload)", () => {
+    // DynamoDB number-as-string convention: the API emits "5" (string).
+    expect(parseMe({ email: "a@b.com", monthly_budget_usd: "5" })).toEqual({
+      email: "a@b.com",
+      monthlyBudgetUsd: 5,
+    });
+  });
+
+  test("also accepts a numeric budget", () => {
     expect(parseMe({ email: "a@b.com", monthly_budget_usd: 5 })).toEqual({
       email: "a@b.com",
       monthlyBudgetUsd: 5,
     });
+  });
+
+  test("throws on non-numeric budget (does NOT default to 0)", () => {
+    expect(() => parseMe({ email: "x", monthly_budget_usd: "abc" })).toThrow();
+  });
+
+  test("throws on missing budget (does NOT default to 0)", () => {
+    expect(() => parseMe({ email: "x" })).toThrow();
   });
 
   test("throws on body missing email", () => {

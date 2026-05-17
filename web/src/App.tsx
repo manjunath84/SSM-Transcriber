@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   Navigate,
   Route,
@@ -32,15 +32,29 @@ function Callback() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const code = params.get("code");
+  const [authError, setAuthError] = useState(false);
 
   useEffect(() => {
     if (!code) return;
     completeLogin(code)
       .then(() => navigate("/", { replace: true }))
-      .catch(() => navigate("/", { replace: true }));
+      .catch((err: unknown) => {
+        console.error("sign-in callback failed", err);
+        setAuthError(true);
+      });
   }, [code, navigate]);
 
   if (!code) return <Navigate to="/" replace />;
+  if (authError) {
+    return (
+      <main>
+        <p>Sign-in failed — please try again.</p>
+        <button type="button" onClick={() => void beginLogin()}>
+          Sign in with Google
+        </button>
+      </main>
+    );
+  }
   return <p>Signing you in…</p>;
 }
 
